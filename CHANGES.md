@@ -209,3 +209,38 @@ Verified: harness v2 against the live local server — parser variants
 4/4, byte-budgeted whole-file read, search, file map, ctx.chat /
 ctx.models / ctx.storeFor / ctx.probe all passing; a live model asked
 to locate the resurrection probe chose file_map unprompted.
+
+## Addendum 8 — 2026-11-03 (first-token streaming race)
+The rolling race awaited FULL completions (`stream:false`) and the client
+"stream" was one buffered chunk, so client TTFT == total generation time;
+an attempt with no response held an in-flight slot until the 20-30 min
+global timeout, and tier escalation could not fire while it did.
+- Upstreams are opened with `stream:true` (openUpstream). An attempt wins
+  at its first validated tokens (64 chars through the poison guard, or a
+  tool call), losers are aborted at that instant, and the winner's
+  remainder is piped token-by-token to SSE clients. Bodies that ignore
+  stream:true and return one JSON document are sniffed and handled.
+- Hedging is model-driven: TTFT per tuple is modelled log-normal (EW
+  mean/variance of ln TTFT, new optional record fields; old records derive
+  from ewma_ttft_ms). The next attempt launches at the p80/p90/p95
+  (fast/smart+code/reasoning) TTFT quantile of the newest attempt, capped by
+  the best pending alternative's median, or instantly on a failure.
+- First-token deadline: an attempt silent past its p99.9 TTFT (floors
+  4 s / 25 s / 90 s) is aborted and penalised, so tiers always progress.
+- One in-flight attempt per provider (diversity, no self-inflicted 429s);
+  interleaveByProvider, tiers 1-3, breaker and trust clamp unchanged.
+- Tool-call stream deltas are merged by index (previously overwritten).
+  Upstream finish_reason (e.g. "length") is passed through.
+- Salvage preserved on both paths: a reasoning-only completion is
+  promoted to content (buffered) / emitted as a content frame (SSE).
+- Non-stream: a generation that dies after its first token re-dispatches
+  once over the untried pool.
+- Hot path: L1 cache is stale-while-revalidate, a cold isolate hydrates
+  from KV before deciding a provider sweep is needed, telemetry writes are
+  fire-and-forget, and failures update L1 optimistically. Client
+  disconnect aborts every upstream attempt.
+Verified locally against mock upstreams (fast SSE, slow, JSON-only,
+poison 200, hung) plus live Kilo: SSE first frame 315 ms of a 1.1 s
+generation in 20 frames; poison-first and hang-first requests answered in
+1.2-1.3 s (hang-first was 5.9 s before the median cap); tool-call
+fragments merged; stream cancel clean. deno check clean; lint unchanged.
