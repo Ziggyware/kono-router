@@ -1,3 +1,36 @@
+# App Builder: generation modes, compounding memory, workspace intelligence — 2026-11-04
+
+Implements the November 2026 app-builder specification on top of the
+existing Studio, workspace and tool plane:
+
+- **Generation modes** are now the first choice in App Builder Studio:
+  Single-file App, Architectural Synthesis, Scaffold Project, Feature
+  Implementation, Refactor & Modernize, Security Hardening, Performance
+  Optimization, Test Generation and Documentation Sync. The selected
+  mode is persisted and its directive is injected into the generation
+  prompt; workspace modes direct the agent to use its fs tools behind
+  the scenes to read, write and patch real project files.
+- **Compounding loop:** before generating, the builder recalls prior
+  app-builder decisions from memory and adds them to the prompt as an
+  ARCHITECTURAL MEMORY section. After Generate is pressed, it records
+  the decision three ways: `.appbuilder/config.json` in the durable
+  workspace, a numbered ADR under `docs/adr/`, and a memory entry for
+  the next build to recall.
+- **Presets:** a Compounding Intelligence technique and a Nov 2026
+  Baseline technology (SolidJS 2 + Vinxi, UnoCSS, Ark UI, TanStack,
+  Hono, Turso/Drizzle, Better Auth, PartyKit) are available for project
+  modes. The baseline guides generated project files; this dashboard
+  does not itself provision Bun/Turso/PartyKit/Grafana infrastructure.
+- **Workspace Intelligence:** the Workspace drawer gained an Analyze
+  pass computed from the actual workspace files — file/folder counts,
+  endpoints found in code, dependencies from `package.json` (or import
+  scan), test-file count, TODO/FIXME count, and a plain checklist
+  (README, manifest, tests, builder config, ADRs). No invented scores.
+
+Verified with the jsdom harness (new run4: modes, prompt composition,
+memory recall, config/ADR writes, intelligence render — 19/19; existing
+suites still pass) and `deno task check` / `deno task test` (103/0).
+
 # AI tabs in the builder modals — 2026-11-04
 
 All nine fields of the New Build Technique and New Technology dialogs

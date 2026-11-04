@@ -2017,6 +2017,13 @@ return { words: t.split(/\s+/).filter(Boolean).length, chars: t.length };</texta
 
       <div>
         <div class="row" style="justify-content:space-between;margin-bottom:6px">
+          <span class="lbl">0. Generation Mode</span>
+        </div>
+        <div class="tech-cards-grid" id="builder-modes"></div>
+      </div>
+
+      <div>
+        <div class="row" style="justify-content:space-between;margin-bottom:6px">
           <span class="lbl">1. Build Technique</span>
           <button class="btn q" id="btn-add-technique" style="font-size:10.5px;padding:2px 8px">+ New Technique</button>
         </div>
@@ -2065,6 +2072,15 @@ return { words: t.split(/\s+/).filter(Boolean).length, chars: t.length };</texta
   <div class="sheet-b">
     <div style="display:flex;flex-direction:column;gap:16px">
       <div class="dim" style="font-size:12.5px">The durable workspace lives on the router (per-session, through the fs tools) — files the AI writes while building stay here between chats. Open one to edit it, run HTML in the sandbox, sync to GitHub, or download everything for local development.</div>
+
+      <div>
+        <div class="row" style="justify-content:space-between;margin-bottom:6px">
+          <span class="lbl">Workspace Intelligence</span>
+          <button class="btn q" id="ws-analyze" style="font-size:10.5px;padding:2px 8px">Analyze</button>
+        </div>
+        <div id="ws-intel"><div class="dim" style="font-size:12px">Not analyzed yet — Analyze reads the workspace files and maps folders, endpoints, dependencies, tests and open TODOs.</div></div>
+        <div class="dim" id="ws-intel-stat" style="font-size:11px;margin-top:4px"></div>
+      </div>
       <div>
         <div class="row" style="justify-content:space-between;margin-bottom:6px">
           <span class="lbl">Durable files</span>
@@ -4613,6 +4629,7 @@ const DEFAULT_TECHNIQUES = [
   { id: "api-runner", name: "API-Driven Tool Runner", cat: "Dashboard", desc: "Client-first control surface communicating with REST APIs & tools.", rules: "Include interactive controls, live parameter testing, network latency monitoring, and response viewing." },
   { id: "tdd-spec", name: "Step-by-Step TDD Architecture", cat: "Testing", desc: "Specification-driven build with embedded test runner and verified assertions.", rules: "Write test cases and an embedded test assertion suite that proves functionality and shows all green tests." },
   { id: "offline-pwa", name: "Offline-First Local Storage", cat: "Persistence", desc: "Client-side application using localStorage / IndexedDB with export/import.", rules: "Persist all user data and state to localStorage with automatic schema migration, import, and export." },
+  { id: "compound-intel", name: "Compounding Intelligence", cat: "Architecture", desc: "Every build records its decisions and recalls prior ones — the architecture improves with use.", rules: "Work the pipeline: understand intent, decide the architecture explicitly, generate, then validate. Honor the ARCHITECTURAL MEMORY section when one is provided. Prefer patterns prior builds proved; call out any deliberate deviation and why." },
 ];
 
 const DEFAULT_TECHNOLOGIES = [
@@ -4622,6 +4639,7 @@ const DEFAULT_TECHNOLOGIES = [
   { id: "petite-vue", name: "Vue 3 Petite + UnoCSS", cat: "Progressive UI", desc: "Progressive minimal reactive framework with instant inline templates.", tags: '<script src="https://unpkg.com/petite-vue" defer init><\/script>', template: '<div v-scope="{ count: 0 }">\n  <button @click="count++">{{ count }}</button>\n</div>' },
   { id: "canvas-2d", name: "HTML5 Canvas 2D / WebGL", cat: "Graphics & Games", desc: "High performance double-buffered 2D canvas with animation loop.", tags: '', template: '<canvas id="c" width="600" height="400" style="background:#111;border-radius:8px"></canvas>' },
   { id: "chart-viz", name: "Chart.js / Visual Analytics", cat: "Data Viz", desc: "Interactive telemetry and data visualization charts.", tags: '<script src="https://cdn.jsdelivr.net/npm/chart.js"><\/script>', template: '<canvas id="myChart"></canvas>' },
+  { id: "nov2026-baseline", name: "Nov 2026 Baseline — SolidJS + Hono + Bun", cat: "Full-stack", desc: "State-of-the-art project baseline (SolidJS 2 + Vinxi, UnoCSS, Ark UI, TanStack Store/Query, Hono 4.6, Turso + Drizzle, Better Auth, PartyKit). For multi-file project modes written into the workspace — not the single-file sandbox.", tags: "", template: "" },
 ];
 
 let selTechnique = DEFAULT_TECHNIQUES[0].id;
@@ -4690,12 +4708,22 @@ $("#builder-presets")?.addEventListener("change", (e) => {
   if (e.target.value) $("#builder-prompt").value = e.target.value;
 });
 
-$("#btn-generate-app")?.addEventListener("click", () => {
+$("#btn-generate-app")?.addEventListener("click", async () => {
   const allTechniques = [...DEFAULT_TECHNIQUES, ...getSavedTechniques()];
   const allTech = [...DEFAULT_TECHNOLOGIES, ...getSavedTechnologies()];
   const technique = allTechniques.find((t) => t.id === selTechnique) || DEFAULT_TECHNIQUES[0];
   const tech = allTech.find((t) => t.id === selTech) || DEFAULT_TECHNOLOGIES[0];
   const goal = $("#builder-prompt").value.trim() || "Interactive Kanban Board application with local storage persistence and responsive design";
+  const mode = BUILD_MODES.find((mm) => mm.id === selMode) || BUILD_MODES[0];
+  // Architectural memory: decisions and lessons from prior builds ride
+  // into this generation (the compounding loop's read side). Best-effort.
+  let memoryBlock = "";
+  try {
+    const rec = await wsExec("memory_recall", { query: goal, tags: ["app-builder"], k: 5 });
+    const rows = rec.memories ?? rec.results ?? rec.rows ?? [];
+    const texts = rows.map((r) => r.text).filter(Boolean).slice(0, 5);
+    if (texts.length) memoryBlock = "ARCHITECTURAL MEMORY (decisions and lessons from prior builds — honor them unless the goal overrides them):\n" + texts.map((t) => "- " + t).join("\n");
+  } catch { /* best-effort */ }
 
   const appPrompt = [
     `Please build a complete, production-grade interactive application based on the following specifications:`,
@@ -4709,11 +4737,11 @@ $("#btn-generate-app")?.addEventListener("click", () => {
     `APPLICATION REQUIREMENTS:`,
     goal,
     ``,
-    `CRITICAL INSTRUCTIONS:`,
-    `- Output the entire complete single-file HTML application inside a single \`\`\`html ... \`\`\` code block.`,
-    `- Zero placeholders, zero TODOs. Must run directly in browser immediately.`,
-    `- Ensure beautiful modern UI with styling, responsive layout, and robust state management.`,
+    `GENERATION MODE: ${mode.name}`,
+    mode.directive,
+    memoryBlock,
   ].filter(Boolean).join("\n");
+  recordBuildDecision(mode, technique, tech, goal);
 
   $("#pmodel").value = "free:code";
   $("#cinput").value = appPrompt;
@@ -4722,6 +4750,75 @@ $("#btn-generate-app")?.addEventListener("click", () => {
   go("chat");
   sendChat();
 });
+
+// ---- generation modes -------------------------------------------------------
+// The spec's abstraction levels. A mode is a directive: single-file modes
+// answer in chat; workspace modes send the agent into the durable
+// workspace with its fs tools to read, write and patch real files.
+const BUILD_MODES = [
+  { id: "app", icon: "⚡", name: "Single-file App", multi: false, desc: "A complete app in one HTML file, ready for the sandbox.", directive: "CRITICAL INSTRUCTIONS:\n- Output the entire complete single-file HTML application inside a single html code block.\n- Zero placeholders, zero TODOs. Must run directly in the browser immediately.\n- Ensure beautiful modern UI with styling, responsive layout, and robust state management." },
+  { id: "synthesis", icon: "🧠", name: "Architectural Synthesis", multi: false, desc: "Architecture first — decisions, trade-offs, data model, API contracts, as ADRs.", directive: "Do NOT write the application yet. Produce the architecture in ADR form: for each major choice (structure, state management, data model, API contracts, deployment) give context, the decision, alternatives considered, trade-offs and consequences. End with the ordered build plan you would execute next." },
+  { id: "scaffold", icon: "🏗️", name: "Scaffold Project", multi: true, desc: "A multi-file project written into the durable workspace.", directive: "Scaffold a complete multi-file project. Use your fs_write tool to create every file in the durable workspace — project layout, configs, entry points, base modules, README — instead of pasting one giant code block. Keep files small and coherent. Finish with a summary of the tree you created." },
+  { id: "feature", icon: "🧩", name: "Feature Implementation", multi: true, desc: "Build a feature into the existing workspace project.", directive: "Implement the feature in the existing workspace project: first read the relevant files with fs_list, fs_grep and fs_read, match the project's existing patterns, then write or patch files with fs_write and fs_patch. Add tests for the new behavior in the project's own test style. Finish with a summary of the files changed." },
+  { id: "refactor", icon: "🔧", name: "Refactor & Modernize", multi: true, desc: "Migrate the workspace code toward a target state.", directive: "Refactor the workspace code toward the stated target state. Read before you write (fs_list, fs_grep, fs_read), make the smallest coherent set of patches with fs_patch, keep behavior identical unless the goal says otherwise, and list every file changed with the reason." },
+  { id: "security", icon: "🛡️", name: "Security Hardening", multi: true, desc: "Audit the workspace code and patch the findings.", directive: "Audit the workspace code for security issues — injection, XSS, unsafe HTML sinks, secrets committed in code, missing input validation, unsafe dependencies. Read the code with your fs tools, rank findings by severity, patch the critical and high ones with fs_patch, and report what you fixed and what remains." },
+  { id: "performance", icon: "📈", name: "Performance Optimization", multi: true, desc: "Find the bottlenecks in the workspace code and fix them.", directive: "Profile the workspace code by reading it with your fs tools: find the real bottlenecks — bundle weight, render churn, repeated computation, unoptimized assets, chatty network calls. Patch the highest-impact ones and explain each change with the expected gain and how to verify it." },
+  { id: "tests", icon: "🧪", name: "Test Generation", multi: true, desc: "Tests for the workspace code, in its own style.", directive: "Generate tests for the workspace code. Read the code first with your fs tools, match the project's existing test framework and style, cover the critical paths and the edge cases you find, and write the test files with fs_write. List what each test proves." },
+  { id: "docs", icon: "📚", name: "Documentation Sync", multi: true, desc: "Docs and ADR entries generated from the workspace code.", directive: "Generate documentation from the actual workspace code — read it with your fs tools and never invent APIs: README sections, an API / endpoint reference, and an ADR log entry for the current architecture. Write the docs as Markdown files into the workspace (docs/ or README.md) with fs_write." },
+];
+let selMode = store.get("builder_mode", "app");
+if (!BUILD_MODES.some((mm) => mm.id === selMode)) selMode = "app";
+
+function renderBuildModes() {
+  const box = $("#builder-modes");
+  if (!box) return;
+  box.innerHTML = BUILD_MODES.map((mm) => `
+      <div class="tech-card ${mm.id === selMode ? "selected" : ""}" data-mode="${esc(mm.id)}">
+        <div class="tech-card-h">
+          <b>${mm.icon} ${esc(mm.name)}</b>
+          <span class="badge" style="font-size:9.5px">${mm.multi ? "workspace" : "chat"}</span>
+        </div>
+        <div class="tech-card-desc">${esc(mm.desc)}</div>
+      </div>`).join("");
+}
+renderBuildModes();
+$("#builder-modes")?.addEventListener("click", (e) => {
+  const card = e.target.closest("[data-mode]");
+  if (card) { selMode = card.dataset.mode; store.set("builder_mode", selMode); renderBuildModes(); }
+});
+
+// The compounding loop's write side: every generation records what was
+// decided — a project config and an ADR in the workspace, plus a memory
+// the next build recalls. All best-effort; a write failure never blocks
+// the generation itself.
+async function recordBuildDecision(mode, technique, tech, goal) {
+  const stamp = new Date().toISOString();
+  try {
+    let adrN = 1;
+    try { const l = await wsExec("fs_list", { path: "docs/adr" }); adrN = (l.files ?? []).length + 1; } catch { /* first ADR */ }
+    const slug = (goal || mode.name).toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40) || mode.id;
+    const adr = [
+      `# ADR-${String(adrN).padStart(3, "0")} — ${goal.slice(0, 80) || mode.name}`,
+      ``,
+      `- Date: ${stamp}`,
+      `- Mode: ${mode.name}`,
+      `- Technique: ${technique.name}`,
+      `- Technology: ${tech.name}`,
+      ``,
+      `## Goal`,
+      goal,
+      ``,
+      `## Decision`,
+      `Generated in ${mode.name} mode with the ${technique.name} technique on ${tech.name}. Machine-readable configuration lives in .appbuilder/config.json; prior decisions are recalled into every new generation prompt.`,
+      ``,
+    ].join("\n");
+    await wsExec("fs_write", { path: `docs/adr/ADR-${String(adrN).padStart(3, "0")}-${slug}.md`, content: adr });
+    await wsExec("fs_write", { path: ".appbuilder/config.json", content: JSON.stringify({ updated: stamp, mode: mode.id, technique: technique.id, technology: tech.id, last_goal: goal }, null, 2) });
+  } catch { /* workspace writes are best-effort */ }
+  try {
+    await wsExec("memory_write", { text: `App build decision (${stamp.slice(0, 10)}): mode=${mode.name}; technique=${technique.name}; technology=${tech.name}; goal: ${goal.slice(0, 240)}`, tags: ["app-builder", "mode:" + mode.id], kind: "decision", importance: 0.6 });
+  } catch { /* memory is best-effort */ }
+}
 
 // Form modals (New Technique / New Technology / New Channel) are REAL
 // dialogs. They used to carry the .sheet class, whose CSS parks the element
@@ -5860,6 +5957,7 @@ $("#ws-files")?.addEventListener("click", (e) => {
   if (b) wsOpen(b.dataset.wsOpen);
 });
 $("#ws-refresh")?.addEventListener("click", wsRefresh);
+$("#ws-analyze")?.addEventListener("click", analyzeWorkspace);
 $("#ws-new-btn")?.addEventListener("click", async () => {
   const name = $("#ws-new-name").value.trim().replace(/^\/+/, "");
   if (!name) { toast("name the new file first", true); return; }
@@ -6061,6 +6159,73 @@ $("#ws-import")?.addEventListener("change", async (e) => {
   toast(done ? `imported ${done} file(s) into the workspace` : "nothing imported", !done);
   wsRefresh();
 });
+
+// ---- workspace intelligence -------------------------------------------------
+// A read-only analysis pass over the real workspace: structure,
+// endpoints, dependencies, tests, loose ends, and a checklist of the
+// things a healthy project has. Everything shown is computed from the
+// files themselves — no invented grades.
+async function analyzeWorkspace() {
+  const box = $("#ws-intel");
+  const stat = $("#ws-intel-stat");
+  if (!box) return;
+  stat.textContent = "analyzing…";
+  try {
+    const list = await wsExec("fs_list", { limit: 200 });
+    const files = list.files ?? [];
+    wsFiles = files;
+    const readable = files.filter((file) => !/\.(png|jpe?g|gif|webp|ico|woff2?|mp4|zip|pdf)$/i.test(file.path) && file.bytes <= 256000).slice(0, 40);
+    const contents = new Map();
+    for (const file of readable) {
+      try { const r = await wsExec("fs_read", { path: file.path }); if (!r.binary && typeof r.content === "string") contents.set(file.path, r.content); } catch { /* skip unreadable */ }
+    }
+    const folders = new Set(files.map((file) => file.path.split("/").slice(0, -1).join("/")).filter(Boolean));
+    const endpoints = [];
+    const epRe = /\b(get|post|put|delete|patch)\(\s*["'`]([^"'`\s]+)["'`]/gi;
+    const fetchRe = /fetch\(\s*["'`](\/[^"'`\s]+)["'`]/g;
+    for (const text of contents.values()) {
+      let m;
+      while ((m = epRe.exec(text))) endpoints.push(m[1].toUpperCase() + " " + m[2]);
+      while ((m = fetchRe.exec(text))) endpoints.push("CALL " + m[1]);
+      epRe.lastIndex = 0; fetchRe.lastIndex = 0;
+    }
+    let deps = [];
+    if (contents.has("package.json")) {
+      try { const pkg = JSON.parse(contents.get("package.json")); deps = [...Object.keys(pkg.dependencies ?? {}), ...Object.keys(pkg.devDependencies ?? {})]; } catch { /* fall through to import scan */ }
+    }
+    if (!deps.length) {
+      const found = new Set();
+      const impRe = /(?:from|import)\s+["']([^"'.][^"']*)["']/g;
+      for (const text of contents.values()) { let m; while ((m = impRe.exec(text))) found.add(m[1].startsWith("@") ? m[1].split("/").slice(0, 2).join("/") : m[1].split("/")[0]); impRe.lastIndex = 0; }
+      deps = [...found].slice(0, 24);
+    }
+    const tests = files.filter((file) => /(^|\/)(tests?|__tests__)\//i.test(file.path) || /\.(test|spec)\.[a-z]+$/i.test(file.path));
+    let todoCount = 0;
+    try { const g = await wsExec("fs_grep", { pattern: "TODO|FIXME", limit: 200 }); todoCount = g.count ?? 0; } catch { /* optional */ }
+    const has = (re) => files.some((file) => re.test(file.path));
+    const checks = [
+      ["files in the workspace", files.length > 0],
+      ["README present", has(/readme\.md$/i)],
+      ["project manifest (package.json / deno.json)", has(/(package|deno)\.json$/i)],
+      ["tests present", tests.length > 0],
+      ["builder config recorded (.appbuilder/config.json)", has(/\.appbuilder\/config\.json$/)],
+      ["architecture decisions recorded (docs/adr/)", has(/^docs\/adr\//)],
+    ];
+    const passed = checks.filter((c) => c[1]).length;
+    const chip = (label, val) => `<span class="wb-kpi-chip">${label}: <b>${val}</b></span>`;
+    const epShown = endpoints.slice(0, 12).map((e) => `<div style="font-family:ui-monospace,monospace;font-size:11px">${esc(e)}</div>`).join("");
+    box.innerHTML = `
+      <div style="display:flex;flex-wrap:wrap;gap:4px;margin-bottom:8px">${chip("files", files.length)}${chip("folders", folders.size)}${chip("endpoints", endpoints.length)}${chip("dependencies", deps.length)}${chip("test files", tests.length)}${chip("TODO/FIXME", todoCount)}${chip("checklist", passed + "/" + checks.length)}</div>
+      <div style="display:grid;gap:2px;margin-bottom:8px">${checks.map((c) => `<div style="font-size:12px" class="${c[1] ? "" : "dim"}">${c[1] ? "✓" : "✗"} ${esc(c[0])}</div>`).join("")}</div>
+      ${endpoints.length ? `<div class="lbl" style="margin-bottom:4px">Endpoints</div>${epShown}${endpoints.length > 12 ? `<div class="dim" style="font-size:11px">+${endpoints.length - 12} more</div>` : ""}` : ""}
+      ${deps.length ? `<div class="lbl" style="margin:8px 0 4px">Dependencies</div><div style="font-size:12px">${deps.map((d) => esc(d)).join(" · ")}</div>` : ""}
+      ${folders.size ? `<div class="lbl" style="margin:8px 0 4px">Folders</div><div style="font-size:12px">${[...folders].slice(0, 14).map((f) => esc(f) + "/").join(" · ")}${folders.size > 14 ? " · …" : ""}</div>` : ""}`;
+    stat.textContent = `analyzed ${contents.size} readable file(s) of ${files.length} · just now`;
+    renderWsFiles();
+  } catch (e) {
+    stat.textContent = "analysis failed: " + (e.message || e);
+  }
+}
 
 function openWorkspace() {
   ghLoad();
