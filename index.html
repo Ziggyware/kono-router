@@ -1277,12 +1277,56 @@ $("#mgal").onclick = (e) => { const a = e.target.closest("[data-tr]"); if (a) { 
 // =====================================================================
 let catalog = [], csort = { k: "iq_effective", d: -1 };
 const caps = (m) => [m.supports_reasoning && "reasoning", m.supports_vision && "vision", m.is_coding_specialist && "code"].filter(Boolean).join(" ");
-const chatModelName = (id) => /^(free:|nokey-image)/i.test(id) ? id : (String(id).split("/").filter(Boolean).pop() || id);
+// /v1/models emits one row per routable tuple, so a slug repeats once per
+// endpoint and provider-qualified ids sit beside bare leaf names. Group and
+// dedupe once here; every model datalist on the page renders this shape.
+const LANE_IDS = ["free:auto", "free:fast", "free:smart", "free:code", "free:reasoning"];
+const LANE_GROUP = "lanes", IMAGE_GROUP = "image";
+const leafModelName = (id) => String(id).split("/").filter(Boolean).pop() || String(id);
+// registry providers are owned_by "services_json_<endpoint>": same vendor, one group.
+const cleanVendor = (v) => String(v ?? "").trim().toLowerCase().replace(/^services_json_/, "").replace(/[_\s]+/g, " ").trim() || "other";
+const modelVendor = (m) => {
+  const id = String(m?.id ?? "");
+  if (/^free:/i.test(id)) return LANE_GROUP;
+  if (/^nokey-image/i.test(id)) return IMAGE_GROUP;
+  const slash = id.indexOf("/");
+  return cleanVendor(slash > 0 ? id.slice(0, slash) : m?.owned_by);
+};
+function groupedModels(models) {
+  const groups = new Map();
+  for (const raw of models ?? []) {
+    const m = typeof raw === "string" ? { id: raw } : raw ?? {};
+    const id = String(m.id ?? "").trim();
+    if (!id) continue;
+    const vendor = modelVendor(m), key = leafModelName(id).toLowerCase();
+    if (!groups.has(vendor)) groups.set(vendor, new Map());
+    const bucket = groups.get(vendor), seen = bucket.get(key);
+    // A provider-qualified slug routes more precisely than a bare leaf name.
+    if (!seen || (!seen.id.includes("/") && id.includes("/"))) bucket.set(key, { id, name: leafModelName(id) });
+  }
+  const lead = [LANE_GROUP, IMAGE_GROUP];
+  const rank = (v) => { const i = lead.indexOf(v); return i < 0 ? lead.length : i; };
+  const order = (vendor) => (a, b) => vendor === LANE_GROUP
+    ? (LANE_IDS.indexOf(a.id) + 1 || LANE_IDS.length + 1) - (LANE_IDS.indexOf(b.id) + 1 || LANE_IDS.length + 1)
+    : a.name.localeCompare(b.name);
+  // One option per routable id: an id offered by several providers is a single
+  // choice, since the router races all of its tuples anyway.
+  const emitted = new Set();
+  return [...groups].map(([vendor, bucket]) => ({ vendor, items: [...bucket.values()].sort(order(vendor)) }))
+    .sort((a, b) => rank(a.vendor) - rank(b.vendor) || a.vendor.localeCompare(b.vendor))
+    .map((g) => ({ vendor: g.vendor, items: g.items.filter((it) => !emitted.has(it.id) && Boolean(emitted.add(it.id))) }))
+    .filter((g) => g.items.length);
+}
+function renderModelList(models) {
+  const list = $("#modellist");
+  if (!list) return;
+  list.innerHTML = groupedModels(models).map(({ vendor, items }) => items.map(({ id, name }) =>
+    `<option value="${esc(id)}" label="${esc(vendor === LANE_GROUP || vendor === IMAGE_GROUP ? id : `${vendor} · ${name}`)}"></option>`).join("")).join("");
+}
 async function loadCatalog() {
   try {
     catalog = (await req("/v1/models")).data ?? [];
-    const selectable = [...new Map(catalog.map((m) => [chatModelName(m.id).toLowerCase(), chatModelName(m.id)])).values()];
-    $("#modellist").innerHTML = selectable.map((id) => `<option value="${esc(id)}">`).join("");
+    renderModelList(catalog);
     renderCatalog();
   } catch (e) { toast("catalog: " + e.message, true); }
 }
@@ -1633,7 +1677,7 @@ go(location.hash.slice(1) || "chat");
 connState(null);
 ping().catch(() => {});
 setInterval(() => { if (!document.hidden && current !== "lanes") ping().catch(() => {}); }, 60_000);
-req("/v1/models").then((d) => { catalog = d.data ?? []; $("#modellist").innerHTML = catalog.map((m) => `<option value="${esc(m.id)}">`).join(""); }).catch(() => {});
+req("/v1/models").then((d) => { catalog = d.data ?? []; renderModelList(catalog); }).catch(() => {});
 </script>
 </body>
 </html>

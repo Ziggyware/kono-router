@@ -368,3 +368,23 @@ As before, a push alone does not deploy — redeploy the Deno project with this
 `main.ts` + the new `math.ts` + `services.json` present. New optional env:
 `NOKEY_STRICT_ERRORS`, `NOKEY_RATE_BURST`, `NOKEY_RATE_REFILL`,
 `MESH_SWEEP_MODELS_PER_ENDPOINT` (existing `MESH_RACE_TIER1_ATTEMPTS` kept).
+
+## Addendum 10 — 2026-11-04 (model picker grouped by provider)
+
+`GET /v1/models` returns one row per routable tuple, so the chat model field
+listed the same slug once per endpoint ("anthropic/claude-opus-5.5" x3)
+interleaved with bare leaf names, and two different code paths rendered the
+datalist (boot used raw ids, the Catalog view stripped the provider prefix),
+so the picker mixed both styles.
+
+- `groupedModels()` in `index.html` is now the single source for every model
+  datalist: one option per routable id, grouped by vendor, lanes then image
+  models first, providers alphabetical, names alphabetical inside a group.
+- Vendor comes from the id prefix when the slug is provider-qualified, else
+  from `owned_by`; registry ids (`services_json_<endpoint>`) are collapsed
+  onto their readable vendor so they group with native providers.
+- A provider-qualified slug wins over a bare leaf name for the same model,
+  and options are rendered with `label="vendor · model"` so the dropdown
+  shows the grouping instead of repeated strings.
+- `tests/model_list_test.ts` pulls the renderer out of `index.html` and pins
+  the collapse/ordering behaviour (5 cases).
