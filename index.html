@@ -109,6 +109,19 @@ body::before {
     radial-gradient(46% 100% at 88% 0%, color-mix(in oklab, var(--blue) 10%, transparent), transparent 70%);
   opacity: .9;
 }
+body::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background:
+    radial-gradient(60% 60% at 25% 35%, color-mix(in oklab, var(--acc) 10%, transparent), transparent 64%),
+    radial-gradient(50% 50% at 75% 75%, color-mix(in oklab, var(--vio) 8%, transparent), transparent 58%);
+  animation: drift 14s ease-in-out infinite alternate;
+  opacity: .6;
+}
+@keyframes drift { from { transform: translate(0, 0); } to { transform: translate(30px, -40px) scale(1.08); } }
 ::selection { background: var(--acc); color: var(--acc-ink); }
 [hidden] { display: none !important; }
 #toast[hidden] { display: flex !important; opacity: 0; pointer-events: none; }
@@ -478,14 +491,81 @@ details.rs .rb { padding: 0 12px 10px; color: var(--mid); white-space: pre-wrap;
 }
 .drop { outline: 2px dashed var(--acc); outline-offset: -8px; }
 
+/* ---------- settings sheet ---------- */
 .side {
-  width: 308px; flex-shrink: 0; border-left: 1px solid var(--line);
-  background: var(--bg); overflow: auto; padding: 16px;
-  display: flex; flex-direction: column; gap: 12px;
+  position: fixed; top: calc(var(--hdr) + env(safe-area-inset-top)); bottom: 0; right: 0;
+  width: min(480px, 92vw); z-index: 41;
+  display: flex; flex-direction: column;
+  background: var(--bg-2); border-left: 1px solid var(--line-2);
+  box-shadow: var(--shadow-lg);
+  transform: translateX(120%); visibility: hidden;
+  transition: transform .45s cubic-bezier(.22, 1, .36, 1), visibility .25s;
 }
+.side.open { transform: none; visibility: visible; }
 .side[hidden] { display: none; }
-.side label { display: flex; flex-direction: column; gap: 5px; }
-.side .sheet-h { display: none; }
+.side .sheet-b { flex: 1; overflow: auto; -webkit-overflow-scrolling: touch;
+  padding: 22px 16px calc(26px + env(safe-area-inset-bottom)); }
+.side .sheet-h::before {
+  content: ""; position: absolute; top: 9px; left: 50%; transform: translateX(-50%);
+  width: 36px; height: 5px; border-radius: 99px; background: var(--line-2);
+}
+.setgroup { margin: 0 0 20px; }
+.setgroup:last-child { margin-bottom: 0; }
+.setgroup-h { display: flex; align-items: center; gap: 10px; margin: 0 0 12px; padding-bottom: 10px; border-bottom: 1px solid var(--line); }
+.setgroup-h svg { width: 16px; height: 16px; stroke: var(--mid); fill: none; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; flex-shrink: 0; }
+.setgroup-h b { color: var(--fg); font: 600 13px/1.25 var(--sans); letter-spacing: -.01em; }
+.setgroup-h small { color: var(--dim); font: 400 11px/1.45 var(--sans); }
+.setrow {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 11px 12px; margin: 0 0 8px; border-radius: var(--r-sm); border: 1px solid transparent;
+  background: var(--surface); cursor: pointer; transition: background .15s, border-color .15s, box-shadow .15s;
+}
+.setrow:last-child { margin-bottom: 0; }
+.setrow:hover { background: var(--surface-2); border-color: var(--line-2); }
+.setrow:active { background: var(--surface-3); }
+.setrow > div:first-child { flex: 1; min-width: 0; }
+.setrow .lbl { color: var(--fg); font: 600 13px/1.25 var(--sans); letter-spacing: -.005em; }
+.setrow .dim { color: var(--dim); font: 400 11.5px/1.4 var(--sans); }
+.setrow .chev { width: 18px; height: 18px; stroke: var(--mid); flex-shrink: 0; }
+.setrow input, .setrow select, .setrow textarea { flex-shrink: 0; min-width: 0; }
+.setrow input[type="range"] { flex: 1; }
+.setrow .field { display: flex; gap: 8px; align-items: center; min-width: 0; }
+.setrow .field input { flex: 1; min-width: 0; }
+.chips-row { display: flex; gap: 8px; flex-wrap: wrap; }
+.chip { cursor: pointer; }
+.theme-chip svg { width: 17px; height: 17px; flex-shrink: 0; }
+.accent-well { width: 20px; height: 20px; border-radius: 50%; border: 1px solid var(--line);
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--bg) 90%, transparent); display: grid; place-items: center; flex-shrink: 0; }
+.accent-well::after { content: ""; width: 10px; height: 10px; border-radius: 50%; background: var(--acc-ink);
+  opacity: 0; transform: scale(.55); transition: opacity .2s, transform .2s; }
+.accent-well.on::after { opacity: 1; transform: scale(1); }
+.chip.sel { border-color: var(--acc-line); background: var(--acc-soft); box-shadow: inset 0 0 0 3px var(--acc-soft); color: var(--acc); }
+.chip.sel svg { stroke: var(--acc); }
+input[type="color"] { width: 30px; height: 30px; border: none; border-radius: 8px; cursor: pointer; padding: 0; background: none; }
+input[type="color"]::-webkit-color-swatch-wrapper { padding: 0; border: none; }
+input[type="color"]::-webkit-color-swatch { border: none; border-radius: 7px; }
+.toggle {
+  position: relative; width: 46px; height: 26px; border-radius: 99px; border: 1px solid var(--line);
+  background: var(--surface); cursor: pointer;
+  transition: border-color .15s, background .15s, box-shadow .15s;
+}
+.toggle input { position: absolute; inset: 0; opacity: 0; margin: 0; width: 100%; height: 100%; cursor: pointer; z-index: 2; }
+.toggle .thumb {
+  position: absolute; top: 2px; left: 2px; width: 22px; height: 22px; border-radius: 50%;
+  background: #fff; box-shadow: 0 1px 4px rgba(0, 0, 0, .45);
+  transition: transform .2s cubic-bezier(.22, 1, .36, 1);
+}
+.toggle:has(input:checked) { border-color: var(--acc-line); background: var(--acc);
+  box-shadow: inset 0 0 0 3px var(--acc-soft), 0 0 0 3px var(--acc); }
+.toggle:has(input:checked) .thumb { transform: translateX(20px); }
+.dropc { color: var(--bad); font: 500 12px/1 var(--sans); white-space: nowrap; }
+
+[data-density="compact"] .setrow { padding: 8px 10px; margin: 0 0 6px; }
+[data-density="compact"] .setgroup { margin-bottom: 14px; }
+[data-density="compact"] .btn { min-height: 36px; padding: 0 11px; font-size: 11px; }
+[data-density="compact"] .chip { padding: 3px 8px; font-size: 11px; }
+[data-reduced="1"], [data-reduced="1"] * { animation-duration: .001ms !important; animation-iteration-count: 1 !important; transition-duration: .001ms !important; scroll-behavior: auto !important; }
+[data-reduced="1"] .meta .live::after { animation: none; }
 
 /* ---------- traces ---------- */
 .split { display: grid; grid-template-columns: minmax(300px, 34%) 1fr; gap: 14px; align-items: start; }
@@ -719,20 +799,10 @@ dialog .row { margin-top: 4px; }
 
   .view { padding: 14px 14px 22px; }
   .side {
-    position: fixed; left: 0; right: 0; bottom: 0; width: auto; z-index: 41;
-    max-height: 80dvh; border: 0; border-top: 1px solid var(--line-2);
-    border-radius: 22px 22px 0 0; box-shadow: 0 -24px 70px rgba(0, 0, 0, .55);
-    padding: 0 16px calc(18px + env(safe-area-inset-bottom));
-    padding-top: 8px;
-  }
-  .side .sheet-h {
-    display: flex; align-items: center; gap: 10px; position: sticky; top: 0;
-    margin: 0 -16px 6px; padding: 16px 16px 10px; background: var(--bg-2); z-index: 1;
-  }
-  .side .sheet-h h2 { margin: 0; font: 600 14px/1.2 var(--sans); }
-  .side .sheet-h::before {
-    content: ""; position: absolute; top: 7px; left: 50%; transform: translateX(-50%);
-    width: 38px; height: 4px; border-radius: 99px; background: var(--line-2);
+    top: auto; bottom: 0; left: 0; right: 0; width: auto; height: 90dvh; max-height: 90dvh;
+    border: 0; border-top: 1px solid var(--line-2);
+    border-radius: 28px 28px 0 0;
+    transform: translateY(102%);
   }
   .composer { padding: 8px 12px 12px; }
   .wrapc { border-radius: 16px; padding: 6px 6px 6px 12px; }
@@ -996,35 +1066,171 @@ dialog .row { margin-top: 4px; }
           <div class="row" style="flex-wrap:nowrap">
             <input type="file" id="cfile" accept="image/*" multiple hidden>
             <button class="btn q" id="cattach" title="Attach images" aria-label="Attach images"><svg aria-hidden="true"><use href="#i-img"/></svg><span class="btxt">img</span></button>
-            <button class="btn q" id="cside" title="Parameters" aria-label="Toggle parameters"><svg aria-hidden="true"><use href="#i-sliders"/></svg><span class="btxt">params</span></button>
+            <button class="btn q" id="cside" title="Settings" aria-label="Open settings"><svg aria-hidden="true"><use href="#i-sliders"/></svg><span class="btxt">settings</span></button>
             <button class="btn" id="csend" aria-label="Send"><span class="btxt">send</span><svg aria-hidden="true"><use href="#i-up"/></svg></button>
             <button class="btn stop" id="cstop" aria-label="Stop" hidden><span class="btxt">stop</span><svg aria-hidden="true"><use href="#i-stop"/></svg></button>
           </div>
         </div>
       </div>
     </div>
-    <aside class="side" id="side" aria-label="Chat parameters">
-      <div class="model-picker">
-        <label><span class="lbl">model · type a name or browse</span><input id="pmodel" value="free:auto" autocomplete="off" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="model-results"></label>
-        <div class="model-filter"><select id="model-cap" aria-label="Filter by capability"><option value="">Any capability</option><option value="reasoning">Reasoning</option><option value="vision">Vision</option><option value="code">Code</option></select><select id="model-context" aria-label="Minimum context window"><option value="0">Any context</option><option value="8192">8k+ context</option><option value="32768">32k+ context</option><option value="65536">64k+ context</option><option value="128000">128k+ context</option></select></div>
-        <div id="model-results" class="model-results" role="listbox" aria-label="Matching models" hidden></div>
-        <div id="model-hint" class="model-hint">Choose a model or enter any router-compatible ID. Capability and context metadata are estimates.</div>
+    <aside class="side" id="side" aria-label="Settings" hidden>
+      <div class="sheet-h">
+        <h2>Settings</h2>
+        <span class="grow"></span>
+        <button class="icon-btn" data-close aria-label="Close settings"><svg aria-hidden="true"><use href="#i-x"/></svg></button>
       </div>
-      <datalist id="modellist"><option value="free:auto"><option value="free:fast"><option value="free:smart"><option value="free:code"><option value="free:reasoning"></datalist>
-      <div class="row">
-        <label class="grow"><span class="lbl">temperature <b id="ptempv" class="acc">0.7</b></span><input id="ptemp" type="range" min="0" max="2" step="0.05" value="0.7"></label>
-        <label style="width:110px"><span class="lbl">max tokens</span><input id="pmax" type="number" min="1" step="1" placeholder="auto" aria-describedby="token-hint"></label>
+      <div class="sheet-b">
+        <div class="setgroup">
+          <div class="setgroup-h"><svg aria-hidden="true"><use href="#i-moon"/></svg>
+            <div><b>Appearance</b><small>Theme, accent, density, motion</small></div>
+          </div>
+          <div class="setrow">
+            <div><div class="lbl">Theme</div><div class="dim">Color scheme across the app</div></div>
+            <div class="chips-row">
+              <button class="chip theme-chip sel" data-theme="auto" aria-pressed="true">Auto<svg aria-hidden="true"><use href="#i-auto"/></svg></button>
+              <button class="chip theme-chip" data-theme="dark">Dark<svg aria-hidden="true"><use href="#i-moon"/></svg></button>
+              <button class="chip theme-chip" data-theme="light">Light<svg aria-hidden="true"><use href="#i-sun"/></svg></button>
+              <button class="chip theme-chip" data-theme="ocean">Ocean<svg aria-hidden="true"><use href="#i-radar"/></svg></button>
+              <button class="chip theme-chip" data-theme="violet">Violet<svg aria-hidden="true"><use href="#i-wand"/></svg></button>
+            </div>
+          </div>
+          <div class="setrow">
+            <div><div class="lbl">Accent color</div><div class="dim">Highlight color across the app</div></div>
+            <div class="chips-row">
+              <button class="chip accent-chip sel" data-accent="theme">Theme<svg aria-hidden="true"><use href="#i-auto"/></svg></button>
+              <button class="chip accent-chip" data-accent="lime"><span class="accent-well" style="background:#c9ff4a"></span></button>
+              <button class="chip accent-chip" data-accent="blue"><span class="accent-well" style="background:#7fc4ff"></span></button>
+              <button class="chip accent-chip" data-accent="ocean"><span class="accent-well" style="background:#66e4f1"></span></button>
+              <button class="chip accent-chip" data-accent="violet"><span class="accent-well" style="background:#c3a6ff"></span></button>
+              <button class="chip accent-chip" data-accent="rose"><span class="accent-well" style="background:#f472b6"></span></button>
+              <button class="chip accent-chip" data-accent="custom"><input type="color" id="set-accent" value="#c9ff4a" aria-label="Custom accent color"></button>
+            </div>
+          </div>
+          <div class="setrow">
+            <div><div class="lbl">Density</div><div class="dim">Comfortable or compact touch targets</div></div>
+            <button class="chip sel" data-density="comfortable">Comfortable</button>
+            <button class="chip" data-density="compact">Compact</button>
+          </div>
+          <div class="setrow">
+            <div><div class="lbl">Reduce motion</div><div class="dim">Turn off animations and transitions</div></div>
+            <div class="toggle"><input type="checkbox" id="set-reduced"><div class="thumb"></div></div>
+          </div>
+        </div>
+
+        <div class="setgroup">
+          <div class="setgroup-h"><svg aria-hidden="true"><use href="#i-sliders"/></svg>
+            <div><b>Model &amp; generation</b><small>Defaults for new chat messages</small></div>
+          </div>
+          <div class="model-picker">
+            <div class="setrow">
+              <div><div class="lbl">Default model</div><div class="dim">Any router-compatible ID or lane</div></div>
+              <div class="field"><input id="pmodel" value="free:auto" autocomplete="off" list="modellist" role="combobox" aria-autocomplete="list" aria-controls="model-results"></div>
+            </div>
+            <div class="model-filter"><select id="model-cap" aria-label="Filter by capability"><option value="">Any capability</option><option value="reasoning">Reasoning</option><option value="vision">Vision</option><option value="code">Code</option></select><select id="model-context" aria-label="Minimum context window"><option value="0">Any context</option><option value="8192">8k+ context</option><option value="32768">32k+ context</option><option value="65536">64k+ context</option><option value="128000">128k+ context</option></select></div>
+            <div id="model-results" class="model-results" role="listbox" aria-label="Matching models" hidden></div>
+          </div>
+          <datalist id="modellist"><option value="free:auto"><option value="free:fast"><option value="free:smart"><option value="free:code"><option value="free:reasoning"></datalist>
+          <div id="model-hint" class="model-hint">Choose a model or enter any router-compatible ID.</div>
+          <div class="setrow">
+            <div><div class="lbl">Temperature</div><div class="dim acc" id="ptempv">0.7</div></div>
+            <input id="ptemp" type="range" min="0" max="2" step="0.05" value="0.7">
+          </div>
+          <div class="setrow">
+            <div><div class="lbl">Max output tokens</div><div class="dim">Empty = provider decides</div></div>
+            <input id="pmax" type="number" min="1" step="1" placeholder="auto" aria-describedby="token-hint">
+          </div>
+          <div id="token-hint" class="model-hint" aria-live="polite">Auto uses a conservative budget when context is known.</div>
+          <div class="setrow">
+            <div><div class="lbl">Reasoning effort</div><div class="dim">Low / medium / high where supported</div></div>
+            <select id="peffort"><option value="">default</option><option>low</option><option>medium</option><option>high</option></select>
+          </div>
+          <div class="setrow">
+            <div><div class="lbl">System prompt</div><div class="dim">Instructions prepended to every conversation</div></div>
+            <textarea id="psys" rows="3"></textarea>
+          </div>
+          <div class="setrow">
+            <div><div class="lbl">Stream responses</div><div class="dim">Tokens arrive as they're generated</div></div>
+            <div class="toggle"><input type="checkbox" id="pstream" checked><div class="thumb"></div></div>
+          </div>
+          <div class="setrow">
+            <div><div class="lbl">Parallel tools</div><div class="dim">Run independent tool calls together</div></div>
+            <div class="toggle"><input type="checkbox" id="pparallel" checked><div class="thumb"></div></div>
+          </div>
+          <div class="setrow">
+            <div><div class="lbl">Router tools</div><div class="dim">Let the router execute its own built-in tools</div></div>
+            <div class="toggle"><input type="checkbox" id="pauto"><div class="thumb"></div></div>
+          </div>
+          <div class="setrow">
+            <div><div class="lbl">Tools (JSON)</div><div class="dim">Tool definitions forwarded with each message</div></div>
+            <textarea id="ptools" rows="6" spellcheck="false"></textarea>
+          </div>
+          <div class="row" style="gap:8px">
+            <button class="btn q" id="ppreset">tools preset</button>
+            <button class="btn q" id="pclear">clear tools</button>
+            <button class="btn q" id="cnew" style="margin-left:auto">new chat</button>
+            <button class="btn q" id="cexport">export chat</button>
+          </div>
+        </div>
+
+        <div class="setgroup">
+          <div class="setgroup-h"><svg aria-hidden="true"><use href="#i-plug"/></svg>
+            <div><b>Connection</b><small>Router URL, API key and admin secret</small></div>
+          </div>
+          <div class="setrow">
+            <div><div class="lbl">Router URL</div><div class="dim">Public endpoint of your router</div></div>
+            <div class="field"><input id="set-curl" autocomplete="off" placeholder="https://nokey-router.ziggyware.deno.net"></div>
+          </div>
+          <div class="setrow">
+            <div><div class="lbl">Router API key</div><div class="dim">Bearer key sent with every request</div></div>
+            <div class="field"><input id="set-ckey" type="password" autocomplete="off"></div>
+          </div>
+          <div class="setrow">
+            <div><div class="lbl">Admin secret</div><div class="dim">Unlocks traces, ops and the Architect</div></div>
+            <div class="field"><input id="set-cadm" type="password" autocomplete="off"></div>
+          </div>
+          <div class="row" style="gap:8px">
+            <button class="btn q" id="set-csave">Save &amp; test</button>
+            <span id="set-cstat" class="dim grow"></span>
+          </div>
+        </div>
+
+        <div class="setgroup">
+          <div class="setgroup-h"><svg aria-hidden="true"><use href="#i-file"/></svg>
+            <div><b>Data</b><small>Export, import and clear</small></div>
+          </div>
+          <div class="row" style="gap:8px">
+            <button class="btn q" id="set-export">Export chat</button>
+            <button class="btn q" id="set-import-pick">Import chat</button>
+            <input type="file" id="set-import" accept=".json" hidden>
+            <button class="btn q dropc" id="set-clear">Clear conversation</button>
+          </div>
+          <div class="row" style="gap:8px;margin-top:8px">
+            <button class="btn q dropc" id="set-clearall">Clear all data</button>
+          </div>
+        </div>
+
+        <div class="setgroup">
+          <div class="setgroup-h"><svg aria-hidden="true"><use href="#i-book"/></svg>
+            <div><b>About</b><small>Version, docs and shortcuts</small></div>
+          </div>
+          <div class="setrow">
+            <div><div class="lbl">Version</div><div class="dim">nokey-router · v6</div></div>
+            <span class="grow"></span><span class="dim">2026-11-04</span>
+          </div>
+          <div class="setrow">
+            <div><div class="lbl">API reference</div><div class="dim">Open the OpenAPI docs</div></div>
+            <button class="chip" id="set-docs">Open <svg class="chev" aria-hidden="true"><use href="#i-up"/></svg></button>
+          </div>
+          <div class="setrow">
+            <div><div class="lbl">Keyboard shortcuts</div><div class="dim">Press <kbd>?</kbd> to open the shortcut sheet</div></div>
+            <button class="chip" id="set-keys">Open <svg class="chev" aria-hidden="true"><use href="#i-up"/></svg></button>
+          </div>
+          <div class="setrow">
+            <div><div class="lbl">Changelog</div><div class="dim">What's new in this release</div></div>
+            <button class="chip" id="set-changelog">Open <svg class="chev" aria-hidden="true"><use href="#i-up"/></svg></button>
+          </div>
+        </div>
       </div>
-      <div id="token-hint" class="model-hint" aria-live="polite">Auto uses a conservative budget when context is known; otherwise the provider decides. Output limits vary.</div>
-      <label><span class="lbl">reasoning effort</span>
-        <select id="peffort"><option value="">default</option><option>low</option><option>medium</option><option>high</option></select></label>
-      <label><span class="lbl">system</span><textarea id="psys" rows="3"></textarea></label>
-      <div class="row"><label class="row" style="flex-direction:row"><input type="checkbox" id="pstream" checked> <span class="mid">stream</span></label>
-        <label class="row" style="flex-direction:row"><input type="checkbox" id="pparallel" checked> <span class="mid">parallel tools</span></label>
-        <label class="row" style="flex-direction:row" title="Attach the router's own tools and let it execute the calls"><input type="checkbox" id="pauto"> <span class="mid">router tools</span></label></div>
-      <label><span class="lbl">tools json</span><textarea id="ptools" rows="8" spellcheck="false"></textarea></label>
-      <div class="row"><button class="btn q" id="ppreset">tools preset</button><button class="btn q" id="pclear">clear tools</button></div>
-      <div class="row" style="margin-top:auto"><button class="btn q" id="cnew">new chat</button><button class="btn q" id="cexport">export</button></div>
     </aside>
   </section>
 
@@ -1192,6 +1398,19 @@ dialog .row { margin-top: 4px; }
     <div><span>Close overlay</span><span><kbd>esc</kbd></span></div>
   </div>
   <form method="dialog" style="padding:0 20px 20px"><button class="btn q">close</button></form>
+</dialog>
+<dialog id="dconfirm" aria-label="Confirm action">
+  <form method="dialog">
+    <div id="dconfirm-msg" style="margin:0 0 14px"></div>
+    <div class="row"><span class="grow"></span><button class="btn q" value="cancel">Cancel</button><button class="btn" id="dconfirm-ok" value="ok">Clear all</button></div>
+  </form>
+</dialog>
+<dialog id="dchangelog" aria-label="Changelog">
+  <form method="dialog">
+    <div style="display:flex;align-items:center;gap:10px;margin:0 0 12px"><h2 style="margin:0;font:600 15px/1.2 var(--sans)">Changelog</h2></div>
+    <pre id="changelog-content" style="margin:0 0 14px;max-height:44vh;overflow:auto;font:12px/1.6 var(--mono);color:var(--mid);border:1px solid var(--line);border-radius:var(--r-sm);background:var(--bg-3);padding:10px 12px">Loading…</pre>
+    <button class="btn q">Close</button>
+  </form>
 </dialog>
 <div id="toast" hidden role="status"></div>
 <script type="module">
@@ -1424,6 +1643,95 @@ const conv = store.get("chat", { messages: [] });
 let attachments = [];
 let chatCtl = null;
 const PARAMS = ["pmodel", "ptemp", "pmax", "peffort", "psys", "pstream", "pparallel", "ptools"];
+let accentPref = store.get("accent") || "theme";
+let densityPref = store.get("density") || "comfortable";
+let reducedPref = Boolean(store.get("reduced"));
+const ACCENTS = {
+  theme: null,
+  lime: { acc: "#c9ff4a", "acc-ink": "#0a1200", "acc-soft": "rgba(201, 255, 74, .12)", "acc-line": "rgba(201, 255, 74, .34)" },
+  blue: { acc: "#7fc4ff", "acc-ink": "#05263d", "acc-soft": "rgba(127, 196, 255, .12)", "acc-line": "rgba(127, 196, 255, .34)" },
+  ocean: { acc: "#66e4f1", "acc-ink": "#032027", "acc-soft": "rgba(102, 228, 241, .12)", "acc-line": "rgba(102, 228, 241, .34)" },
+  violet: { acc: "#c3a6ff", "acc-ink": "#2d0f47", "acc-soft": "rgba(195, 166, 255, .12)", "acc-line": "rgba(195, 166, 255, .34)" },
+  rose: { acc: "#f472b6", "acc-ink": "#4a044e", "acc-soft": "rgba(244, 114, 182, .12)", "acc-line": "rgba(244, 114, 182, .34)" },
+};
+function setTheme(pref) {
+  themePref = pref; store.set("theme", themePref); paintTheme(); refreshAppearanceChips();
+  toast("theme · " + themePref);
+}
+function setAccent(key) {
+  accentPref = key; store.set("accent", key);
+  const root = document.documentElement, a = ACCENTS[key];
+  if (a) Object.entries(a).forEach(([k, v]) => root.style.setProperty("--" + k, v));
+  else ["acc", "acc-ink", "acc-soft", "acc-line"].forEach((k) => root.style.removeProperty("--" + k));
+  refreshAppearanceChips(); toast("accent · " + key);
+}
+function setDensity(key) {
+  densityPref = key; store.set("density", key);
+  const root = document.documentElement;
+  if (key === "comfortable") root.removeAttribute("data-density");
+  else root.dataset.density = key;
+  refreshAppearanceChips();
+}
+function setReduced(on) {
+  reducedPref = on;
+  document.documentElement.dataset.reduced = on ? "1" : "0";
+  store.set("reduced", on);
+}
+function refreshAppearanceChips() {
+  $$("[data-theme]", side).forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.theme === themePref)));
+  $$("[data-accent]", side).forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.accent === accentPref)));
+  $$("[data-density]", side).forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.density === densityPref)));
+}
+function applyStoredAppearance() {
+  setAccent(accentPref);
+  if (densityPref === "comfortable") document.documentElement.removeAttribute("data-density");
+  else document.documentElement.dataset.density = densityPref;
+  document.documentElement.dataset.reduced = reducedPref ? "1" : "0";
+  $("#set-reduced").checked = reducedPref;
+  refreshAppearanceChips();
+}
+function rgbOf(hex) {
+  const m = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+  return m ? [parseInt(m[1], 16), parseInt(m[2], 16), parseInt(m[3], 16)] : [201, 255, 74];
+}
+function openSettings() {
+  closeSheets();
+  side.hidden = false;
+  store.set("side", true);
+  requestAnimationFrame(() => {
+    side.classList.add("open");
+    refreshOverlays();
+  });
+  prefillConnection();
+  updateModelHint();
+  refreshAppearanceChips();
+}
+function closeSettings() {
+  side.hidden = true;
+  store.set("side", false);
+  side.classList.remove("open");
+  refreshOverlays();
+}
+function prefillConnection() {
+  const c = creds();
+  $("#set-curl").value = c.url; $("#set-ckey").value = c.key; $("#set-cadm").value = c.admin;
+  $("#set-cstat").textContent = "";
+}
+function exportChat() {
+  const blob = new Blob([JSON.stringify({ model: $("#pmodel").value, system: $("#psys").value, messages: conv.messages.map((m) => ({ ...wire(m), ...(m.reasoning_content ? { reasoning_content: m.reasoning_content } : {}) })) }, null, 2)], { type: "application/json" });
+  const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = `nokey-chat-${Date.now()}.json`; a.click(); URL.revokeObjectURL(a.href);
+}
+function confirmDialog(msg, ok) {
+  $("#dconfirm-msg").textContent = msg;
+  const d = $("#dconfirm");
+  d.showModal();
+  d.addEventListener("close", () => { if (d.returnValue === "ok") ok(); }, { once: true });
+}
+function openChangelog() {
+  const pre = $("#changelog-content"); pre.textContent = "Loading…";
+  $("#dchangelog").showModal();
+  fetch("CHANGES.md").then((r) => r.text()).then((t) => { pre.textContent = t; }).catch((e) => { pre.textContent = "Changelog unavailable: " + e.message; });
+}
 (function loadParams() {
   const p = store.get("params", {});
   for (const id of PARAMS) if (p[id] !== undefined) { const el = $("#" + id); el.type === "checkbox" ? el.checked = p[id] : el.value = p[id]; }
@@ -1437,7 +1745,7 @@ function saveParams() {
 }
 for (const id of PARAMS) $("#" + id).addEventListener("input", saveParams);
 $("#ptemp").addEventListener("input", () => $("#ptempv").textContent = $("#ptemp").value);
-$("#cside").onclick = () => { $("#side").hidden = !$("#side").hidden; store.set("side", !$("#side").hidden); };
+$("#cside").onclick = () => { go("chat"); openSettings(); };
 const TOOL_PRESET = [
   { type: "function", function: { name: "get_weather", description: "Current weather for a city", parameters: { type: "object", properties: { city: { type: "string" } }, required: ["city"] } } },
   { type: "function", function: { name: "get_time", description: "Current time in an IANA timezone", parameters: { type: "object", properties: { tz: { type: "string" } }, required: ["tz"] } } },
@@ -1695,13 +2003,11 @@ chatView.addEventListener("drop", (e) => { e.preventDefault(); chatView.classLis
 
 function newChat() { if (chatCtl) chatCtl.abort(); conv.messages = []; saveConv(); renderThread(); updateModelHint(); $("#cinput").focus(); }
 $("#cnew").onclick = newChat;
-$("#cexport").onclick = () => {
-  const blob = new Blob([JSON.stringify({ model: $("#pmodel").value, system: $("#psys").value, messages: conv.messages.map((m) => ({ ...wire(m), ...(m.reasoning_content ? { reasoning_content: m.reasoning_content } : {}) })) }, null, 2)], { type: "application/json" });
-  const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = `nokey-chat-${Date.now()}.json`; a.click(); URL.revokeObjectURL(a.href);
-};
+$("#cexport").onclick = exportChat;
+$("#set-export").onclick = exportChat;
 enter.chat = () => { if (!thread.childElementCount && conv.messages.length) renderThread(); if (innerWidth > 860) $("#cinput").focus(); };
 cmd("new chat", () => { go("chat"); newChat(); });
-cmd("toggle chat parameters", () => { go("chat"); $("#cside").click(); });
+cmd("toggle settings", () => { go("chat"); openSettings(); }, "chat");
 cmd("load parallel tools preset", () => { go("chat"); $("#ppreset").click(); });
 
 // =====================================================================
@@ -2860,7 +3166,7 @@ $("#vgrid").innerHTML = VIEW_META.map(([v, name, desc, icon]) =>
 // ---- overlays ----
 const scrim = $("#scrim"), moreSheet = $("#more"), side = $("#side");
 function refreshOverlays() {
-  const sideOpen = MQ_MOBILE.matches && !side.hidden;
+  const sideOpen = !side.hidden;
   scrim.classList.toggle("open", sideOpen || moreSheet.classList.contains("open"));
   side.classList.toggle("open", sideOpen);
 }
@@ -2873,10 +3179,71 @@ function openSheet(el) {
 function closeSheets() {
   moreSheet.classList.remove("open");
   moreSheet.setAttribute("aria-hidden", "true");
-  if (MQ_MOBILE.matches && !side.hidden) { side.hidden = true; store.set("side", false); }
+  if (!side.hidden) closeSettings();
   refreshOverlays();
 }
 scrim.onclick = closeSheets;
+side.onclick = (e) => {
+  const b = e.target.closest("button");
+  if (!b) return;
+  if (b.closest("#model-results")) return;
+  if (b.dataset.theme) { setTheme(b.dataset.theme); return; }
+  if (b.dataset.accent) {
+    if (b.dataset.accent === "custom") { accentPref = "custom"; store.set("accent", "custom"); refreshAppearanceChips(); return; }
+    setAccent(b.dataset.accent); return;
+  }
+  if (b.dataset.density) { setDensity(b.dataset.density); return; }
+  if (b.matches("[data-close], [data-close] *")) { closeSettings(); return; }
+  if (b.id === "set-docs") { closeSettings(); window.open("/docs", "_blank", "noopener"); return; }
+  if (b.id === "set-keys") { closeSettings(); openKeys(); return; }
+  if (b.id === "set-changelog") { closeSettings(); openChangelog(); return; }
+  if (b.id === "set-import-pick") { $("#set-import").click(); return; }
+};
+$("#set-reduced").addEventListener("input", (e) => setReduced(e.target.checked));
+$("#set-accent").onchange = (e) => {
+  const c = e.target.value; const [r, g, b] = rgbOf(c);
+  const lum = (.2126 * r + .7152 * g + .0722 * b) / 255;
+  accentPref = "custom"; store.set("accent", "custom");
+  const root = document.documentElement;
+  root.style.setProperty("--acc", c);
+  root.style.setProperty("--acc-ink", lum > .55 ? "#0a1200" : "#ffffff");
+  root.style.setProperty("--acc-soft", `rgba(${r}, ${g}, ${b}, .12)`);
+  root.style.setProperty("--acc-line", `rgba(${r}, ${g}, ${b}, .34)`);
+  refreshAppearanceChips(); toast("accent · custom");
+};
+$("#set-csave").onclick = async (e) => {
+  e.preventDefault();
+  store.set("creds", { url: $("#set-curl").value.trim(), key: $("#set-ckey").value.trim(), admin: $("#set-cadm").value.trim() });
+  const st = $("#set-cstat"); st.textContent = "testing…"; st.className = "dim grow";
+  try {
+    await ping();
+    const checks = [];
+    try { await req("/v1/models"); checks.push("key ✓"); } catch (err) { checks.push("key ✗ " + err.message); }
+    if (creds().admin) { try { await req("/v1/traces?limit=1", { admin: true }); checks.push("admin ✓"); } catch (err) { checks.push("admin ✗ " + err.message); } }
+    st.textContent = checks.join(" · ");
+    st.className = checks.some((c) => c.includes("✗")) ? "no grow" : "ok grow";
+    armArchitect();
+  } catch (err) { st.textContent = err.message; st.className = "no grow"; }
+};
+$("#set-clear").onclick = () => { newChat(); closeSettings(); };
+$("#set-clearall").onclick = () => confirmDialog("Clear all stored data — chats, settings, plugins and drafts cannot be recovered.", () => {
+  for (const k of Object.keys(localStorage)) if (k.startsWith("nk.")) localStorage.removeItem(k);
+  location.reload();
+});
+$("#set-import").onchange = (e) => {
+  const file = e.target.files[0]; if (!file) return;
+  const r = new FileReader();
+  r.onload = (ev) => {
+    try {
+      const j = JSON.parse(ev.target.result);
+      if (!j || !Array.isArray(j.messages)) throw new Error("not a chat export");
+      conv.messages = j.messages.map((m) => wire(m));
+      saveConv(); renderThread(); closeSettings(); toast("imported " + conv.messages.length + " messages");
+    } catch (err) { toast("import failed: " + err.message, true); }
+  };
+  r.readAsText(file);
+  e.target.value = "";
+};
 $("#bmore").onclick = () => openSheet(moreSheet);
 $("#more").addEventListener("click", (e) => {
   if (e.target.closest("[data-close]")) { closeSheets(); return; }
@@ -2887,15 +3254,6 @@ $("#bnav").addEventListener("click", (e) => {
   const b = e.target.closest("[data-go]");
   if (b) go(b.dataset.go);
 });
-
-// the parameter panel becomes a bottom sheet on phones
-const sideHead = document.createElement("div");
-sideHead.className = "sheet-h";
-sideHead.innerHTML = `<h2>Parameters</h2><span class="grow"></span><button class="icon-btn" data-close aria-label="Close parameters"><svg aria-hidden="true"><use href="#i-x"/></svg></button>`;
-side.prepend(sideHead);
-sideHead.addEventListener("click", (e) => { if (e.target.closest("[data-close]")) { side.hidden = true; store.set("side", false); refreshOverlays(); } });
-new MutationObserver(refreshOverlays).observe(side, { attributes: true, attributeFilter: ["hidden"] });
-$("#cside").addEventListener("click", () => requestAnimationFrame(refreshOverlays));
 
 // ---- navigation sync + view transitions ----
 const PRIMARY = new Set(["chat", "architect", "media", "traces"]);
@@ -3017,6 +3375,7 @@ $("#thm").onclick = cycleTheme;
 matchMedia("(prefers-color-scheme: light)").addEventListener("change", () => { if (themePref === "auto") paintTheme(); });
 MQ_MOBILE.addEventListener("change", () => { refreshOverlays(); annotate(document); });
 paintTheme();
+applyStoredAppearance();
 annotate(document);
 refreshOverlays();
 if (typeof ResizeObserver !== "undefined") new ResizeObserver(navFit).observe(navEl);
