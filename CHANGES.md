@@ -244,3 +244,127 @@ poison 200, hung) plus live Kilo: SSE first frame 315 ms of a 1.1 s
 generation in 20 frames; poison-first and hang-first requests answered in
 1.2-1.3 s (hang-first was 5.9 s before the median cap); tool-call
 fragments merged; stream cancel clean. deno check clean; lint unchanged.
+
+## Addendum 9 — 2026-11-03 (ASCK v1: exhaustive endpoints, never-error requests)
+
+Goal: requests always work, and the router tries **every available endpoint**
+before giving up, for **any** requested model id. Two hard bugs stood in the
+way, plus a decade-old control heuristic.
+
+### Root causes of "it errored instead of trying everything"
+1. `parseServiceJsonRegistry` rejected `authHeader: null` (only string or
+   undefined were accepted). 47 of the 100 registry endpoints carry exactly
+   that shape, so **nearly half the registry was silently deleted before it
+   could ever be ranked or dispatched**. Optional string fields now accept
+   null. Coverage went 55 -> 102 configured endpoints (100 registry + Kilo +
+   OpenCode).
+2. Rankings only contain tuples with a KV record. Endpoints whose `/models`
+   discovery fails, returns an empty/foreign schema, or was never synced had
+   **no dispatchable candidate at all**. `providerModelHints()` now builds a
+   static per-endpoint model ladder from the registry's own `defaultModel` +
+   `telemetry.discoveredModels` (plus a universally accepted alias), so every
+   configured endpoint always has a candidate with or without KV.
+3. Dispatch was capped (12 + 18 + 10 attempts) and could return 502/503.
+   `free:fast` also filtered out `iqEffective < 0.50`, and vision lanes
+   discarded non-vision tuples.
+
+### New: ASCK v1 — Adaptive Stochastic Control Kernel (`math.ts`)
+A pure, dependency-free, O(1)-per-candidate mathematical kernel replacing
+the fixed-EWMA + static-Beta heuristics:
+- **Scalar Kalman filter over ln(TTFT)** with process noise Q and observation
+  noise R. The Kalman gain is the optimal learning rate; posterior variance
+  tightens on evidence and re-inflates with staleness (6 h cap), so an idle
+  endpoint is never deceptively "confidently fast".
+- **Posterior-predictive log-normal quantiles** for first-token deadlines,
+  computed with an incomplete-gamma (series + Lentz continued fraction)
+  normal CDF/quantile that keeps ~1e-300 tail resolution instead of the old
+  A&S 1.5e-7 approximation.
+- **Survival-driven optimal hedging**: with k spare arms, P(all pending at t)
+  = S(t)^k; solving S(t)^k = theta0 gives the effective tail
+  theta = theta0^(1/(1+eta*ln(1+k))), and the hedge delay is the (1-theta)
+  quantile. More alternatives hedge no later; kills use the p99.9 predictive
+  quantile.
+- **Discounted Thompson sampling** (Beta posterior decayed toward uniform
+  with a 6 h half-life) + **UCB exploration bonus** + **Wilson lower bound**
+  for deterministic rankings + **Gumbel / Plackett-Luce** rank sampling.
+  Records gain `log_ttft_updated_at` and `last_success_at` (optional, so old
+  KV rows self-heal without a migration).
+- **Trigram-Dice + token-Jaccard model similarity** for model-agnostic
+  ordering of arbitrary requested model ids.
+- **Decorrelated jitter** on cooldown backoff.
+
+### New: four-tier anytime dispatch
+1. `mode-ranked` — the ASCK-ranked lane (env `MESH_RACE_TIER1_ATTEMPTS`).
+2. `cross-lane-proven` — proven tuples from all four lanes, including cooling
+   down providers; `ESCALATION_POLICY`.
+3. `full-catalog` — every catalog tuple with breaker/cooldown/vision/IQ gates
+   lifted; `WIDE_POLICY` burst.
+4. `exhaustive-endpoint-sweep` — every configured endpoint (and up to
+   `MESH_SWEEP_MODELS_PER_ENDPOINT`=3 model variants each), round-robined so
+   each provider is tried before any provider's second model; burst launch
+   (128 slots, one in-flight per provider) with 6-15 s first-token kills.
+   This tier intentionally re-attempts earlier tuples with fresh protocol
+   negotiation. `tried` is shared across tiers so nothing is double-counted.
+Every tier has a hard anytime budget (15-60 / 25 / 25 / 25 s); expiry cuts
+only that tier via a portable `combineSignals`, never the request, so
+escalation always progresses.
+
+### New: adaptive wire-protocol negotiation
+`openUpstreamAdaptive` retries a relay up to 5 rungs — full payload + SSE,
+minimal payload + SSE, universal model alias + SSE, minimal + JSON, alias +
+JSON — on 400/404/405/415/422/501, `UPSTREAM_ERR`, poison-empty, or JSON
+parse failures. `parseDeltas` now self-sniffs SSE, single JSON documents,
+JSON arrays and **plain text**, and `extractJsonDelta` normalises the eight
+response shapes used across the keyless registry. Poison guard extended to
+HTML/error-page bodies; tool-call delta indexing is preserved for SSE.
+
+### New: requests always work
+- Malformed/empty bodies are normalised (including `prompt`-only payloads)
+  instead of 400ing; no more 502/503 from `/v1/chat/completions`.
+- After the full sweep, a **valid 200 OpenAI-shaped completion is returned**
+  (JSON or SSE) with `nokey.degraded: true`, `X-Nokey-Degraded: 1` and an
+  honest explanation that no model output was fabricated. Set
+  `NOKEY_STRICT_ERRORS=1` to restore legacy 502 while debugging.
+- `/v1/images/generations` tries all three image backends for ANY model id,
+  validates that the returned body is really an image, and falls back to a
+  locally generated labelled SVG placeholder (also for `b64_json`) instead
+  of 502. Missing prompt uses a benign default.
+- Rate limiter is now generous and tunable (`NOKEY_RATE_BURST`=120,
+  `NOKEY_RATE_REFILL`=8/s), so normal clients never get a 429.
+
+### New: observability
+- `GET /v1/endpoints` — every configured endpoint, its URL, catalog tuple
+  count and model ladder, plus sweep size.
+- `GET /health` — coverage, the active control kernel, guaranteed-response
+  policy, and the registry load diagnostic.
+- `GET /v1/models` — `accepts_any_model: true`.
+- Successful responses carry `nokey` metadata and `X-Nokey-Attempts` /
+  `X-Nokey-Endpoints` headers.
+- Dashboard: connection toast shows endpoint coverage; degraded chat replies
+  get an explicit amber banner; Architect prompt/tool docs updated (and
+  `math.ts` added to the `/v1/source` allowlist).
+
+### Cleanup
+Removed dead resolver/admissibility helpers, `toDelta` (superseded by
+`extractJsonDelta`), unused params, and `async`-without-`await` handlers.
+`deno check` and `deno lint main.ts math.ts tests/` are both **clean**.
+
+### Verification (fresh KV, fully mocked upstreams — no external network)
+`deno task check` clean; `deno lint` clean; `deno task test` -> **20 passed,
+0 failed** (8 math-kernel unit tests + 12 end-to-end dispatch tests):
+- all 102 configured endpoints POSTed at least once when every upstream is
+  dead, with 240 dispatch attempts, and the client still receives HTTP 200
+- unknown requested model id answered by a healthy endpoint; streaming
+  success emits chunks + `[DONE]`
+- streamed degradation remains a valid 200 SSE stream
+- 400-on-stream relays rescued by protocol negotiation; plain-text and
+  JSON-only bodies accepted; malformed bodies normalised
+- image endpoint degrades to a valid placeholder for `url` and `b64_json`
+- `/health`, `/v1/models`, `/v1/endpoints` report 102 endpoints / 211 sweep
+  candidates
+
+### Deployment note
+As before, a push alone does not deploy — redeploy the Deno project with this
+`main.ts` + the new `math.ts` + `services.json` present. New optional env:
+`NOKEY_STRICT_ERRORS`, `NOKEY_RATE_BURST`, `NOKEY_RATE_REFILL`,
+`MESH_SWEEP_MODELS_PER_ENDPOINT` (existing `MESH_RACE_TIER1_ATTEMPTS` kept).

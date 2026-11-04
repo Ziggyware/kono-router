@@ -1,6 +1,19 @@
-import { Hono } from "hono";
+import { Hono, type Context } from "hono";
 import { cors } from "hono/cors";
 import { bodyLimit } from "hono/body-limit";
+import {
+  clamp as clampNum,
+  decorrelatedJitter,
+  discountedPosterior,
+  gumbelNoise,
+  hedgePlan,
+  kalmanObserve,
+  modelSimilarity,
+  predictiveSigma,
+  sampleBeta,
+  ucbBonus,
+  wilsonLowerBound,
+} from "./math.ts";
 
 // ============================================================================
 // 1. DENO KV + L1 ISOLATE CACHE + CAS ATOMIC STATE ENGINE
@@ -24,6 +37,10 @@ export interface MeshModelRecord {
   // EW mean/variance of ln(TTFT); absent on older records (derived from ewma_ttft_ms).
   ewma_log_ttft?: number;
   ewmv_log_ttft?: number;
+  // Kalman posterior timestamp (epoch ms) and last real success, used for
+  // staleness inflation and discounted Thompson sampling respectively.
+  log_ttft_updated_at?: number;
+  last_success_at?: number;
   alpha_success: number;
   beta_failure: number;
   success_count: number;
@@ -108,8 +125,10 @@ function timingSafeCompare(a: string, b: string): boolean {
 }
 
 const IP_BUCKETS = new Map<string, { tokens: number; lastRefill: number }>();
-const MAX_BURST = 30;
-const REFILL_PER_SEC = 1.5;
+// Generous but bounded: a normal client must never see a 429 from the router,
+// while a pathological flood is still contained. Tunable per deployment.
+const MAX_BURST = clampNum(Number(Deno.env.get("NOKEY_RATE_BURST")) || 120, 5, 10_000);
+const REFILL_PER_SEC = clampNum(Number(Deno.env.get("NOKEY_RATE_REFILL")) || 8, 0.1, 1_000);
 
 function checkRateLimit(ip: string): boolean {
   const now = Date.now();
@@ -262,7 +281,7 @@ function analyzeModelCapabilities(modelId: string, contextLength: number = 12800
 }
 
 const POISON_REGEX =
-  /rate limit exceeded|too many requests|cloudflare ray id|just a moment\.\.\.|api key is required|insufficient_quota|error code: 1020|visit https:\/\/|upgrade your plan|free tier limit|model is overloaded|service unavailable|provider returned error/i;
+  /rate limit exceeded|too many requests|cloudflare ray id|just a moment\.\.\.|api key is required|insufficient_quota|error code: 1020|visit https:\/\/|upgrade your plan|free tier limit|model is overloaded|service unavailable|provider returned error|<\s*!doctype|<\s*html|access denied|captcha|bad gateway|upstream connect error|service temporarily unavailable|enable javascript|origin (?:is|not) allowed/i;
 
 function computeShannonEntropy(str: string): number {
   const len = str.length;
@@ -307,33 +326,8 @@ function verifyCleanText(text: string): void {
 
 export type RoutingMode = "fast" | "smart" | "code" | "reasoning";
 
-function sampleGamma(alpha: number): number {
-  if (alpha < 1) {
-    return sampleGamma(1 + alpha) * Math.pow(Math.random(), 1 / alpha);
-  }
-  const d = alpha - 1 / 3;
-  const c = 1 / Math.sqrt(9 * d);
-  while (true) {
-    let x = 0;
-    let v = 0;
-    do {
-      const u1 = Math.random();
-      const u2 = Math.random();
-      x = Math.sqrt(-2 * Math.log(Math.max(1e-12, u1))) * Math.cos(2 * Math.PI * u2);
-      v = 1 + c * x;
-    } while (v <= 0);
-    v = v * v * v;
-    const u = Math.random();
-    if (u < 1 - 0.0331 * (x * x) * (x * x)) return d * v;
-    if (Math.log(u) < 0.5 * x * x + d * (1 - v + Math.log(v))) return d * v;
-  }
-}
-
-function sampleBeta(alpha: number, beta: number): number {
-  const x = sampleGamma(Math.max(0.5, alpha));
-  const y = sampleGamma(Math.max(0.5, beta));
-  return x / (x + y);
-}
+// Bandit sampling primitives live in ./math.ts (ASCK v1): sampleGamma /
+// sampleBeta (Marsaglia–Tsang), discountedPosterior, UCB, Wilson, Gumbel.
 
 function extractMessageText(messages: Array<{ role: string; content: unknown }>): {
   combinedText: string;
@@ -431,16 +425,6 @@ async function resolveProviderByName(name: string): Promise<ProviderSpec | undef
   return undefined;
 }
 
-async function resolveProviderByNameWithDomain(name: string, remoteAddr: string): Promise<ProviderSpec | undefined> {
-  const byName = await resolveProviderByName(name);
-  if (byName) return byName;
-  return undefined;
-}
-
-async function resolveProviderByNameWithEndpointResolver(name: string, remoteAddr: string): Promise<ProviderSpec | undefined> {
-  return resolveProviderByNameWithDomain(name, remoteAddr);
-}
-
 export const resolveProviderByNameAsync = resolveProviderByName;
 
 interface CompletionResult {
@@ -487,6 +471,8 @@ interface UpstreamStream {
 interface ProviderSpec {
   id: string;
   name: string;
+  /** Chat completions URL, exposed for coverage reporting. */
+  chatUrl?: string;
   isConfigured: () => boolean;
   discoverModels: (signal: AbortSignal) => Promise<Array<{ id: string, context?: number; }>>;
   executeCompletion: (
@@ -499,61 +485,129 @@ interface ProviderSpec {
 
 type Json = Record<string, unknown>;
 
-function toDelta(choice: Json | undefined, indexToolCalls: boolean): Delta | null {
-  const m = (choice?.delta ?? choice?.message ?? {}) as Json;
-  const content = typeof m.content === "string" && m.content ? m.content : undefined;
-  const r = m.reasoning_content ?? m.reasoning;
-  const reasoning = typeof r === "string" && r ? r : undefined;
-  const raw = Array.isArray(m.tool_calls) && m.tool_calls.length > 0 ? m.tool_calls : undefined;
-  const toolCalls = raw && indexToolCalls
-    ? raw.map((t: Json, i: number) => ({ ...t, index: typeof t.index === "number" ? t.index : i }))
-    : raw;
-  const finish = typeof choice?.finish_reason === "string" ? choice.finish_reason : undefined;
-  return content || reasoning || toolCalls || finish ? { content, reasoning, toolCalls, finish } : null;
+function firstString(...xs: unknown[]): string | undefined {
+  for (const x of xs) {
+    if (typeof x === "string" && x.length > 0) return x;
+    if (Array.isArray(x)) {
+      const joined = x
+        .map((b) => (b && typeof b === "object" && typeof (b as Json).text === "string"
+          ? String((b as Json).text)
+          : typeof b === "string" ? b : ""))
+        .join("")
+        .trim();
+      if (joined) return joined;
+    }
+  }
+  return undefined;
+}
+
+// Normalises the ~8 response shapes seen across the 100-endpoint keyless
+// registry: OpenAI chat completion, {response}, {content}, {output}, plain
+// {message:{content}}, arrays of chunks, and provider-specific wrappers.
+function extractJsonDelta(data: unknown, indexToolCalls = true): Delta | null {
+  if (Array.isArray(data)) {
+    let content = "";
+    for (const item of data) {
+      const d = extractJsonDelta(item, indexToolCalls);
+      if (d?.content) content += d.content;
+    }
+    return content ? { content } : null;
+  }
+  if (!data || typeof data !== "object") return null;
+  const obj = data as Json;
+  if (obj.error) {
+    const e = obj.error as Json;
+    throw new Error(`UPSTREAM_ERR: ${String(e.message ?? JSON.stringify(e))}`);
+  }
+  const choice = (Array.isArray(obj.choices) ? obj.choices[0] : obj.choices) as Json | undefined;
+  const msg = (choice?.message ?? choice?.delta ?? obj.message ?? obj.delta ?? {}) as Json;
+  const content = firstString(
+    msg.content, choice?.text, choice?.content, obj.response, obj.content,
+    obj.output, obj.output_text, obj.answer, obj.completion, obj.generated_text,
+    obj.text, obj.data,
+  );
+  const reasoning = firstString(msg.reasoning_content, msg.reasoning, obj.reasoning_content, obj.reasoning);
+  const rawTools = (msg.tool_calls ?? obj.tool_calls) as unknown;
+  const toolCalls = Array.isArray(rawTools) && rawTools.length > 0
+    ? (indexToolCalls
+      ? rawTools.map((t: Json, i: number) => ({ ...t, index: typeof t.index === "number" ? t.index : i }))
+      : rawTools as ToolCallDelta[])
+    : undefined;
+  const finish = typeof choice?.finish_reason === "string"
+    ? choice.finish_reason
+    : typeof obj.finish_reason === "string" ? obj.finish_reason : undefined;
+  if (!content && !reasoning && !toolCalls && !finish) return null;
+  return { content, reasoning, toolCalls, finish };
 }
 
 function sseLineDelta(line: string): Delta | null {
   if (!line.startsWith("data:")) return null;
   const slice = line.slice(5).trim();
   if (!slice || slice === "[DONE]") return null;
-  let parsed: { error?: { message?: string }; choices?: Json[] };
+  let parsed: unknown;
   try {
     parsed = JSON.parse(slice);
   } catch {
-    return null; // keepalive / comment frames
+    // Some keyless relays stream raw text behind a `data:` prefix rather than JSON.
+    return { content: slice };
   }
-  if (parsed.error) throw new Error(`UPSTREAM_ERR: ${parsed.error.message || JSON.stringify(parsed.error)}`);
-  return toDelta(parsed.choices?.[0], false);
+  return extractJsonDelta(parsed, false);
 }
 
-// Incremental SSE parser; sniffs bodies that ignore stream:true and answer with one JSON document.
+// Incremental, self-sniffing response decoder. It handles SSE, a single JSON
+// document (bodies that ignore stream:true), JSON arrays, and plain text —
+// every shape the heterogeneous keyless registry emits.
 async function* parseDeltas(body: ReadableStream<Uint8Array>): AsyncGenerator<Delta> {
   let buf = "";
-  let json: boolean | null = null;
+  let mode: "unknown" | "json" | "sse" | "text" = "unknown";
   for await (const text of body.pipeThrough(new TextDecoderStream())) {
-    buf += text;
-    if (json === null) {
-      const s = buf.trimStart();
-      if (!s) continue;
-      json = s[0] === "{";
+    if (mode === "text") {
+      if (text) yield { content: text };
+      continue;
     }
-    if (json) continue;
-    for (let nl = buf.indexOf("\n"); nl >= 0; nl = buf.indexOf("\n")) {
-      const d = sseLineDelta(buf.slice(0, nl).trim());
-      buf = buf.slice(nl + 1);
-      if (d) yield d;
+    buf += text;
+    if (mode === "unknown") {
+      const head = buf.trimStart();
+      if (!head) continue;
+      if (head[0] === "{" || head[0] === "[") mode = "json";
+      else if (head.startsWith("data:") || head.startsWith("event:") || head.startsWith("id:") || head.startsWith(":")) mode = "sse";
+      else if (buf.length >= 24 || head.includes("\n")) mode = "text";
+      else continue; // wait for a little more evidence before deciding
+      if (mode === "text") {
+        const chunk = buf;
+        buf = "";
+        if (chunk.trim()) yield { content: chunk };
+        continue;
+      }
+    }
+    if (mode === "sse") {
+      for (let nl = buf.indexOf("\n"); nl >= 0; nl = buf.indexOf("\n")) {
+        const d = sseLineDelta(buf.slice(0, nl).trim());
+        buf = buf.slice(nl + 1);
+        if (d) yield d;
+      }
     }
   }
-  if (json) {
-    const data = JSON.parse(buf);
-    if (data.error) throw new Error(`UPSTREAM_ERR: ${data.error.message || JSON.stringify(data.error)}`);
-    const choice = data.choices?.[0] ?? { message: { content: data.response ?? "" } };
-    const d = toDelta(choice.message || choice.delta ? choice : { message: { content: choice.text } }, true);
+  if (mode === "json") {
+    let data: unknown;
+    try {
+      data = JSON.parse(buf.replace(/^\uFEFF/, "").trim());
+    } catch {
+      // A truncated JSON document still often contains usable text.
+      const salvage = buf.match(/"(?:content|response|text|output)"\s*:\s*"((?:\\.|[^"\\])*)"/);
+      if (salvage) yield { content: salvage[1].replace(/\\n/g, "\n").replace(/\\"/g, '"') };
+      return;
+    }
+    const d = extractJsonDelta(data);
     if (d) yield d;
     return;
   }
-  const d = sseLineDelta(buf.trim());
-  if (d) yield d;
+  if (mode === "sse") {
+    const d = sseLineDelta(buf.trim());
+    if (d) yield d;
+    return;
+  }
+  if (buf.trim()) yield { content: buf };
 }
 
 // Enough text for POISON_REGEX phrases and the 32-char entropy floor to be decidable.
@@ -566,12 +620,13 @@ async function openUpstream(
   headers: Record<string, string>,
   payload: Record<string, unknown>,
   signal: AbortSignal,
+  stream = true,
 ): Promise<UpstreamStream> {
   const t0 = performance.now();
   const res = await fetch(url, {
     method: "POST",
     headers: buildRotatedHeaders(headers),
-    body: JSON.stringify({ ...payload, stream: true }),
+    body: JSON.stringify({ ...payload, stream }),
     signal,
   });
 
@@ -579,6 +634,12 @@ async function openUpstream(
     await res.body?.cancel().catch(() => {});
     if (res.status === 429) throw new Error("HTTP_429: Rate limit");
     if (res.status === 401 || res.status === 403) throw new Error(`HTTP_${res.status}: Blocked`);
+    // 4xx/501 here almost always means "this relay does not accept stream:true"
+    // or "does not understand one of the optional params". Tagged as negotiable
+    // so openUpstreamAdaptive can retry a simpler wire shape.
+    if ([400, 404, 405, 415, 422, 501].includes(res.status)) {
+      throw new Error(`PROTOCOL_HTTP_${res.status}: retry with a simpler payload`);
+    }
     throw new Error(`HTTP_${res.status}: Upstream error`);
   }
 
@@ -606,6 +667,51 @@ async function openUpstream(
     }
   }
   return { t0, ttftMs: ttftMs || Math.round(performance.now() - t0), head, tail };
+}
+
+// A model id accepted by the widest set of keyless relays (used only on the
+// last protocol-negotiation rung, never on the fast path).
+const UNIVERSAL_MODEL_ALIAS = "gpt-4o-mini";
+
+function isNegotiableFailure(e: unknown): boolean {
+  if (e instanceof Error && /abort/i.test(e.name) && /HEDGE_LOST|CLIENT_DISCONNECTED|TIMEOUT/.test(e.message)) return false;
+  const m = e instanceof Error ? e.message : String(e);
+  return /^(PROTOCOL_|HTTP_400|HTTP_404|HTTP_405|HTTP_415|HTTP_422|HTTP_501|POISON_EMPTY|POISON_DEGENERATE|UPSTREAM_ERR)/.test(m) ||
+    /^Unexpected|JSON|SyntaxError/i.test(m);
+}
+
+// Adaptive wire-protocol negotiation. A keyless relay that rejects streaming,
+// optional params, or the requested model name is retried with progressively
+// simpler payloads instead of being written off as dead. This is what lets the
+// exhaustive sweep actually use heterogeneous endpoints.
+async function openUpstreamAdaptive(
+  url: string,
+  headers: Record<string, string>,
+  payload: Record<string, unknown>,
+  signal: AbortSignal,
+): Promise<UpstreamStream> {
+  const model = String(payload.model ?? "");
+  const messages = payload.messages;
+  const minimal: Record<string, unknown> = { model, messages };
+  const alias: Record<string, unknown> = { model: UNIVERSAL_MODEL_ALIAS, messages };
+  const rungs: Array<{ p: Record<string, unknown>; stream: boolean }> = [
+    { p: payload, stream: true },
+    { p: minimal, stream: true },
+  ];
+  if (model.toLowerCase() !== UNIVERSAL_MODEL_ALIAS) rungs.push({ p: alias, stream: true });
+  rungs.push({ p: minimal, stream: false }, { p: alias, stream: false });
+
+  let lastErr: unknown = null;
+  for (let i = 0; i < rungs.length; i++) {
+    if (signal.aborted) throw signal.reason ?? new Error("ABORTED_BY_RACE");
+    try {
+      return await openUpstream(url, headers, rungs[i].p, signal, rungs[i].stream);
+    } catch (e) {
+      lastErr = e;
+      if (!isNegotiableFailure(e) || signal.aborted || i === rungs.length - 1) throw e;
+    }
+  }
+  throw lastErr ?? new Error("Upstream protocol negotiation exhausted");
 }
 
 function mergeToolCalls(acc: Map<number, ToolCallDelta>, deltas: ToolCallDelta[]): void {
@@ -745,13 +851,17 @@ function parseServiceJsonRegistry(raw: string): ServiceJsonRegistry | null {
     if (!item || typeof item !== "object") continue;
     const obj = item as Record<string, unknown>;
     if (typeof obj.name !== "string" || typeof obj.url !== "string") continue;
-    if (obj.baseUrl !== undefined && typeof obj.baseUrl !== "string") continue;
-    if (obj.modelsUrl !== undefined && typeof obj.modelsUrl !== "string") continue;
-    if (obj.authHeader !== undefined && typeof obj.authHeader !== "string") continue;
-    if (obj.defaultModel !== undefined && typeof obj.defaultModel !== "string") continue;
-    if (obj.authMode !== undefined && typeof obj.authMode !== "string") continue;
-    if (obj.category !== undefined && typeof obj.category !== "string") continue;
-    if (obj.notes !== undefined && typeof obj.notes !== "string") continue;
+    // Optional string fields may legitimately be null (e.g. 47 of the 100
+    // keyless endpoints carry "authHeader": null). Rejecting null here used to
+    // silently discard nearly half the registry before it could be ranked.
+    const optionalString = (v: unknown) => v === undefined || v === null || typeof v === "string";
+    if (!optionalString(obj.baseUrl)) continue;
+    if (!optionalString(obj.modelsUrl)) continue;
+    if (!optionalString(obj.authHeader)) continue;
+    if (!optionalString(obj.defaultModel)) continue;
+    if (!optionalString(obj.authMode)) continue;
+    if (!optionalString(obj.category)) continue;
+    if (!optionalString(obj.notes)) continue;
     if (obj.id !== undefined && typeof obj.id !== "number") continue;
     endpoints.push({
       id: typeof obj.id === "number" ? obj.id : 0,
@@ -916,8 +1026,9 @@ function makeServiceJsonProvider(endpoint: ServiceJsonEndpoint, validationError?
   return {
     id,
     name: endpoint.name,
+    chatUrl,
     isConfigured: () => isEndpointConfigured(endpoint),
-    discoverModels: async (signal) => {
+    discoverModels: async () => {
       const targetUrl = modelsUrl ?? (baseUrl ? `${baseUrl}/models` : null);
       if (!targetUrl) {
         return [{ id: defaultModel, context: 128000 }];
@@ -959,7 +1070,7 @@ function makeServiceJsonProvider(endpoint: ServiceJsonEndpoint, validationError?
       }
     },
     executeCompletion: (modelId, messages, signal, options) =>
-      openUpstream(
+      openUpstreamAdaptive(
         chatUrl,
         headers,
         { model: modelId, messages, ...buildOptionalParams(options) },
@@ -972,6 +1083,7 @@ const PROVIDERS: ProviderSpec[] = [
   {
     id: "openrouter",
     name: "OpenRouter Verified :free Mesh",
+    chatUrl: "https://openrouter.ai/api/v1/chat/completions",
     isConfigured: () => Boolean(pickOpenRouterKey()),
     discoverModels: async (signal) => {
       try {
@@ -1009,7 +1121,7 @@ const PROVIDERS: ProviderSpec[] = [
       if (!apiKey) {
         throw new Error("HTTP_401: OPENROUTER_API_KEY not configured for openrouter provider");
       }
-      return openUpstream(
+      return openUpstreamAdaptive(
         "https://openrouter.ai/api/v1/chat/completions",
         {
           "Authorization": `Bearer ${apiKey}`,
@@ -1024,6 +1136,7 @@ const PROVIDERS: ProviderSpec[] = [
   {
     id: "llm7",
     name: "LLM7 Anonymous Mesh",
+    chatUrl: "https://api.llm7.io/v1/chat/completions",
     // Disabled 2026-10-27: llm7.io revoked anonymous access (401 on the hardcoded
     // "Bearer unused" token) and its 47 catalog tuples clogged the smart/code
     // dispatch waves. Re-enable only after wiring a real LLM7_API_KEY here.
@@ -1039,7 +1152,7 @@ const PROVIDERS: ProviderSpec[] = [
       }));
     },
     executeCompletion: (modelId, messages, signal, options) =>
-      openUpstream(
+      openUpstreamAdaptive(
         "https://api.llm7.io/v1/chat/completions",
         { "Authorization": "Bearer unused" },
         { model: modelId, messages, ...buildOptionalParams(options) },
@@ -1049,6 +1162,7 @@ const PROVIDERS: ProviderSpec[] = [
   {
     id: "kilo",
     name: "Kilo Code AI Gateway",
+    chatUrl: "https://ai-gateway.kilo.ai/api/v1/chat/completions",
     isConfigured: () => true,
     discoverModels: async (signal) => {
       try {
@@ -1081,7 +1195,7 @@ const PROVIDERS: ProviderSpec[] = [
       ];
     },
     executeCompletion: (modelId, messages, signal, options) =>
-      openUpstream(
+      openUpstreamAdaptive(
         "https://ai-gateway.kilo.ai/api/v1/chat/completions",
         { "x-kilocode-mode": "code", "User-Agent": "Kilo-Code/3.4.0" },
         { model: modelId, messages, ...buildOptionalParams(options) },
@@ -1091,16 +1205,17 @@ const PROVIDERS: ProviderSpec[] = [
   {
     id: "opencode",
     name: "OpenCode V2 Zen",
+    chatUrl: "https://opencode.ai/inference/openai/v1/chat/completions",
     isConfigured: () => true,
-    discoverModels: async () => [
+    discoverModels: () => Promise.resolve([
       { id: "deepseek-v4.1-flash-free", context: 1048576 },
       { id: "glm-5.3-flash-free", context: 1048576 },
       { id: "nemotron-3.5-lightning-free", context: 1048576 },
       { id: "qwen3.8-27b-free", context: 262144 },
       { id: "mimo-v2.6-flash-free", context: 262144 },
-    ],
+    ]),
     executeCompletion: (modelId, messages, signal, options) =>
-      openUpstream(
+      openUpstreamAdaptive(
         "https://opencode.ai/inference/openai/v1/chat/completions",
         {
           "x-opencode-client": "cli",
@@ -1158,23 +1273,8 @@ async function activeProviderList(): Promise<ProviderSpec[]> {
   }
 }
 
-function isActiveProviderId(id: string): boolean {
-  for (const p of MERGED_ACTIVE_PROVIDERS) {
-    if (p.id === id) return p.isConfigured();
-  }
-  return false;
-}
-
-async function isActiveProviderIdAsync(id: string): Promise<boolean> {
-  for (const p of MERGED_ACTIVE_PROVIDERS) {
-    if (p.id === id) return p.isConfigured();
-  }
-  const p = await resolveProviderByName(id);
-  return Boolean(p && p.isConfigured());
-}
-
 // Prefer the registry-backed resolve path when callers dispatch by router name.
-export async function findProviderByName(name: string): Promise<ProviderSpec | undefined> {
+export function findProviderByName(name: string): Promise<ProviderSpec | undefined> {
   return resolveProviderByName(name);
 }
 
@@ -1192,26 +1292,6 @@ async function resolveProviderById(providerId: string): Promise<ProviderSpec | u
   return extra.find((p) => p.id === providerId);
 }
 
-// Admissibility consolidation. A provider is admissible if it is configured and
-// resolvable through the active provider universe (native + services.json).
-async function isProviderAdmissible(provider: ProviderSpec): Promise<boolean> {
-  if (!provider.isConfigured()) return false;
-  const found = await resolveProviderByName(provider.name);
-  return Boolean(found);
-}
-
-function mergeAdmissibleProviderList(native: ProviderSpec[], serviceJson: ProviderSpec[]): ProviderSpec[] {
-  const kept: ProviderSpec[] = [];
-  for (const p of native) {
-    if (p.isConfigured()) kept.push(p);
-  }
-  for (const p of serviceJson) {
-    if (p.isConfigured()) kept.push(p);
-  }
-  return kept;
-}
-
-
 // ============================================================================
 // 6. AUTO-DISCOVERY SYNC & PARETO + THOMPSON OBJECTIVE SCORER
 // ============================================================================
@@ -1222,7 +1302,7 @@ let lastSyncCheckMemory = 0;interface SyncProviderTask {
   force: boolean;
 }
 
-let perEndpointSyncGate = new Map<string, Promise<void>>();
+const perEndpointSyncGate = new Map<string, Promise<void>>();
 
 async function runSyncProviderTask(task: SyncProviderTask): Promise<void> {
   const { provider, last, force } = task;
@@ -1432,11 +1512,103 @@ function breakerProviderId(tupleId: string): string {
   return tupleId.split("::")[0] || "";
 }
 
+interface RankOptions {
+  includeCoolingDown?: boolean;
+  verifiedOnly?: boolean;
+  /** Exhaustive mode: ignore breaker, tuple cooldown, vision and IQ gates. */
+  unrestricted?: boolean;
+}
+
+// ---------------------------------------------------------------------------
+// ASCK v1 scoring: discounted Thompson sampling + Kalman predictive quantiles
+// + UCB exploration + Plackett–Luce (Gumbel) rank sampling. Pure function of
+// one catalog record, reused by the lane ranker and the exhaustive sweep.
+// ---------------------------------------------------------------------------
+function scoreRecord(
+  r: MeshModelRecord,
+  mode: RoutingMode,
+  deterministic: boolean,
+  totalPulls: number,
+  now: number,
+): ScoredCandidate {
+  const iqPrior = Number(r.iq_prior);
+  // Rank-time trust clamp: a tuple that has never completed a request cannot
+  // spend a trusted iq_verified, no matter what sync stored.
+  const iqVerified = r.success_count > 0
+    ? Number(r.iq_verified)
+    : Math.min(Number(r.iq_verified), 0.55);
+  const iqEffective = Number((iqPrior * iqVerified).toFixed(3));
+  const ewmaTtftMs = Number(r.ewma_ttft_ms);
+  const ewmaTps = Math.max(1.0, Number(r.ewma_tps));
+
+  // Kalman posterior over ln(TTFT); staleness inflates predictive sigma.
+  const logTtftMu = r.ewma_log_ttft ?? Math.log(Math.max(1, ewmaTtftMs));
+  const logTtftSigma = predictiveSigma({
+    mu: logTtftMu,
+    variance: clampNum(r.ewmv_log_ttft ?? 0.25, 0.01, 2.5),
+    updatedAtMs: r.log_ttft_updated_at ?? 0,
+  }, now);
+
+  // Discounted Beta-Bernoulli posterior (6 h half-life). Stale glory decays
+  // back to the uniform prior, so a dead key cannot coast for weeks.
+  const post = discountedPosterior(
+    Number(r.alpha_success || 2.0),
+    Number(r.beta_failure || 1.0),
+    r.last_success_at ?? r.last_probed ?? now,
+    now,
+  );
+  const pulls = Math.max(0, r.success_count + r.failure_streak);
+  const reliabilityDraw = deterministic
+    ? wilsonLowerBound(Math.max(0, post.alpha - 1), Math.max(1, post.alpha + post.beta - 2))
+    : sampleBeta(post.alpha, post.beta);
+  const exploration = deterministic ? 0 : ucbBonus(pulls, totalPulls);
+  const plackettLuce = deterministic ? 0 : 0.012 * gumbelNoise();
+
+  const expectedFastMs = Math.round(
+    (ewmaTtftMs + (250 / ewmaTps) * 1000) / Math.max(0.35, reliabilityDraw),
+  );
+  const latencyPenalty = Math.max(0, (expectedFastMs - 8500) / 42000);
+  const isLfmSmall = /lfm-2\.5-2\.6b/i.test(r.model_id);
+  const codeBonus = mode === "code"
+    ? (r.is_coding_specialist ? 0.085 : isLfmSmall ? -0.25 : 0)
+    : 0;
+  const reasoningBonus = mode === "reasoning" && r.supports_reasoning ? 0.095 : 0;
+  const thompsonBonus = (reliabilityDraw - 0.5) * 0.12;
+  const smartScore = Number(
+    (iqEffective + codeBonus + reasoningBonus + thompsonBonus + exploration + plackettLuce - latencyPenalty)
+      .toFixed(4),
+  );
+
+  return {
+    tupleId: r.tuple_id,
+    providerId: r.provider_id,
+    modelId: r.model_id,
+    iqEffective,
+    supportsReasoning: Boolean(r.supports_reasoning),
+    supportsVision: Boolean(r.supports_vision),
+    isCodingSpecialist: Boolean(r.is_coding_specialist),
+    contextWindow: Number(r.context_window || 128000),
+    reliabilityDraw: Number(reliabilityDraw.toFixed(3)),
+    ewmaTtftMs: Math.round(ewmaTtftMs),
+    ewmaTps: Number(ewmaTps.toFixed(1)),
+    logTtftMu,
+    logTtftSigma,
+    expectedFastMs,
+    smartScore,
+  };
+}
+
+function totalCatalogPulls(catalog: Map<string, MeshModelRecord>): number {
+  let n = 0;
+  for (const r of catalog.values()) n += Math.max(1, r.success_count + r.failure_streak);
+  return n;
+}
+
 async function getRankedCandidates(
   mode: RoutingMode,
   deterministic = false,
   requireVision = false,
-  opts: { includeCoolingDown?: boolean; verifiedOnly?: boolean } = {},
+  opts: RankOptions = {},
 ): Promise<ScoredCandidate[]> {
   // Hydrate first: a cold isolate whose catalog already lives in KV must not await a full provider sweep.
   const catalog = await hydrateL1Cache(false);
@@ -1453,77 +1625,23 @@ async function getRankedCandidates(
     ...serviceJsonProviderList.filter((p) => p.isConfigured()).map((p) => p.id),
   ]);
 
-  if (!opts.includeCoolingDown) {
+  if (!opts.includeCoolingDown && !opts.unrestricted) {
     for (const [pid, state] of PROVIDER_BREAKER) {
       if (state.openUntil > now) activeProviderIds.delete(pid);
     }
   }
+  const totalPulls = totalCatalogPulls(catalog);
 
   const candidates: ScoredCandidate[] = [];
   for (const r of catalog.values()) {
     if (!activeProviderIds.has(r.provider_id)) continue;
-    if (!opts.includeCoolingDown && r.cooldown_until > now) continue;
-    if (opts.verifiedOnly && r.success_count <= 0) continue;
-    if (requireVision && !r.supports_vision) continue;
-
-    const iqPrior = Number(r.iq_prior);
-    // Rank-time trust clamp: a tuple that has never completed a request
-    // does not get to use a trusted iq_verified in THIS ranking, no matter
-    // what is stored. The sync-time clamp (Addendum 2) only rewrites a
-    // record when that provider's discovery sync re-runs -- and sync skips
-    // providers whose discovery fails, which is exactly the population
-    // that needs demoting. Clamping here applies on every request.
-    const iqVerified = r.success_count > 0
-      ? Number(r.iq_verified)
-      : Math.min(Number(r.iq_verified), 0.55);
-    const iqEffective = Number((iqPrior * iqVerified).toFixed(3));
-    const ewmaTtftMs = Number(r.ewma_ttft_ms);
-    const ewmaTps = Math.max(1.0, Number(r.ewma_tps));
-    const logTtftMu = r.ewma_log_ttft ?? Math.log(Math.max(1, ewmaTtftMs));
-    const logTtftSigma = Math.min(1.5, Math.max(0.15, Math.sqrt(r.ewmv_log_ttft ?? 0.25)));
-
-    const alpha = Number(r.alpha_success || 2.0);
-    const beta = Number(r.beta_failure || 1.0);
-    const reliabilityDraw = deterministic
-      ? alpha / (alpha + beta)
-      : sampleBeta(alpha, beta);
-
-    const expectedFastMs = Math.round(
-      (ewmaTtftMs + (250 / ewmaTps) * 1000) / Math.max(0.35, reliabilityDraw),
-    );
-
-    const latencyPenalty = Math.max(0, (expectedFastMs - 8500) / 42000);
-    // Liquid AI explicitly advises against using LFM-2.5-2.6B for agentic coding
-    const isLfmSmall = /lfm-2\.5-2\.6b/i.test(r.model_id);
-    const codeBonus = mode === "code"
-      ? (r.is_coding_specialist ? 0.085 : isLfmSmall ? -0.25 : 0)
-      : 0;
-    const reasoningBonus = mode === "reasoning" && r.supports_reasoning ? 0.095 : 0;
-    const thompsonBonus = (reliabilityDraw - 0.5) * 0.12;
-    const smartScore = Number(
-      (iqEffective + codeBonus + reasoningBonus + thompsonBonus - latencyPenalty).toFixed(4),
-    );
-
-    candidates.push({
-      tupleId: r.tuple_id,
-      providerId: r.provider_id,
-      modelId: r.model_id,
-      iqEffective,
-      supportsReasoning: Boolean(r.supports_reasoning),
-      supportsVision: Boolean(r.supports_vision),
-      isCodingSpecialist: Boolean(r.is_coding_specialist),
-      contextWindow: Number(r.context_window || 128000),
-      reliabilityDraw: Number(reliabilityDraw.toFixed(3)),
-      ewmaTtftMs: Math.round(ewmaTtftMs),
-      ewmaTps: Number(ewmaTps.toFixed(1)),
-      logTtftMu,
-      logTtftSigma,
-      expectedFastMs,
-      smartScore,
-    });
+    if (!opts.includeCoolingDown && !opts.unrestricted && r.cooldown_until > now) continue;
+    if (opts.verifiedOnly && !opts.unrestricted && r.success_count <= 0) continue;
+    if (requireVision && !opts.unrestricted && !r.supports_vision) continue;
+    candidates.push(scoreRecord(r, mode, deterministic, totalPulls, now));
   }
 
-  if (mode === "fast") {
+  if (mode === "fast" && !opts.unrestricted) {
     return interleaveByProvider(
       candidates
         .filter((c) => c.iqEffective >= 0.50)
@@ -1532,6 +1650,176 @@ async function getRankedCandidates(
   }
 
   return interleaveByProvider(candidates.sort((a, b) => b.smartScore - a.smartScore));
+}
+
+// ---------------------------------------------------------------------------
+// UNIVERSAL ENDPOINT COVERAGE
+// The catalog only contains tuples whose discovery succeeded. That silently
+// excluded endpoints whose /models endpoint was down, rate limited, or behind
+// a different schema -- exactly the long tail that "try everything" needs.
+// providerModelHints() builds a static per-endpoint model ladder from the
+// registry's own telemetry (defaultModel + discoveredModels), so EVERY
+// configured endpoint always has a dispatchable candidate, with or without KV.
+// ---------------------------------------------------------------------------
+
+const NATIVE_MODEL_HINTS: Record<string, string[]> = {
+  openrouter: ["openrouter/free", UNIVERSAL_MODEL_ALIAS],
+  llm7: ["gpt-oss", UNIVERSAL_MODEL_ALIAS],
+  kilo: ["kilo-auto/free", "kilo-auto/small", UNIVERSAL_MODEL_ALIAS],
+  opencode: ["deepseek-v4.1-flash-free", "glm-5.3-flash-free", UNIVERSAL_MODEL_ALIAS],
+};
+
+let modelHintsCache: Map<string, string[]> | null = null;
+
+async function providerModelHints(): Promise<Map<string, string[]>> {
+  if (modelHintsCache) return modelHintsCache;
+  const map = new Map<string, string[]>(Object.entries(NATIVE_MODEL_HINTS).map(([k, v]) => [k, [...v]]));
+  try {
+    const registry = await loadServiceJsonRegistry();
+    if (registry) {
+      for (const e of registry.endpoints) {
+        if (!isEndpointConfigured(e)) continue;
+        const id = buildProviderIdFromEndpointName(e.name);
+        const telemetry = (e.telemetry ?? {}) as Json;
+        const discovered = Array.isArray(telemetry.discoveredModels)
+          ? (telemetry.discoveredModels as unknown[]).filter((x): x is string => typeof x === "string")
+          : [];
+        // Keep the strongest-looking models first (capability parser weed-out),
+        // then fall back to the alias accepted by the widest set of relays.
+        const ranked = discovered
+          .filter((m) => analyzeModelCapabilities(m).iqPrior > 0.5)
+          .sort((a, b) => analyzeModelCapabilities(b).iqPrior - analyzeModelCapabilities(a).iqPrior)
+          .slice(0, 6);
+        const hints = [e.defaultModel?.trim(), ...ranked, UNIVERSAL_MODEL_ALIAS]
+          .filter((m): m is string => Boolean(m && m.length < 200))
+          .filter((m, i, arr) => arr.findIndex((x) => x.toLowerCase() === m.toLowerCase()) === i);
+        map.set(id, hints.length > 0 ? hints : [UNIVERSAL_MODEL_ALIAS]);
+      }
+    }
+  } catch (err) {
+    console.error("model hints build failed:", err);
+  }
+  modelHintsCache = map;
+  return map;
+}
+
+function syntheticRecord(providerId: string, modelId: string): MeshModelRecord {
+  const profile = analyzeModelCapabilities(modelId);
+  const now = Date.now();
+  return {
+    tuple_id: `${providerId}::${modelId}`,
+    provider_id: providerId,
+    model_id: modelId,
+    iq_prior: Math.max(0.35, profile.iqPrior),
+    iq_verified: 0.55,
+    supports_reasoning: profile.supportsReasoning,
+    supports_vision: profile.supportsVision,
+    is_coding_specialist: profile.isCodingSpecialist,
+    context_window: 128000,
+    ewma_ttft_ms: 2500,
+    ewma_tps: 42,
+    ewma_log_ttft: Math.log(2500),
+    ewmv_log_ttft: 0.25,
+    log_ttft_updated_at: now,
+    last_success_at: 0,
+    alpha_success: 2,
+    beta_failure: 1,
+    success_count: 0,
+    failure_streak: 0,
+    cooldown_until: 0,
+    last_probed: 0,
+    last_error: null,
+  };
+}
+
+/** Every configured endpoint, round-robined so each provider is attempted
+ *  before any provider's second model. Never returns empty when at least one
+ *  provider is configured. */
+async function allSweepCandidates(mode: RoutingMode): Promise<ScoredCandidate[]> {
+  const now = Date.now();
+  let catalog = new Map<string, MeshModelRecord>();
+  try {
+    catalog = await hydrateL1Cache(false);
+  } catch (err) {
+    console.error("sweep catalog hydrate failed:", err);
+  }
+  let providers: ProviderSpec[];
+  try {
+    providers = await activeProviderList();
+  } catch (err) {
+    console.error("sweep provider list failed:", err);
+    providers = PROVIDERS.filter((p) => p.isConfigured());
+  }
+  const ids = new Set(providers.map((p) => p.id));
+  const hints = await providerModelHints();
+  const perProvider = Math.round(clampNum(
+    Number(Deno.env.get("MESH_SWEEP_MODELS_PER_ENDPOINT")) || 3, 1, 12,
+  ));
+  const totalPulls = Math.max(1, totalCatalogPulls(catalog));
+  const buckets = new Map<string, ScoredCandidate[]>();
+
+  for (const r of catalog.values()) {
+    if (!ids.has(r.provider_id)) continue;
+    const bucket = buckets.get(r.provider_id) ?? [];
+    bucket.push(scoreRecord(r, mode, true, totalPulls, now));
+    buckets.set(r.provider_id, bucket);
+  }
+  for (const p of providers) {
+    const bucket = buckets.get(p.id) ?? [];
+    for (const model of hints.get(p.id) ?? [UNIVERSAL_MODEL_ALIAS]) {
+      const tupleId = `${p.id}::${model}`;
+      if (bucket.some((c) => c.tupleId === tupleId)) continue;
+      bucket.push(scoreRecord(syntheticRecord(p.id, model), mode, true, totalPulls, now));
+    }
+    bucket.sort((a, b) => b.smartScore - a.smartScore);
+    buckets.set(p.id, bucket.slice(0, perProvider));
+  }
+  return interleaveByProvider([...buckets.values()].flat());
+}
+
+// Compact coverage report for /health, /v1/endpoints and the dashboard.
+async function endpointCoverage(): Promise<{
+  configured_endpoints: number;
+  registry_endpoints: number;
+  catalog_tuples: number;
+  sweep_candidates: number;
+  endpoints: Array<{ id: string; name: string; url: string; catalog_tuples: number; models: string[] }>;
+}> {
+  // Warm the catalog first so coverage reflects live tuples, not an empty
+  // isolate. With a warm cache this is a no-op (60 s memory gate).
+  await ensureCatalogSynced(false).catch((err) => console.error("coverage sync:", err));
+  let providers: ProviderSpec[] = [];
+  try {
+    providers = await activeProviderList();
+  } catch (err) {
+    console.error("coverage provider list failed:", err);
+  }
+  const hints = await providerModelHints();
+  const registry = await loadServiceJsonRegistry();
+  const urlById = new Map<string, string>();
+  for (const e of registry?.endpoints ?? []) {
+    urlById.set(buildProviderIdFromEndpointName(e.name), e.url);
+  }
+  let catalog = new Map<string, MeshModelRecord>();
+  try {
+    catalog = await hydrateL1Cache(false);
+  } catch { /* coverage must never throw */ }
+  const counts = new Map<string, number>();
+  for (const r of catalog.values()) counts.set(r.provider_id, (counts.get(r.provider_id) ?? 0) + 1);
+  const sweep = await allSweepCandidates("smart").catch(() => [] as ScoredCandidate[]);
+  return {
+    configured_endpoints: providers.length,
+    registry_endpoints: registry?.endpoints.length ?? 0,
+    catalog_tuples: catalog.size,
+    sweep_candidates: sweep.length,
+    endpoints: providers.map((p) => ({
+      id: p.id,
+      name: p.name,
+      url: p.chatUrl ?? urlById.get(p.id) ?? "",
+      catalog_tuples: counts.get(p.id) ?? 0,
+      models: hints.get(p.id) ?? [UNIVERSAL_MODEL_ALIAS],
+    })),
+  };
 }
 
 // ============================================================================
@@ -1548,16 +1836,22 @@ async function recordTupleSuccess(
   const streamDurationSec = Math.max(0.05, (totalMs - ttftMs) / 1000);
   const observedTps = Math.min(800, Math.max(2, estTokens / streamDurationSec));
 
-  const x = Math.log(Math.max(1, ttftMs));
+  const now = Date.now();
   await atomicUpdateModel(tupleId, (r) => {
-    const mu = r.ewma_log_ttft ?? Math.log(Math.max(1, r.ewma_ttft_ms));
-    const delta = x - mu;
+    // Bayesian state-space update (ASCK v1): the Kalman gain is the optimal
+    // learning rate, and the posterior variance feeds the hedge/kill quantiles.
+    const posterior = kalmanObserve({
+      mu: r.ewma_log_ttft ?? Math.log(Math.max(1, r.ewma_ttft_ms)),
+      variance: clampNum(r.ewmv_log_ttft ?? 0.25, 0.01, 2.5),
+      updatedAtMs: r.log_ttft_updated_at ?? 0,
+    }, ttftMs, now);
     return {
       ...r,
-      // West's incremental EW mean/variance in log space (TTFT modelled log-normal).
-      ewma_log_ttft: mu + 0.3 * delta,
-      ewmv_log_ttft: 0.7 * ((r.ewmv_log_ttft ?? 0.25) + 0.3 * delta * delta),
-      ewma_ttft_ms: 0.3 * ttftMs + 0.7 * r.ewma_ttft_ms,
+      ewma_log_ttft: posterior.mu,
+      ewmv_log_ttft: posterior.variance,
+      log_ttft_updated_at: posterior.updatedAtMs,
+      last_success_at: now,
+      ewma_ttft_ms: Math.exp(posterior.mu),
       ewma_tps: 0.3 * observedTps + 0.7 * r.ewma_tps,
       alpha_success: Math.min(50, (r.alpha_success || 2.0) * 0.95 + 1.0),
       beta_failure: Math.max(1.0, (r.beta_failure || 1.0) * 0.95),
@@ -1565,6 +1859,7 @@ async function recordTupleSuccess(
       success_count: r.success_count + 1,
       failure_streak: 0,
       cooldown_until: 0,
+      last_error: null,
     };
   });
 }
@@ -1596,7 +1891,7 @@ async function recordTupleFailure(tupleId: string, errMsg: string): Promise<void
       failure_streak: streak,
       alpha_success: Math.max(1.0, (r.alpha_success || 2.0) * 0.9),
       beta_failure: Math.min(50, (r.beta_failure || 1.0) + 1.5),
-      cooldown_until: now + Math.round(baseSec * backoffMultiplier * 1000),
+      cooldown_until: now + decorrelatedJitter(baseSec * 1000, Math.round(baseSec * backoffMultiplier * 1000), 900_000),
       ewma_ttft_ms: Math.min(18000, r.ewma_ttft_ms * 1.4),
       last_error: errMsg.slice(0, 200),
     };
@@ -1707,22 +2002,73 @@ async function runResurrectionProbe(
 }
 
 // ============================================================================
-// 7b. HEDGED FIRST-TOKEN DISPATCH (TAIL-AT-SCALE)
+// 7b. ADAPTIVE HEDGED FIRST-TOKEN DISPATCH (ASCK v1 / TAIL-AT-SCALE)
 // ============================================================================
 
-// TTFT per tuple is modelled log-normal (EW mean/variance of ln TTFT). The next attempt
-// launches at the zHedge quantile of the newest attempt or immediately on a failure; an
-// attempt with no validated first token by the Z_KILL quantile is cut and penalised.
-const HEDGE: Record<RoutingMode, { maxInflight: number; zHedge: number; killFloorMs: number }> = {
-  fast: { maxInflight: 4, zHedge: 0.84, killFloorMs: 4_000 },
-  code: { maxInflight: 3, zHedge: 1.28, killFloorMs: 25_000 },
-  smart: { maxInflight: 3, zHedge: 1.28, killFloorMs: 25_000 },
-  reasoning: { maxInflight: 3, zHedge: 1.64, killFloorMs: 90_000 },
-};
-const Z_KILL = 3.09;
-const KILL_CEIL_MS = 300_000;
+// TTFT is modelled log-normal with a Kalman posterior mean/variance. hedgePlan()
+// solves the survival-based stopping rule: with k spare endpoints, hedge at the
+// (1 - θ0^(1/(1+η·ln(1+k)))) quantile; kill at the p99.9 predictive quantile.
+// Tiers 1-3 are staggered hedges; tier 4 (exhaustive sweep) bursts every
+// configured endpoint at once with a short, bounded first-token deadline.
+interface HedgePolicy {
+  maxInflight: number;
+  tailProbability: number;
+  hedgeMinMs: number;
+  hedgeMaxMs: number;
+  killFloorMs: number;
+  killCeilMs: number;
+  burst: boolean;
+}
 
-const ttftQuantileMs = (c: ScoredCandidate, z: number) => Math.exp(c.logTtftMu + z * c.logTtftSigma);
+const HEDGE: Record<RoutingMode, HedgePolicy> = {
+  fast: { maxInflight: 4, tailProbability: 0.20, hedgeMinMs: 120, hedgeMaxMs: 8_000, killFloorMs: 4_000, killCeilMs: 300_000, burst: false },
+  code: { maxInflight: 3, tailProbability: 0.10, hedgeMinMs: 150, hedgeMaxMs: 8_000, killFloorMs: 25_000, killCeilMs: 300_000, burst: false },
+  smart: { maxInflight: 3, tailProbability: 0.10, hedgeMinMs: 150, hedgeMaxMs: 8_000, killFloorMs: 25_000, killCeilMs: 300_000, burst: false },
+  reasoning: { maxInflight: 3, tailProbability: 0.05, hedgeMinMs: 200, hedgeMaxMs: 8_000, killFloorMs: 90_000, killCeilMs: 300_000, burst: false },
+};
+
+// Tier 2: widen across lanes with more concurrency and a tighter deadline.
+const ESCALATION_POLICY: HedgePolicy = {
+  maxInflight: 6,
+  tailProbability: 0.25,
+  hedgeMinMs: 120,
+  hedgeMaxMs: 3_000,
+  killFloorMs: 10_000,
+  killCeilMs: 30_000,
+  burst: false,
+};
+
+// Tier 3: burst the whole catalog with a hard, short first-token deadline.
+const WIDE_POLICY: HedgePolicy = {
+  maxInflight: 32,
+  tailProbability: 0.35,
+  hedgeMinMs: 100,
+  hedgeMaxMs: 1_500,
+  killFloorMs: 8_000,
+  killCeilMs: 20_000,
+  burst: true,
+};
+
+// Tier 4: every configured endpoint at once; bounded so an outage resolves
+// into a graceful degraded answer in seconds, not minutes.
+const SWEEP_POLICY: HedgePolicy = {
+  maxInflight: 128,
+  tailProbability: 0.45,
+  hedgeMinMs: 60,
+  hedgeMaxMs: 1_000,
+  killFloorMs: 6_000,
+  killCeilMs: 15_000,
+  burst: true,
+};
+
+/** Portable AbortSignal.any: a tier can be cut without killing the request. */
+function combineSignals(a: AbortSignal, b: AbortSignal): AbortSignal {
+  const ctrl = new AbortController();
+  a.addEventListener("abort", () => ctrl.abort(a.reason), { once: true });
+  b.addEventListener("abort", () => ctrl.abort(b.reason), { once: true });
+  return ctrl.signal;
+}
+
 const logErr = (e: unknown) => console.error("telemetry:", e);
 const errText = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
@@ -1739,8 +2085,9 @@ async function hedgedDispatch(
   master: AbortSignal,
   tried: Set<string>,
   maxAttempts: number,
+  policyOverride?: HedgePolicy,
 ): Promise<Dispatched> {
-  const policy = HEDGE[mode];
+  const policy = policyOverride ?? HEDGE[mode];
   const pending = order.filter((c) => !tried.has(c.tupleId)).slice(0, maxAttempts);
   // One in-flight attempt per provider: forces provider diversity and avoids self-inflicted 429s.
   const busy = new Set<string>();
@@ -1748,13 +2095,14 @@ async function hedgedDispatch(
   let lastErr: unknown = null;
   let settled = false;
   let hedgeTimer: ReturnType<typeof setTimeout> | undefined;
-  let hedgeDelayMs = 0;
+  let hedgeDelayMs = policy.hedgeMinMs;
 
   return await new Promise<Dispatched>((resolve, reject) => {
     const fail = (e: unknown) => {
       if (settled) return;
       settled = true;
       clearTimeout(hedgeTimer);
+      for (const ctrl of live) ctrl.abort(new Error("HEDGE_LOST"));
       reject(e);
     };
     master.addEventListener("abort", () => fail(master.reason), { once: true });
@@ -1766,10 +2114,25 @@ async function hedgedDispatch(
       master.addEventListener("abort", onMaster, { once: true });
       live.add(ctrl);
       busy.add(cand.providerId);
-      // Waiting on this attempt past the best pending alternative's median TTFT is dominated: hedge then.
-      const altMedianMs = Math.min(...pending.map((p) => ttftQuantileMs(p, 0)));
-      hedgeDelayMs = Math.max(100, Math.min(8_000, altMedianMs, ttftQuantileMs(cand, policy.zHedge)));
-      const killMs = Math.round(Math.min(KILL_CEIL_MS, Math.max(policy.killFloorMs, ttftQuantileMs(cand, Z_KILL))));
+
+      const plan = hedgePlan({
+        mu: cand.logTtftMu,
+        sigma: cand.logTtftSigma,
+        tailProbability: policy.tailProbability,
+        alternatives: pending.length,
+        minMs: policy.hedgeMinMs,
+        maxMs: policy.hedgeMaxMs,
+        killFloorMs: policy.killFloorMs,
+        killCeilMs: policy.killCeilMs,
+      });
+      // Waiting past the best pending alternative's median TTFT is dominated: hedge then.
+      let altMedianMs = Number.POSITIVE_INFINITY;
+      for (const p of pending) {
+        const median = Math.exp(p.logTtftMu);
+        if (median < altMedianMs) altMedianMs = median;
+      }
+      hedgeDelayMs = Math.max(policy.hedgeMinMs, Math.min(plan.hedgeMs, altMedianMs));
+      const killMs = plan.killMs;
       const killer = setTimeout(() => ctrl.abort(new Error(`TIMEOUT_FIRST_TOKEN: ${killMs}ms`)), killMs);
 
       resolveProviderById(cand.providerId)
@@ -1803,9 +2166,15 @@ async function hedgedDispatch(
     const launch = () => {
       clearTimeout(hedgeTimer);
       if (settled) return;
-      if (live.size < policy.maxInflight) {
+      // Burst mode fills the whole pipeline immediately: every configured
+      // endpoint is attempted rather than only the head of the ranking.
+      const target = policy.burst
+        ? policy.maxInflight
+        : (live.size < policy.maxInflight ? live.size + 1 : live.size);
+      while (live.size < target) {
         const i = pending.findIndex((c) => !busy.has(c.providerId));
-        if (i >= 0) start(pending.splice(i, 1)[0]);
+        if (i < 0) break;
+        start(pending.splice(i, 1)[0]);
       }
       if (live.size === 0) return fail(lastErr ?? new Error("No candidate produced a valid first token"));
       if (pending.length > 0) hedgeTimer = setTimeout(launch, hedgeDelayMs);
@@ -1818,6 +2187,112 @@ async function hedgedDispatch(
 // ============================================================================
 // 8. HONO HTTP APPLICATION & FRESH 2.0 COMPATIBILITY SHIM
 // ============================================================================
+
+// ---------------------------------------------------------------------------
+// REQUEST NORMALISATION & GRACEFUL DEGRADATION
+// "Requests always work": malformed/empty payloads are normalised rather than
+// 400'd, and after the exhaustive sweep a valid OpenAI-shaped completion is
+// always returned (never 502/503). The degraded body is explicitly labelled —
+// no model output is ever fabricated.
+// ---------------------------------------------------------------------------
+
+const VALID_ROLES = new Set(["system", "user", "assistant", "tool", "developer", "function"]);
+
+function normalizeMessages(raw: unknown, promptFallback?: unknown): Array<{ role: string; content: unknown }> {
+  const out: Array<{ role: string; content: unknown }> = [];
+  if (Array.isArray(raw)) {
+    for (const item of raw) {
+      if (!item || typeof item !== "object") continue;
+      const m = item as Json;
+      const role = typeof m.role === "string" && VALID_ROLES.has(m.role.toLowerCase())
+        ? m.role.toLowerCase()
+        : "user";
+      let content: unknown = m.content;
+      if (content === undefined || content === null) {
+        content = typeof m.text === "string" ? m.text : "";
+      }
+      if (content && typeof content === "object" && !Array.isArray(content)) {
+        content = JSON.stringify(content);
+      }
+      out.push({ role, content: typeof content === "string" ? content : content ?? "" });
+    }
+  }
+  if (out.length === 0) {
+    const fallback = typeof promptFallback === "string" && promptFallback.trim()
+      ? promptFallback
+      : "Please reply with a short acknowledgement.";
+    out.push({ role: "user", content: fallback });
+  }
+  return out;
+}
+
+function degradationMessage(attempts: number, endpoints: number, lastErr: string): string {
+  const tail = lastErr ? ` Last upstream error: ${lastErr.slice(0, 160)}.` : "";
+  return `[nokey-router] No upstream model endpoint returned a valid completion for this request. ` +
+    `All ${endpoints} configured endpoints were attempted (${attempts} dispatch attempts, including ` +
+    `cross-lane fallbacks, protocol negotiation and a full endpoint sweep).${tail} ` +
+    `No answer was fabricated — please retry shortly. GET /health and GET /v1/endpoints show live coverage.`;
+}
+
+interface DegradedOpts {
+  id: string;
+  created: number;
+  requestedModel: string;
+  attempts: number;
+  endpoints: number;
+  lastErr: string;
+  stream: boolean;
+}
+
+function degradedCompletion(c: Context, o: DegradedOpts): Response {
+  const content = degradationMessage(o.attempts, o.endpoints, o.lastErr);
+  const meta = {
+    degraded: true,
+    endpoints_available: o.endpoints,
+    endpoints_attempted: o.attempts,
+    attempts: o.attempts,
+    requested_model: o.requestedModel,
+    reason: "all_upstreams_failed",
+  };
+  if (!o.stream) {
+    return c.json({
+      id: o.id,
+      object: "chat.completion",
+      created: o.created,
+      model: o.requestedModel,
+      provider: "nokey-router",
+      nokey: meta,
+      choices: [{
+        index: 0,
+        message: { role: "assistant", content },
+        finish_reason: "stop",
+      }],
+    }, 200, { "X-Nokey-Degraded": "1" });
+  }
+  const frame = (delta: Record<string, unknown>, finish: string | null) =>
+    `data: ${JSON.stringify({
+      id: o.id,
+      object: "chat.completion.chunk",
+      created: o.created,
+      model: o.requestedModel,
+      provider: "nokey-router",
+      nokey: meta,
+      choices: [{ index: 0, delta, finish_reason: finish }],
+    })}\n\n`;
+  const body = frame({ role: "assistant" }, null) +
+    frame({ content }, null) +
+    frame({}, "stop") +
+    "data: [DONE]\n\n";
+  return new Response(body, {
+    status: 200,
+    headers: {
+      "Content-Type": "text/event-stream; charset=utf-8",
+      "Cache-Control": "no-cache",
+      "Connection": "keep-alive",
+      "X-Nokey-Degraded": "1",
+    },
+  });
+}
 
 const honoApp = new Hono();
 honoApp.use("*", cors());
@@ -1840,7 +2315,7 @@ honoApp.use("/v1/*", async (c, next) => {
   await next();
 });
 
-honoApp.get("/", async (c) => {
+honoApp.get("/", (_c) => {
         return new Response(loadTextFile("index.html"), {
           headers: {
             "Content-Type": "text/html; charset=utf-8",
@@ -1850,19 +2325,49 @@ honoApp.get("/", async (c) => {
         });
 });
 honoApp.get("/health", async (c) => {
-  const fastRank = (await getRankedCandidates("fast", true)).slice(0, 5);
-  const smartRank = (await getRankedCandidates("smart", true)).slice(0, 5);
-  const codeRank = (await getRankedCandidates("code", true)).slice(0, 5);
-  const reasoningRank = (await getRankedCandidates("reasoning", true)).slice(0, 5);
-
+  const safeRank = async (m: RoutingMode) => {
+    try {
+      return (await getRankedCandidates(m, true)).slice(0, 5);
+    } catch (err) {
+      console.error(`health rank ${m}:`, err);
+      return [];
+    }
+  };
+  // Rank first (this hydrates the catalog on a cold isolate), then report
+  // coverage so /health never shows an artificially empty catalog.
+  const fastRank = await safeRank("fast");
+  const smartRank = await safeRank("smart");
+  const codeRank = await safeRank("code");
+  const reasoningRank = await safeRank("reasoning");
+  const coverage = await endpointCoverage().catch((err) => {
+    console.error("health coverage:", err);
+    return { configured_endpoints: 0, registry_endpoints: 0, catalog_tuples: L1_CACHE.size, sweep_candidates: 0 };
+  });
   return c.json({
-    engine: "vajra-empirical-sovereign-v5.2-oct2026-verified",
+    engine: "nokey-sovereign-v6-asck1-exhaustive",
     runtime: "deno-deploy-kv-cas-l1",
+    control_kernel: {
+      name: "ASCK v1",
+      ttft_model: "log-normal + scalar Kalman filter",
+      reliability: "discounted Thompson sampling (6h half-life)",
+      exploration: "UCB + Wilson lower bound + Gumbel/Plackett-Luce",
+      hedging: "survival-quantile optimal stopping (tail-at-scale)",
+      dispatch_tiers: ["mode-ranked", "cross-lane-proven", "full-catalog", "exhaustive-endpoint-sweep"],
+      request_guarantee: "always 200; graceful degraded completion after full sweep",
+      strict_errors: Deno.env.get("NOKEY_STRICT_ERRORS") === "1",
+    },
     security: {
       auth_enabled: Boolean(Deno.env.get("ROUTER_API_KEY")),
       admin_guard_enabled: Boolean(Deno.env.get("ADMIN_SECRET")),
       openrouter_free_enabled: Boolean(pickOpenRouterKey()),
       l1_cache_entries: L1_CACHE.size,
+      service_json_load_error: serviceJsonLoadError,
+    },
+    coverage: {
+      configured_endpoints: coverage.configured_endpoints,
+      registry_endpoints: coverage.registry_endpoints,
+      catalog_tuples: coverage.catalog_tuples,
+      sweep_candidates: coverage.sweep_candidates,
     },
     current_best_fast: fastRank,
     current_best_smart: smartRank,
@@ -1871,8 +2376,30 @@ honoApp.get("/health", async (c) => {
   });
 });
 
+// Live, dependency-free view of exactly what the exhaustive sweep will try.
+honoApp.get("/v1/endpoints", async (c) => {
+  try {
+    const coverage = await endpointCoverage();
+    return c.json({
+      object: "list",
+      policy: "every configured endpoint is attempted before a request can degrade",
+      configured_endpoints: coverage.configured_endpoints,
+      registry_endpoints: coverage.registry_endpoints,
+      catalog_tuples: coverage.catalog_tuples,
+      sweep_candidates: coverage.sweep_candidates,
+      data: coverage.endpoints,
+    });
+  } catch (err) {
+    return c.json({ object: "list", data: [], error: errText(err) }, 200);
+  }
+});
+
 honoApp.get("/v1/models", async (c) => {
-  const ranked = await getRankedCandidates("smart", true);
+  const ranked = await getRankedCandidates("smart", true).catch((err) => {
+    console.error("models ranking:", err);
+    return [];
+  });
+  // Any model id is accepted by the chat route; advertise that explicitly.
   const virtualAliases = [
     "free:auto",
     "free:fast",
@@ -1908,6 +2435,8 @@ honoApp.get("/v1/models", async (c) => {
 
   return c.json({
     object: "list",
+    accepts_any_model: true,
+    model_policy: "unknown model ids are routed by trigram/Jaccard similarity and fall back to the exhaustive endpoint sweep",
     data: [...virtualAliases, ...imageModels, ...discoveredModels],
   });
 });
@@ -1975,7 +2504,7 @@ honoApp.post("/v1/resurrect", async (c) => {
 
 // System source reader: lets the dashboard's Architect agent read the
 // code it operates on. Allowlisted files only, admin-guarded like /v1/probe.
-honoApp.get("/v1/source", async (c) => {
+honoApp.get("/v1/source", (c) => {
   const adminSecret = Deno.env.get("ADMIN_SECRET");
   if (adminSecret) {
     const provided = c.req.header("x-admin-secret") || "";
@@ -1984,7 +2513,7 @@ honoApp.get("/v1/source", async (c) => {
     }
   }
   const file = c.req.query("file") || "";
-  const ALLOWED = new Set(["main.ts", "index.html", "CHANGES.md", "services.json", "deno.json"]);
+  const ALLOWED = new Set(["main.ts", "math.ts", "index.html", "CHANGES.md", "services.json", "deno.json"]);
   if (!ALLOWED.has(file)) {
     return c.json({ error: { message: "File is not in the readable allowlist" } }, 400);
   }
@@ -1996,14 +2525,40 @@ honoApp.get("/v1/source", async (c) => {
 });
 
 honoApp.post("/v1/chat/completions", async (c) => {
+  const completionId = `chatcmpl-${crypto.randomUUID()}`;
+  const created = Math.floor(Date.now() / 1000);
+  const tried = new Set<string>();
+  let reqModel = "free:auto";
+  let wantsStream = false;
+  let endpointsAvailable = 0;
+  let lastErr: unknown = null;
+  let globalTimeout: ReturnType<typeof setTimeout> | undefined;
+
+  const degraded = (err: unknown) => degradedCompletion(c, {
+    id: completionId,
+    created,
+    requestedModel: reqModel,
+    attempts: tried.size,
+    endpoints: endpointsAvailable,
+    lastErr: errText(err),
+    stream: wantsStream,
+  });
+
   try {
-    const body = await c.req.json();
-    const messages = Array.isArray(body.messages) ? body.messages : [];
-    const reqModel = String(body.model || "free:auto");
+    // Never 400 on a malformed body: normalise it and keep routing.
+    const body = await c.req.json().catch(() => ({} as Json)) as Json;
+    const messages = normalizeMessages(body.messages, body.prompt);
+    reqModel = String(body.model || "free:auto");
     const reqModelLower = reqModel.toLowerCase();
-    const wantsStream = Boolean(body.stream);
+    wantsStream = Boolean(body.stream);
     const hasTools = Array.isArray(body.tools) && body.tools.length > 0;
     const { hasVisionPayload } = extractMessageText(messages);
+
+    try {
+      endpointsAvailable = (await activeProviderList()).length;
+    } catch {
+      endpointsAvailable = PROVIDERS.filter((p) => p.isConfigured()).length;
+    }
 
     const completionOptions: CompletionOptions = {
       temperature: typeof body.temperature === "number" ? body.temperature : undefined,
@@ -2014,7 +2569,7 @@ honoApp.post("/v1/chat/completions", async (c) => {
         : undefined,
       top_p: typeof body.top_p === "number" ? body.top_p : undefined,
       reasoning_effort: typeof body.reasoning_effort === "string" ? body.reasoning_effort : undefined,
-      tools: hasTools ? body.tools : undefined,
+      tools: hasTools ? (body.tools as unknown[]) : undefined,
       tool_choice: body.tool_choice,
       response_format: body.response_format,
     };
@@ -2029,75 +2584,162 @@ honoApp.post("/v1/chat/completions", async (c) => {
       ? "reasoning"
       : "smart";
 
-    let ranked = await getRankedCandidates(mode, false, hasVisionPayload);
-    if (ranked.length === 0 && hasVisionPayload) {
-      ranked = await getRankedCandidates(mode, false, false);
-    }
-    if (ranked.length === 0) {
-      return c.json({ error: { message: "No healthy discovered models available." } }, 503);
-    }
-
-    // If caller requested an explicit model ID (e.g., "nvidia/nemotron-3-ultra-550b-a55b:free"), prioritize matching tuples
-    if (!reqModelLower.startsWith("free:")) {
-      const exactMatches = ranked.filter(
-        (cand) => cand.modelId.toLowerCase() === reqModelLower || cand.tupleId.toLowerCase() === reqModelLower,
-      );
-      if (exactMatches.length > 0) {
-        const others = ranked.filter((cand) => !exactMatches.includes(cand));
-        ranked = [...exactMatches, ...others];
+    const safeRanked = async (m: RoutingMode, o: RankOptions = {}): Promise<ScoredCandidate[]> => {
+      try {
+        return await getRankedCandidates(m, false, false, o);
+      } catch (err) {
+        console.error(`[rank] ${m} ranking failed:`, err);
+        return [];
       }
+    };
+
+    let ranked = await safeRanked(mode, {});
+    // Vision lanes must not filter themselves into an empty pool.
+    if (ranked.length === 0 && hasVisionPayload) ranked = await getRankedCandidates(mode, false, hasVisionPayload).catch(() => []);
+    if (ranked.length === 0) ranked = await safeRanked(mode, { unrestricted: true });
+    if (ranked.length === 0) ranked = await allSweepCandidates(mode).catch(() => []);
+
+    // MODEL-AGNOSTIC ROUTING: an arbitrary requested model id never aborts the
+    // request. Exact/near matches (trigram-Dice + token-Jaccard similarity) are
+    // tried first; everything else keeps its Bayesian rank order as fallback.
+    const isVirtualModel = reqModelLower.startsWith("free:") || reqModelLower.startsWith("nokey-image");
+    if (!isVirtualModel && ranked.length > 1) {
+      const scored = ranked.map((cand, i) => ({
+        cand,
+        i,
+        sim: Math.max(
+          modelSimilarity(reqModelLower, cand.modelId.toLowerCase()),
+          modelSimilarity(reqModelLower, cand.tupleId.toLowerCase()),
+        ),
+      }));
+      const near = scored.filter((x) => x.sim >= 0.30)
+        .sort((a, b) => b.sim - a.sim || a.i - b.i)
+        .map((x) => x.cand);
+      const rest = scored.filter((x) => x.sim < 0.30).map((x) => x.cand);
+      ranked = [...near, ...rest];
     }
 
     // Total budget covers full generations; first-token latency is governed by the hedge policy.
     const timeoutMs = mode === "reasoning" ? 1800000 : mode === "fast" ? 450000 : 1200000;
     const master = new AbortController();
-    const globalTimeout = setTimeout(() => master.abort(new Error(`TIMEOUT_GLOBAL: ${timeoutMs}ms`)), timeoutMs);
+    globalTimeout = setTimeout(() => master.abort(new Error(`TIMEOUT_GLOBAL: ${timeoutMs}ms`)), timeoutMs);
     c.req.raw.signal.addEventListener("abort", () => master.abort(new Error("CLIENT_DISCONNECTED")), { once: true });
-    const completionId = `chatcmpl-${crypto.randomUUID()}`;
-    const created = Math.floor(Date.now() / 1000);
-    const tried = new Set<string>();
     const untried = (xs: ScoredCandidate[]) => xs.filter((cand) => !tried.has(cand.tupleId));
+    const dedupe = (xs: ScoredCandidate[]): ScoredCandidate[] => {
+      const seen = new Set<string>();
+      const out: ScoredCandidate[] = [];
+      for (const x of xs) {
+        if (seen.has(x.tupleId) || tried.has(x.tupleId)) continue;
+        seen.add(x.tupleId);
+        out.push(x);
+      }
+      return out;
+    };
 
-    // Second-wind escalation: tier 2 widens to providers in breaker/tuple cooldown (mercy attempts on a
-    // stale snapshot); tier 3 rescues cross-lane with any tuple that has ever completed a request.
-    const tiers: Array<{ cap: number; pool: () => Promise<ScoredCandidate[]> }> = [
-      { cap: Number(Deno.env.get("MESH_RACE_TIER1_ATTEMPTS")) || 12, pool: () => Promise.resolve(untried(ranked)) },
+    // FOUR-TIER EXHAUSTION. Tiers 1-3 widen the ranking (cross-lane proven,
+    // then the whole catalog with all gates lifted). Tier 4 is the universal
+    // endpoint sweep: every configured endpoint/relay, including ones with no
+    // catalog tuples, with short bounded deadlines and a burst launch. No tier
+    // can end the request with an error — only the final degraded response can.
+    const tiers: Array<{
+      label: string;
+      cap: number;
+      pool: () => Promise<ScoredCandidate[]>;
+      allowRetried?: boolean;
+      policy?: HedgePolicy;
+      budgetMs: number;
+    }> = [
       {
-        cap: 18,
-        pool: async () => untried(await getRankedCandidates(mode, false, hasVisionPayload, { includeCoolingDown: true })),
+        label: "mode-ranked",
+        cap: Math.round(clampNum(Number(Deno.env.get("MESH_RACE_TIER1_ATTEMPTS")) || 12, 1, 500)),
+        pool: () => Promise.resolve(ranked),
+        budgetMs: mode === "fast" ? 15_000 : mode === "reasoning" ? 60_000 : 30_000,
       },
       {
-        cap: 10,
+        label: "cross-lane-proven",
+        cap: 32,
+        policy: ESCALATION_POLICY,
+        budgetMs: 25_000,
         pool: async () => {
-          const proven = { includeCoolingDown: true, verifiedOnly: true };
-          const own = untried(await getRankedCandidates(mode, false, hasVisionPayload, proven));
-          return own.length > 0 || mode === "fast"
-            ? own
-            : untried(await getRankedCandidates("fast", false, hasVisionPayload, proven));
+          const proven: RankOptions = { includeCoolingDown: true, verifiedOnly: true };
+          const lanes: RoutingMode[] = ["fast", "smart", "code", "reasoning"];
+          const ordered = [mode, ...lanes.filter((m) => m !== mode)];
+          const parts: ScoredCandidate[] = [];
+          for (const lane of ordered) parts.push(...await safeRanked(lane, proven));
+          return dedupe(parts);
+        },
+      },
+      {
+        label: "full-catalog",
+        cap: 256,
+        policy: WIDE_POLICY,
+        budgetMs: 25_000,
+        pool: async () => untried(await safeRanked(mode, { unrestricted: true })),
+      },
+      {
+        label: "exhaustive-endpoint-sweep",
+        cap: 10_000,
+        allowRetried: true,
+        policy: SWEEP_POLICY,
+        budgetMs: 25_000,
+        pool: async () => {
+          try {
+            return await allSweepCandidates(mode);
+          } catch (err) {
+            console.error("[sweep] candidate build failed:", err);
+            return [];
+          }
         },
       },
     ];
 
     const dispatch = async (): Promise<Dispatched> => {
-      let lastErr: unknown = null;
-      for (const [i, { cap, pool }] of tiers.entries()) {
-        const candidates = await pool();
-        if (candidates.length === 0) continue;
-        if (i > 0) console.log(`[race] escalating to tier ${i + 1} (${tried.size} tried, ${candidates.length} candidates)`);
+      let err: unknown = null;
+      for (const [i, tier] of tiers.entries()) {
+        let candidates: ScoredCandidate[] = [];
         try {
-          const won = await hedgedDispatch(candidates, mode, messages, completionOptions, master.signal, tried, cap);
-          if (i > 0) console.log(`[race] request rescued at tier ${i + 1} by ${won.cand.tupleId}`);
+          candidates = (await tier.pool()).slice(0, tier.cap);
+        } catch (e) {
+          console.error(`[race] tier ${i + 1} pool failed:`, e);
+          continue;
+        }
+        if (candidates.length === 0) continue;
+        if (i > 0) {
+          console.log(`[race] tier ${i + 1} (${tier.label}): ${candidates.length} candidates, ${tried.size} already tried`);
+        }
+        // The sweep intentionally re-attempts tuples tried in earlier tiers
+        // (transient errors + fresh protocol negotiation), tracked separately.
+        const tierTried = tier.allowRetried ? new Set<string>() : tried;
+        // Anytime control: every tier has a hard budget. When it expires only
+        // THIS tier is cut (not the request), so escalation always progresses.
+        const tierCtrl = new AbortController();
+        const tierSignal = combineSignals(master.signal, tierCtrl.signal);
+        const tierDeadline = setTimeout(
+          () => tierCtrl.abort(new Error(`TIER_BUDGET: ${tier.label} exceeded ${tier.budgetMs}ms`)),
+          tier.budgetMs,
+        );
+        try {
+          const won = await hedgedDispatch(
+            candidates, mode, messages, completionOptions, tierSignal,
+            tierTried, tier.cap, tier.policy,
+          );
+          clearTimeout(tierDeadline);
+          if (tier.allowRetried) for (const id of tierTried) tried.add(id);
+          if (i > 0) console.log(`[race] request rescued at tier ${i + 1} (${tier.label}) by ${won.cand.tupleId}`);
           return won;
         } catch (e) {
-          if (master.signal.aborted) throw e;
+          clearTimeout(tierDeadline);
+          if (tier.allowRetried) for (const id of tierTried) tried.add(id);
+          err = e;
           lastErr = e;
+          console.warn(`[race] tier ${i + 1} (${tier.label}) exhausted: ${errText(e)}`);
+          if (master.signal.aborted) break;
         }
       }
-      throw lastErr ?? new Error("All promises were rejected");
+      throw err ?? new Error("All configured endpoints exhausted");
     };
 
     if (!wantsStream) {
-      let lastErr: unknown = null;
       try {
         // A generation that dies after its first token re-dispatches once over the untried pool.
         for (let round = 0; round < 2; round++) {
@@ -2111,6 +2753,13 @@ honoApp.post("/v1/chat/completions", async (c) => {
               created,
               model: cand.modelId,
               provider: cand.providerId,
+              nokey: {
+                degraded: false,
+                requested_model: reqModel,
+                endpoints_available: endpointsAvailable,
+                attempts: tried.size,
+                routing_kernel: "asck-v1",
+              },
               telemetry: {
                 mode_selected: mode,
                 iq_effective: cand.iqEffective,
@@ -2134,14 +2783,17 @@ honoApp.post("/v1/chat/completions", async (c) => {
                   finish_reason: res.finish ?? (res.toolCalls ? "tool_calls" : "stop"),
                 },
               ],
+            }, 200, {
+              "X-Nokey-Attempts": String(tried.size),
+              "X-Nokey-Endpoints": String(endpointsAvailable),
             });
           } catch (e) {
-            if (master.signal.aborted) throw e;
+            if (master.signal.aborted) break;
             lastErr = e;
             recordTupleFailure(cand.tupleId, errText(e)).catch(logErr);
           }
         }
-        throw lastErr;
+        throw lastErr ?? new Error("No endpoint completed a full generation");
       } finally {
         clearTimeout(globalTimeout);
       }
@@ -2221,11 +2873,18 @@ honoApp.post("/v1/chat/completions", async (c) => {
         "Content-Type": "text/event-stream; charset=utf-8",
         "Cache-Control": "no-cache",
         "Connection": "keep-alive",
+        "X-Nokey-Attempts": String(tried.size),
+        "X-Nokey-Endpoints": String(endpointsAvailable),
       },
     });
   } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : "Empirical mesh dispatch failed";
-    return c.json({ error: { message: msg } }, 502);
+    clearTimeout(globalTimeout);
+    console.error(`[chat] exhausted all tiers (${tried.size} attempts across ${endpointsAvailable} endpoints):`, errText(err));
+    // Opt-out for operators who prefer the legacy hard failure while debugging.
+    if (Deno.env.get("NOKEY_STRICT_ERRORS") === "1") {
+      return c.json({ error: { message: errText(err) } }, 502);
+    }
+    return degraded(err);
   }
 });
 
@@ -2276,15 +2935,21 @@ async function generateViaPollinations(
 ): Promise<string> {
   const url = `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}` +
     `?width=${width}&height=${height}&seed=${seed}&model=${upstreamModel}&nologo=true`;
-  const res = await fetch(url, { signal: AbortSignal.timeout(90000) });
+  const res = await fetch(url, { signal: AbortSignal.timeout(45000) });
   if (!res.ok) throw new Error(`Pollinations image HTTP ${res.status}`);
   // Drain the body so the generation completes server-side; the returned URL
-  // is seed-stable, so the client fetch renders the same image.
-  await res.arrayBuffer();
+  // is seed-stable, so the client fetch renders the same image. A JSON/text
+  // error page or a tiny body is NOT an image and must fall through to the
+  // next backend rather than being reported as a successful generation.
+  const buf = await res.arrayBuffer();
+  const contentType = (res.headers.get("content-type") ?? "").toLowerCase();
+  if (contentType.includes("json") || contentType.includes("text/html") || buf.byteLength < 512) {
+    throw new Error(`Pollinations returned a non-image body (${contentType || "no content-type"}, ${buf.byteLength} bytes)`);
+  }
   return url;
 }
 
-async function generateViaHorde(prompt: string, width: number, height: number): Promise<string> {
+async function generateViaHorde(prompt: string, width: number, height: number, budgetMs = 45000): Promise<string> {
   const submit = await fetch("https://stablehorde.net/api/v2/generate/async", {
     method: "POST",
     headers: { "content-type": "application/json", apikey: "0000000000" },
@@ -2300,7 +2965,7 @@ async function generateViaHorde(prompt: string, width: number, height: number): 
   const job = await submit.json();
   const jobId = String(job.id || "");
   if (!jobId) throw new Error("AI Horde submit returned no job id");
-  const deadline = Date.now() + 150000;
+  const deadline = Date.now() + budgetMs;
   while (Date.now() < deadline) {
     await new Promise((r) => setTimeout(r, 4000));
     const chkRes = await fetch(`https://stablehorde.net/api/v2/generate/check/${jobId}`, {
@@ -2321,46 +2986,106 @@ async function generateViaHorde(prompt: string, width: number, height: number): 
   throw new Error("AI Horde generation timed out");
 }
 
-honoApp.post("/v1/images/generations", async (c) => {
-  try {
-    const body = await c.req.json();
-    const prompt = String(body.prompt || "").trim();
-    if (!prompt) {
-      return c.json({ error: { message: "prompt is required" } }, 400);
-    }
-    const spec = IMAGE_MODELS.find((img) => img.id === String(body.model || "nokey-image")) ||
-      IMAGE_MODELS[0];
-    const { width, height } = parseImageSize(body.size);
-    const n = Math.min(4, Math.max(1, Number(body.n || 1)));
-    const wantB64 = String(body.response_format || "url") === "b64_json";
+function escapeXml(s: string): string {
+  return s.replace(/[&<>"']/g, (ch) =>
+    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&apos;" }[ch] ?? ch));
+}
 
-    const data: Array<{ url?: string; b64_json?: string }> = [];
-    for (let i = 0; i < n; i++) {
-      let url: string;
-      if (spec.provider === "horde") {
-        url = await generateViaHorde(prompt, width, height);
-      } else {
-        const seed = Math.floor(Math.random() * 1000000) + i;
-        try {
-          url = await generateViaPollinations(prompt, width, height, spec.upstreamModel, seed);
-        } catch (pollErr) {
-          console.warn(`pollinations image failed (${pollErr instanceof Error ? pollErr.message : pollErr}); falling back to AI Horde`);
+/** Honest, locally generated SVG placeholder: keeps the OpenAI image contract
+ *  valid when every keyless image backend is down, without faking model art. */
+function placeholderImage(prompt: string, model: string, width: number, height: number, errors: string[]): {
+  url: string;
+  b64: string;
+} {
+  const title = "Image providers unavailable";
+  const lines = [
+    `Requested model: ${model}`,
+    `Tried ${errors.length} backend variant(s); none returned an image.`,
+    "No artwork was fabricated. Please retry shortly.",
+  ];
+  const text = lines.map((l, i) =>
+    `<text x="64" y="${height / 2 + i * 34 - 34}" fill="#e2e8f0" font-family="monospace" font-size="22">${escapeXml(l)}</text>`
+  ).join("");
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">` +
+    `<rect width="100%" height="100%" fill="#0b1120"/>` +
+    `<rect x="24" y="24" width="${width - 48}" height="${height - 48}" fill="none" stroke="#22d3ee" stroke-width="2"/>` +
+    `<text x="64" y="${height / 2 - 90}" fill="#22d3ee" font-family="monospace" font-size="30">${escapeXml(title)}</text>` +
+    text +
+    `<text x="64" y="${height - 64}" fill="#64748b" font-family="monospace" font-size="18">${escapeXml(prompt.slice(0, 90))}</text>` +
+    `</svg>`;
+  const b64 = bytesToBase64(new TextEncoder().encode(svg).buffer as ArrayBuffer);
+  return { url: `data:image/svg+xml;base64,${b64}`, b64 };
+}
+
+honoApp.post("/v1/images/generations", async (c) => {
+  const body = await c.req.json().catch(() => ({} as Json)) as Json;
+  const prompt = String(body.prompt || "").trim() || "abstract geometric composition";
+  const requestedModel = String(body.model || "nokey-image");
+  const spec = IMAGE_MODELS.find((img) => img.id === requestedModel) || IMAGE_MODELS[0];
+  const { width, height } = parseImageSize(body.size);
+  const n = Math.round(clampNum(Number(body.n || 1) || 1, 1, 4));
+  const wantB64 = String(body.response_format || "url") === "b64_json";
+
+  // Every available backend is tried, in "requested model first" order, for
+  // ANY requested model id. Only a locally generated placeholder can end the
+  // request — it never errors out.
+  const chain = [spec, ...IMAGE_MODELS.filter((m) => m.id !== spec.id)];
+  const errors: string[] = [];
+  const data: Array<{ url?: string; b64_json?: string }> = [];
+  let degraded = false;
+
+  for (let i = 0; i < n; i++) {
+    let url: string | null = null;
+    for (const variant of chain) {
+      try {
+        if (variant.provider === "horde") {
           url = await generateViaHorde(prompt, width, height);
+        } else {
+          const seed = Math.floor(Math.random() * 1000000) + i;
+          url = await generateViaPollinations(prompt, width, height, variant.upstreamModel, seed);
         }
-      }
-      if (wantB64) {
-        const imgRes = await fetch(url, { signal: AbortSignal.timeout(60000) });
-        if (!imgRes.ok) throw new Error(`Image fetch HTTP ${imgRes.status}`);
-        data.push({ b64_json: bytesToBase64(await imgRes.arrayBuffer()) });
-      } else {
-        data.push({ url });
+        break;
+      } catch (err) {
+        errors.push(`${variant.id}: ${errText(err)}`);
+        console.warn(`[image] ${variant.id} failed: ${errText(err)}`);
       }
     }
-    return c.json({ created: Math.floor(Date.now() / 1000), data });
-  } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : "Image generation failed";
-    return c.json({ error: { message: msg } }, 502);
+    if (!url) {
+      degraded = true;
+      const placeholder = placeholderImage(prompt, requestedModel, width, height, errors);
+      if (wantB64) data.push({ b64_json: placeholder.b64 });
+      else data.push({ url: placeholder.url });
+      continue;
+    }
+    if (wantB64) {
+      try {
+        if (url.startsWith("data:")) {
+          data.push({ b64_json: url.split(",")[1] ?? "" });
+        } else {
+          const imgRes = await fetch(url, { signal: AbortSignal.timeout(30000) });
+          if (!imgRes.ok) throw new Error(`Image fetch HTTP ${imgRes.status}`);
+          data.push({ b64_json: bytesToBase64(await imgRes.arrayBuffer()) });
+        }
+      } catch (err) {
+        errors.push(`image-fetch: ${errText(err)}`);
+        degraded = true;
+        data.push({ b64_json: placeholderImage(prompt, requestedModel, width, height, errors).b64 });
+      }
+    } else {
+      data.push({ url });
+    }
   }
+
+  return c.json({
+    created: Math.floor(Date.now() / 1000),
+    data,
+    nokey: {
+      degraded,
+      requested_model: requestedModel,
+      backends_tried: errors.length + data.length,
+      errors: errors.slice(0, 8),
+    },
+  }, 200, degraded ? { "X-Nokey-Degraded": "1" } : undefined);
 });
 
 // Fresh 2.0 (@fresh/core) compatibility shim in case Deno Deploy executes `/app/src/_fresh/server.js`
