@@ -780,6 +780,23 @@ dialog .row { margin-top: 4px; }
   max-height: 220px; overflow: auto;
 }
 
+/* ---------- forge card: field info, resets, parameters builder ---------- */
+.fg-field-h { display: flex; align-items: center; justify-content: space-between; margin-bottom: 5px; }
+.fg-reset { font-size: 10.5px; padding: 2px 8px; }
+.fg-help { font-size: 11.5px; color: var(--dim); line-height: 1.5; margin-top: 5px; }
+.fg-help code { font-family: var(--mono); font-size: 11px; }
+.fg-help a { color: var(--acc); }
+#fgp-fieldset { border: 0; padding: 0; margin: 0; min-width: 0; }
+#fgp-fieldset:disabled { opacity: .5; }
+.fgp-row {
+  display: grid; gap: 6px; align-items: center; margin-top: 6px;
+  grid-template-columns: minmax(110px, 1fr) 104px minmax(140px, 1.6fr) 52px minmax(100px, 1fr) 30px;
+}
+.fgp-req-wrap { display: flex; align-items: center; gap: 3px; font-size: 11px; color: var(--dim); cursor: pointer; }
+@media (max-width: 760px) {
+  .fgp-row { grid-template-columns: 1fr 1fr; }
+}
+
 @media (max-width: 1180px) {
   #nav button { padding: 8px 9px; font-size: 12px; }
   .side { width: 276px; }
@@ -1481,36 +1498,61 @@ select.tool-form-in { background: var(--bg-3); color: var(--fg); }
     <div class="examples-card" id="forge-card" style="margin-bottom:12px">
       <div class="examples-card-head">
         <span class="lbl">🔨 Forge a tool</span>
+        <span class="grow"></span>
         <span class="dim" id="fg-stat" style="font-size:11px"></span>
+        <a class="chip" href="/forge-docs" target="_blank" rel="noopener">📖 format docs</a>
       </div>
-      <div style="display:grid;gap:10px;padding:12px">
-        <div class="notch-host">
-          <input id="fg-name" class="tool-form-in" style="width:100%" placeholder="tool name — lowercase, digits, underscores (e.g. word_count)" spellcheck="false" aria-label="New tool name" data-notch data-notch-label="Forge tool — name" data-notch-context="The canonical name of a new router tool. Lowercase letters, digits and underscores only, up to 64 characters. It must not collide with a built-in tool. Models call the tool by this exact name.">
+      <div style="display:grid;gap:12px;padding:12px">
+        <div>
+          <div class="fg-field-h"><span class="lbl">Name</span><button class="btn q fg-reset" type="button" data-fg-reset="name">↺ example</button></div>
+          <div class="notch-host">
+            <input id="fg-name" class="tool-form-in" style="width:100%" placeholder="tool name — e.g. word_count" spellcheck="false" aria-label="New tool name" data-notch data-notch-label="Forge tool — name" data-notch-context="The canonical name of a new router tool. Lowercase letters, digits and underscores only, up to 64 characters. It must not collide with a built-in tool. Models call the tool by this exact name.">
+          </div>
+          <div class="fg-help">Lowercase letters, digits and underscores · up to 64 characters · must not reuse a built-in tool's name. Forging a name that is already forged replaces that tool.</div>
         </div>
-        <div class="notch-host">
-          <input id="fg-desc" class="tool-form-in" style="width:100%" placeholder="description — what the tool does; models read this to decide when to call it" spellcheck="false" aria-label="New tool description" data-notch data-notch-label="Forge tool — description" data-notch-context="A one or two sentence description of what the tool does and when a model should call it. This text is the main signal models use to pick tools, so be concrete about inputs, outputs and purpose.">
+        <div>
+          <div class="fg-field-h"><span class="lbl">Description</span><button class="btn q fg-reset" type="button" data-fg-reset="desc">↺ example</button></div>
+          <div class="notch-host">
+            <input id="fg-desc" class="tool-form-in" style="width:100%" placeholder="what the tool does — models read this to decide when to call it" spellcheck="false" aria-label="New tool description" data-notch data-notch-label="Forge tool — description" data-notch-context="A one or two sentence description of what the tool does and when a model should call it. This text is the main signal models use to pick tools, so be concrete about inputs, outputs and purpose.">
+          </div>
+          <div class="fg-help">One or two concrete sentences: what it does, what goes in, what comes back. This is the main signal models use to choose tools — vague descriptions get skipped.</div>
         </div>
-        <div class="notch-host">
-          <textarea id="fg-params" rows="5" class="tool-form-in" style="width:100%;font-family:var(--mono);line-height:1.5" spellcheck="false" aria-label="New tool parameters JSON Schema" data-notch data-notch-label="Forge tool — parameters (JSON Schema)" data-notch-context="A JSON Schema object describing the tool arguments: type object with a properties map, per-property types and descriptions, and a required array. The router validates every call against this schema before the code runs. Ask the AI to draft a schema for the arguments you describe, or to fix one that fails.">{
+        <div>
+          <div class="fg-field-h"><span class="lbl">Parameters — JSON Schema</span><button class="btn q fg-reset" type="button" data-fg-reset="params">↺ example</button></div>
+          <fieldset id="fgp-fieldset">
+            <div id="fgp-rows"></div>
+            <div class="row" style="gap:8px;margin-top:6px;align-items:center">
+              <button class="btn q" id="fgp-add" type="button">+ Add argument</button>
+              <span class="dim" id="fgp-note" style="font-size:11px"></span>
+              <button class="btn q" id="fgp-use-controls" type="button" hidden>Switch to controls (replaces JSON)</button>
+            </div>
+          </fieldset>
+          <div class="notch-host" style="margin-top:8px">
+            <textarea id="fg-params" rows="5" class="tool-form-in" style="width:100%;font-family:var(--mono);line-height:1.5" spellcheck="false" aria-label="New tool parameters JSON Schema" data-notch data-notch-label="Forge tool — parameters (JSON Schema)" data-notch-context="A JSON Schema object describing the tool arguments: type object with a properties map, per-property types and descriptions, and a required array. The router validates every call against this schema before the code runs. Ask the AI to draft a schema for the arguments you describe, or to fix one that fails.">{
   "type": "object",
   "properties": {
     "text": { "type": "string", "description": "The text to process" }
   },
   "required": ["text"]
 }</textarea>
+          </div>
+          <div class="fg-help">The arguments object schema. Build it with the controls or edit the JSON directly — whichever you change, the other follows. Extra schema features the controls cannot show (enums, nested item schemas) are preserved, never deleted. The router validates every call against this before the code runs. Full spec: <a href="/forge-docs" target="_blank" rel="noopener">forge format docs</a>.</div>
         </div>
-        <div class="notch-host">
-          <textarea id="fg-code" rows="7" class="tool-form-in" style="width:100%;font-family:var(--mono);line-height:1.5" spellcheck="false" aria-label="New tool code (JavaScript function body)" data-notch data-notch-label="Forge tool — code (JavaScript body)" data-notch-context="The JavaScript function body of the tool. It receives args (the schema-validated arguments object) and api ({ fetch, kv, namespace, signal, now, locals }). Returning a value makes it the tool result. Deno, process and globalThis are not available inside the body. Keep it small and pure where possible.">// args is validated against the parameters schema before this runs.
+        <div>
+          <div class="fg-field-h"><span class="lbl">Code — JavaScript body</span><button class="btn q fg-reset" type="button" data-fg-reset="code">↺ example</button></div>
+          <div class="notch-host">
+            <textarea id="fg-code" rows="7" class="tool-form-in" style="width:100%;font-family:var(--mono);line-height:1.5" spellcheck="false" aria-label="New tool code (JavaScript function body)" data-notch data-notch-label="Forge tool — code (JavaScript body)" data-notch-context="The JavaScript function body of the tool. It receives args (the schema-validated arguments object) and api ({ fetch, kv, namespace, signal, now, locals }). Returning a value makes it the tool result. Deno, process and globalThis are not available inside the body. Keep it small and pure where possible.">// args is validated against the parameters schema before this runs.
 const t = String(args.text ?? "");
 return { words: t.split(/\s+/).filter(Boolean).length, chars: t.length };</textarea>
+          </div>
+          <div class="fg-help">An async function body. It receives <code>args</code> (validated against the schema above) and <code>api</code> — fetch, kv, namespace, signal, now. Whatever it returns becomes the tool result. <code>Deno</code>, <code>process</code> and <code>globalThis</code> are not available inside. Max 16 KiB, default 4 s deadline.</div>
         </div>
         <div class="row" style="gap:8px;align-items:center">
           <button class="btn" id="fg-go">🔨 Forge tool</button>
-          <span class="dim" style="font-size:11.5px">Forging needs the admin secret from connection settings. The tool goes live in the registry immediately and persists. The ✦ AI notch on each field can explain it, draft it, or fix it.</span>
+          <span class="dim" style="font-size:11.5px">Forging needs the admin secret from connection settings. The tool goes live in the registry immediately and persists across restarts. The ✦ AI notch on each field can explain it, draft it, or fix it.</span>
         </div>
       </div>
     </div>
-
 
     <!-- Master-Detail Modern Workbench -->
     <div class="tools-layout">
@@ -5603,6 +5645,143 @@ $("#fg-go").onclick = async () => {
     loadTools();
   } catch (e) { fail("forge failed: " + e.message); }
 };
+
+// ---- forge parameters: web controls <-> JSON, two-way sync ------------------
+// The controls edit a friendly subset (name / type / description / required /
+// default). Sync is conservative: regenerating JSON starts from the parsed
+// current schema and keeps keys the controls do not model (enum, minimum,
+// nested items...). If the JSON grows a shape the rows cannot represent at
+// all, the controls pause instead of overwriting it.
+const FORGE_EXAMPLES = {
+  name: "word_count",
+  desc: "Count the words and characters in a text.",
+  params: `{
+  "type": "object",
+  "properties": {
+    "text": { "type": "string", "description": "The text to process" }
+  },
+  "required": ["text"]
+}`,
+  code: `// args is validated against the parameters schema before this runs.
+const t = String(args.text ?? "");
+return { words: t.split(/\\s+/).filter(Boolean).length, chars: t.length };`,
+};
+const FGP_TYPES = ["string", "integer", "number", "boolean", "array", "object"];
+let fgpMode = "controls";
+const fgpEl = $("#fg-params");
+
+function fgpParse() { try { return JSON.parse(fgpEl.value || "{}"); } catch { return null; } }
+
+function fgpCompatible(s) {
+  if (!s || typeof s !== "object" || Array.isArray(s)) return false;
+  if (s.type !== undefined && s.type !== "object") return false;
+  const props = s.properties ?? {};
+  if (!props || typeof props !== "object" || Array.isArray(props)) return false;
+  return Object.values(props).every((p) => p && typeof p === "object" && !Array.isArray(p) && (p.type === undefined || FGP_TYPES.includes(p.type)));
+}
+
+function fgpDefaultText(v, type) {
+  if (v === undefined) return "";
+  return (type === "array" || type === "object" || typeof v === "object") ? JSON.stringify(v) : String(v);
+}
+
+function fgpRowHTML(name, p, required) {
+  const type = FGP_TYPES.includes(p?.type) ? p.type : "string";
+  return `<div class="fgp-row">
+    <input class="tool-form-in fgp-name" placeholder="argument name" spellcheck="false" value="${esc(name)}" aria-label="Argument name">
+    <select class="tool-form-in fgp-type" aria-label="Argument type">${FGP_TYPES.map((t) => `<option ${t === type ? "selected" : ""}>${t}</option>`).join("")}</select>
+    <input class="tool-form-in fgp-desc" placeholder="description for the model" spellcheck="false" value="${esc(p?.description ?? "")}" aria-label="Argument description">
+    <label class="fgp-req-wrap" title="Required argument"><input type="checkbox" class="fgp-req" ${required ? "checked" : ""}> req</label>
+    <input class="tool-form-in fgp-def" placeholder="default (optional)" spellcheck="false" value="${esc(fgpDefaultText(p?.default, type))}" aria-label="Argument default value">
+    <button class="btn q fgp-del" type="button" aria-label="Remove argument">✕</button>
+  </div>`;
+}
+
+function fgpRenderRows(schema) {
+  const props = schema?.properties ?? {};
+  const req = new Set(Array.isArray(schema?.required) ? schema.required : []);
+  const names = Object.keys(props);
+  $("#fgp-rows").innerHTML = (names.length ? names : [""]).map((n) => fgpRowHTML(n, props[n] ?? {}, req.has(n))).join("");
+}
+
+function fgpCoerceDefault(raw, type) {
+  const t = raw.trim();
+  if (type === "integer" || type === "number") { const n = Number(t); return Number.isFinite(n) ? n : undefined; }
+  if (type === "boolean") return t === "true" ? true : t === "false" ? false : undefined;
+  if (type === "array" || type === "object") { try { return JSON.parse(t); } catch { return undefined; } }
+  return t;
+}
+
+function fgpCollect() {
+  if (fgpMode !== "controls") return;
+  const prev = fgpParse() ?? {};
+  const prevProps = (prev.properties && typeof prev.properties === "object" && !Array.isArray(prev.properties)) ? prev.properties : {};
+  const props = {}, required = [];
+  for (const row of $$("#fgp-rows .fgp-row")) {
+    const name = row.querySelector(".fgp-name").value.trim();
+    if (!name) continue;
+    const type = row.querySelector(".fgp-type").value;
+    const p = { ...(prevProps[name] ?? {}), type };
+    const desc = row.querySelector(".fgp-desc").value.trim();
+    if (desc) p.description = desc; else delete p.description;
+    const dv = fgpCoerceDefault(row.querySelector(".fgp-def").value, type);
+    if (dv !== undefined) p.default = dv; else delete p.default;
+    props[name] = p;
+    if (row.querySelector(".fgp-req").checked) required.push(name);
+  }
+  const out = { ...prev, type: "object", properties: props };
+  if (required.length) out.required = required; else delete out.required;
+  fgpEl.value = JSON.stringify(out, null, 2);
+}
+
+function fgpSetMode(mode) {
+  fgpMode = mode;
+  const off = mode !== "controls";
+  $("#fgp-fieldset").disabled = off;
+  $("#fgp-use-controls").hidden = !off;
+  $("#fgp-note").textContent = off
+    ? "This schema uses features the controls can't show — edit the JSON directly; nothing is overwritten."
+    : "";
+}
+
+let fgpSyncT = 0;
+fgpEl.addEventListener("input", () => {
+  clearTimeout(fgpSyncT);
+  fgpSyncT = setTimeout(() => {
+    const s = fgpParse();
+    if (s && fgpCompatible(s)) { if (fgpMode !== "controls") fgpSetMode("controls"); fgpRenderRows(s); }
+    else if (s) fgpSetMode("advanced");
+  }, 350);
+});
+$("#fgp-rows").addEventListener("input", fgpCollect);
+$("#fgp-rows").addEventListener("change", fgpCollect);
+$("#fgp-rows").addEventListener("click", (e) => {
+  const del = e.target.closest(".fgp-del");
+  if (del) { del.closest(".fgp-row").remove(); fgpCollect(); }
+});
+$("#fgp-add").onclick = () => {
+  $("#fgp-rows").insertAdjacentHTML("beforeend", fgpRowHTML("", {}, false));
+  $("#fgp-rows .fgp-row:last-child .fgp-name")?.focus();
+};
+$("#fgp-use-controls").onclick = () => { fgpSetMode("controls"); fgpCollect(); };
+fgpRenderRows(fgpParse());
+
+// ---- forge field resets -------------------------------------------------------
+$$(".fg-reset").forEach((b) => {
+  b.onclick = () => {
+    const which = b.dataset.fgReset;
+    if (which === "name") $("#fg-name").value = FORGE_EXAMPLES.name;
+    else if (which === "desc") $("#fg-desc").value = FORGE_EXAMPLES.desc;
+    else if (which === "code") { $("#fg-code").value = FORGE_EXAMPLES.code; $("#fg-code").dispatchEvent(new Event("input", { bubbles: true })); }
+    else if (which === "params") {
+      fgpEl.value = FORGE_EXAMPLES.params;
+      fgpSetMode("controls");
+      fgpRenderRows(fgpParse());
+      fgpEl.dispatchEvent(new Event("input", { bubbles: true }));
+    }
+    toast("example restored");
+  };
+});
 
 // ---- boot the shell ----
 $("#thm").onclick = cycleTheme;
