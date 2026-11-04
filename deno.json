@@ -4,7 +4,7 @@
     "start": "deno serve --unstable-kv --unstable-cron -A main.ts",
     "dev": "deno run --watch --unstable-kv --unstable-cron -A main.ts",
     "build": "echo 'Skipping Fresh build - standalone Hono entrypoint'",
-    "check": "deno check main.ts math.ts tests/math_test.ts tests/dispatch_test.ts",
+    "check": "deno check main.ts math.ts trace.ts tests/",
     "test": "deno test --unstable-kv -A tests/"
   },
   "unstable": [
@@ -14,7 +14,8 @@
   "imports": {
     "hono": "npm:hono@4.6.14",
     "hono/cors": "npm:hono@4.6.14/cors",
-    "hono/body-limit": "npm:hono@4.6.14/body-limit"
+    "hono/body-limit": "npm:hono@4.6.14/body-limit",
+    "@opentelemetry/api": "npm:@opentelemetry/api@1.9.0"
   },
   "compilerOptions": {
     "strict": true,

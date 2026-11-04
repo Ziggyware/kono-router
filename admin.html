@@ -49,6 +49,32 @@ pre.src { counter-reset:l; padding:0; }
 pre.src span { display:block; padding:0 10px; }
 pre.src span::before { counter-increment:l; content:counter(l); display:inline-block; width:6ch; margin-right:12px; color:var(--dim); text-align:right; }
 .ok { color:var(--acc); } .no { color:var(--bad); }
+.split { display:grid; grid-template-columns:minmax(300px,34%) 1fr; gap:12px; align-items:start; }
+.tl { border:1px solid var(--line); max-height:78vh; overflow:auto; }
+.tl .it { display:grid; grid-template-columns:8px 1fr auto; gap:8px; padding:5px 8px; border-bottom:1px solid var(--line); cursor:pointer; }
+.tl .it:hover, .tl .it[aria-current=true] { background:var(--bg2); }
+.tl .it small { color:var(--dim); display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.dot { width:8px; height:8px; margin-top:4px; }
+.wf { border:1px solid var(--line); }
+.wf .r { display:grid; grid-template-columns:minmax(220px,38%) 1fr; border-bottom:1px solid var(--line); cursor:pointer; }
+.wf .r:hover { background:var(--bg2); }
+.wf .l { padding:3px 8px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.wf .l i { font-style:normal; color:var(--dim); }
+.wf .tr { position:relative; border-left:1px solid var(--line); }
+.wf .b { position:absolute; top:5px; height:10px; min-width:1px; }
+.wf .ev { position:absolute; top:2px; width:1px; height:16px; background:var(--fg); }
+.wf .ax { display:grid; grid-template-columns:minmax(220px,38%) 1fr; color:var(--dim); font-size:10px; border-bottom:1px solid var(--line); }
+.wf .ax div:last-child { display:flex; justify-content:space-between; padding:2px 4px; border-left:1px solid var(--line); }
+.pg { display:grid; grid-template-columns:minmax(300px,40%) 1fr; gap:12px; align-items:start; }
+.pg textarea { width:100%; background:var(--bg2); color:var(--fg); border:1px solid var(--line); font:inherit; padding:6px 8px; resize:vertical; }
+.pg .col { display:flex; flex-direction:column; gap:8px; }
+.out { border:1px solid var(--line); min-height:60px; max-height:40vh; overflow:auto; padding:8px 10px; white-space:pre-wrap; word-break:break-word; }
+.out.rs { color:var(--mid); }
+.out:empty { display:none; }
+.metrics { display:flex; gap:16px; flex-wrap:wrap; color:var(--dim); font-variant-numeric:tabular-nums; }
+.metrics b { color:var(--acc); font-weight:500; }
+label.ck { display:flex; gap:6px; align-items:center; color:var(--mid); }
+@media (max-width:760px) { .split,.pg { grid-template-columns:1fr; } }
 @media (max-width:760px) { .lane .plots { grid-template-columns:1fr; } .lane canvas + canvas { border-left:0; border-top:1px solid var(--line); } }
 </style>
 </head>
@@ -57,6 +83,8 @@ pre.src span::before { counter-increment:l; content:counter(l); display:inline-b
   <nav role="tablist">
     <button role="tab" data-v="lanes" aria-selected="true">Lanes</button>
     <button role="tab" data-v="endpoints">Endpoints</button>
+    <button role="tab" data-v="traces">Traces</button>
+    <button role="tab" data-v="play">Playground</button>
     <button role="tab" data-v="ops">Ops</button>
     <button role="tab" data-v="source">Source</button>
   </nav>
@@ -74,6 +102,38 @@ pre.src span::before { counter-increment:l; content:counter(l); display:inline-b
   <section class="view" id="v-endpoints" hidden>
     <div class="row"><input id="efilter" aria-label="Filter endpoints" size="32"><span id="ecount" class="grow"></span></div>
     <table><thead><tr><th data-k="name">endpoint</th><th data-k="id">id</th><th data-k="catalog_tuples">tuples</th><th data-k="models">hints</th><th data-k="url">url</th></tr></thead><tbody id="etb"></tbody></table>
+  </section>
+  <section class="view" id="v-traces" hidden>
+    <div class="row">
+      <button class="act" id="tlive" aria-pressed="false">live</button>
+      <button class="act" id="tload">load</button>
+      <input id="tfilter" aria-label="Filter traces" size="28">
+      <label class="ck"><input type="checkbox" id="terr">errors</label>
+      <span id="tcount" class="grow" style="text-align:right;color:var(--dim)"></span>
+    </div>
+    <div class="split"><div class="tl" id="tlist" role="listbox" aria-label="Traces"></div><div><div class="wf" id="wf"></div><pre id="tattrs" hidden></pre></div></div>
+  </section>
+  <section class="view" id="v-play" hidden>
+    <div class="pg">
+      <div class="col">
+        <div class="row" style="margin:0">
+          <input id="pmodel" value="free:auto" aria-label="Model" size="18">
+          <select id="peffort" aria-label="Reasoning effort"><option value="">effort</option><option>low</option><option>medium</option><option>high</option></select>
+          <label class="ck"><input type="checkbox" id="pstream" checked>stream</label>
+          <label class="ck"><input type="checkbox" id="pparallel">parallel</label>
+        </div>
+        <textarea id="psys" rows="2" aria-label="System message"></textarea>
+        <textarea id="pmsg" rows="6" aria-label="User message"></textarea>
+        <textarea id="ptools" rows="8" aria-label="Tools JSON" spellcheck="false"></textarea>
+        <div class="row" style="margin:0"><button class="act" id="pgo">send</button><button class="act" id="pstop" disabled>stop</button><button class="act" id="ppreset">tools preset</button></div>
+      </div>
+      <div class="col">
+        <div class="metrics" id="pmet"></div>
+        <div class="out rs" id="preason" aria-label="Reasoning" aria-live="polite"></div>
+        <div class="out" id="pcontent" aria-label="Content" aria-live="polite"></div>
+        <pre id="ptcalls" hidden></pre>
+      </div>
+    </div>
   </section>
   <section class="view" id="v-ops" hidden>
     <div class="row">
@@ -315,12 +375,213 @@ function renderSource() {
 $("#sload").onclick = loadSource;
 $("#sgrep").oninput = renderSource;
 
+// --- SSE reader shared by the live tail and the playground ---
+async function* sseBlocks(res, signal) {
+  const rd = res.body.pipeThrough(new TextDecoderStream()).getReader();
+  signal?.addEventListener("abort", () => rd.cancel().catch(() => {}), { once: true });
+  let buf = "";
+  for (;;) {
+    const { value, done } = await rd.read();
+    if (done) break;
+    buf += value;
+    for (let i = buf.indexOf("\n\n"); i >= 0; i = buf.indexOf("\n\n")) {
+      const block = buf.slice(0, i);
+      buf = buf.slice(i + 2);
+      const data = block.split("\n").filter((l) => l.startsWith("data:")).map((l) => l.slice(5).trimStart()).join("\n");
+      yield { data, comment: block.startsWith(":") ? block.slice(1).trim() : null };
+    }
+  }
+}
+
+// --- Traces ---
+const TMAX = 300;
+const traces = new Map(); // id -> Map(spanId -> span)
+let tsel = null, tliveCtl = null, tdirty = false;
+const OUT_COLOR = { won: "#d4ff00", failed: "#ff5c5c", timeout: "#ffb547", late: "#6b6f63", cancelled: "#3a3f43" };
+const spanColor = (s) => OUT_COLOR[s.attrs.outcome] ?? (s.status === "error" ? "#ff5c5c" : s.end === null ? "#7cc4ff" : s.status === "ok" ? "#a3a79a" : "#6b6f63");
+function upsert(id, span) {
+  let t = traces.get(id);
+  if (!t) {
+    t = new Map();
+    traces.set(id, t);
+    while (traces.size > TMAX) traces.delete(traces.keys().next().value);
+  }
+  t.set(span.id, span);
+  if (!tdirty) { tdirty = true; requestAnimationFrame(renderTraces); }
+}
+function rootOf(t) { for (const s of t.values()) if (!t.has(s.parent)) return s; }
+function renderTraces() {
+  tdirty = false;
+  const q = $("#tfilter").value.trim().toLowerCase(), errOnly = $("#terr").checked;
+  const rows = [];
+  for (const [id, t] of [...traces].reverse()) {
+    const r = rootOf(t);
+    if (!r) continue;
+    const errs = [...t.values()].filter((s) => s.status === "error" && s.name === "attempt").length;
+    if (errOnly && r.status !== "error") continue;
+    const tuple = r.attrs.tuple ?? "";
+    if (q && ![id, r.name, r.attrs["model.requested"], r.attrs.mode, tuple].join(" ").toLowerCase().includes(q)) continue;
+    const dur = (r.end ?? Date.now()) - r.start;
+    rows.push(`<div class="it" role="option" data-id="${id}" aria-current="${id === tsel}"><span class="dot" style="background:${spanColor(r)}"></span>
+      <div>${esc(r.name)} <span style="color:var(--mid)">${esc(r.attrs["model.requested"] ?? "")}</span> ${esc(r.attrs.mode ?? "")}<small>${esc(tuple || r.attrs.error || id)}</small></div>
+      <div style="text-align:right">${ms(dur)}<small>${t.size} spans ${errs ? `<span class="no">${errs}✗</span>` : ""}</small></div></div>`);
+  }
+  $("#tlist").innerHTML = rows.join("");
+  $("#tcount").textContent = `${rows.length}/${traces.size}`;
+  if (tsel) renderWaterfall(tsel);
+}
+function renderWaterfall(id) {
+  const t = traces.get(id);
+  if (!t) return;
+  const spans = [...t.values()], root = rootOf(t);
+  const t0 = Math.min(...spans.map((s) => s.start));
+  const t1 = Math.max(t0 + 1, ...spans.map((s) => s.end ?? Date.now()), ...spans.flatMap((s) => s.events.map((e) => e.t)));
+  const W = t1 - t0, kids = new Map();
+  for (const s of spans) { const p = s === root ? null : s.parent; kids.set(p, [...(kids.get(p) ?? []), s]); }
+  const order = [];
+  const walk = (p, d) => { for (const s of (kids.get(p) ?? []).sort((a, b) => a.start - b.start)) { order.push([s, d]); walk(s.id, d + 1); } };
+  walk(null, 0);
+  const pct = (x) => ((x - t0) / W * 100).toFixed(3) + "%";
+  $("#wf").innerHTML = `<div class="ax"><div class="l">${esc(id)}</div><div><span>0</span><span>${ms(W / 2)}</span><span>${ms(W)}</span></div></div>` +
+    order.map(([s, d]) => {
+      const label = s.name === "attempt" ? (s.attrs.tuple ?? s.attrs.backend ?? "") : s.name === "tier" ? `${s.attrs.tier} ${s.attrs.label}` : s.name;
+      const tail = s.attrs.outcome ?? (s.end === null ? "…" : "");
+      const tip = Object.entries(s.attrs).map(([k, v]) => `${k}=${v}`).join("\n");
+      return `<div class="r" data-sid="${s.id}" title="${esc(tip)}"><div class="l" style="padding-left:${8 + d * 12}px"><i>${esc(tail)} ${ms((s.end ?? Date.now()) - s.start)}</i> ${esc(label)}</div>
+        <div class="tr"><span class="b" style="left:${pct(s.start)};width:${(((s.end ?? Date.now()) - s.start) / W * 100).toFixed(3)}%;background:${spanColor(s)}"></span>${s.events.map((e) => `<span class="ev" style="left:${pct(e.t)}" title="${esc(e.name + " " + JSON.stringify(e.attrs ?? {}))}"></span>`).join("")}</div></div>`;
+    }).join("");
+}
+async function loadTraces() {
+  try {
+    const j = await call("/v1/traces?limit=100", { admin: true });
+    for (const s of j.data.reverse()) {
+      const full = await call("/v1/traces/" + s.id, { admin: true }).catch(() => null);
+      for (const sp of full?.spans ?? [s.root]) upsert(s.id, sp);
+    }
+    renderTraces();
+  } catch (e) { status(e.message, true); }
+}
+async function toggleLive() {
+  const btn = $("#tlive");
+  if (tliveCtl) { tliveCtl.abort(); tliveCtl = null; btn.setAttribute("aria-pressed", "false"); btn.style.background = ""; return; }
+  tliveCtl = new AbortController();
+  btn.setAttribute("aria-pressed", "true"); btn.style.background = "#d4ff0018";
+  try {
+    const res = await fetch("/v1/traces/live", { headers: headers(true), signal: tliveCtl.signal });
+    if (!res.ok) throw new Error(`${res.status} ${(await res.json().catch(() => ({})))?.error?.message ?? ""}`);
+    for await (const { data } of sseBlocks(res, tliveCtl.signal)) {
+      if (!data) continue;
+      const e = JSON.parse(data);
+      upsert(e.trace, e.span);
+    }
+  } catch (e) { if (e.name !== "AbortError") status("live: " + e.message, true); }
+  if (tliveCtl) toggleLive();
+}
+$("#tlive").onclick = toggleLive;
+$("#tload").onclick = loadTraces;
+$("#tfilter").oninput = renderTraces;
+$("#terr").onchange = renderTraces;
+$("#tlist").onclick = (ev) => {
+  const it = ev.target.closest("[data-id]");
+  if (!it) return;
+  tsel = it.dataset.id; $("#tattrs").hidden = true; renderTraces();
+};
+$("#wf").onclick = (ev) => {
+  const r = ev.target.closest("[data-sid]");
+  if (!r) return;
+  const s = traces.get(tsel)?.get(r.dataset.sid);
+  const pre = $("#tattrs"); pre.hidden = false; pre.textContent = JSON.stringify(s, null, 2);
+};
+function openTrace(id) {
+  tsel = id;
+  document.querySelector('nav [data-v="traces"]').click();
+  call("/v1/traces/" + id, { admin: true }).then((t) => { for (const s of t.spans) upsert(id, s); renderTraces(); }).catch((e) => status(e.message, true));
+}
+
+// --- Playground ---
+const PRESET = [
+  { type: "function", function: { name: "get_weather", description: "Current weather for a city", parameters: { type: "object", properties: { city: { type: "string" } }, required: ["city"] } } },
+  { type: "function", function: { name: "get_time", description: "Current time in an IANA timezone", parameters: { type: "object", properties: { tz: { type: "string" } }, required: ["tz"] } } },
+];
+$("#ppreset").onclick = () => {
+  $("#ptools").value = JSON.stringify(PRESET, null, 2);
+  $("#pparallel").checked = true;
+  if (!$("#pmsg").value.trim()) $("#pmsg").value = "What is the weather in Paris and the time in Tokyo? Call both tools at once.";
+};
+let pctl = null;
+$("#pstop").onclick = () => pctl?.abort();
+$("#pgo").onclick = async () => {
+  let tools;
+  try { tools = $("#ptools").value.trim() ? JSON.parse($("#ptools").value) : undefined; }
+  catch (e) { status("tools: " + e.message, true); return; }
+  const messages = [...($("#psys").value.trim() ? [{ role: "system", content: $("#psys").value }] : []), { role: "user", content: $("#pmsg").value || "ping" }];
+  const stream = $("#pstream").checked;
+  const body = { model: $("#pmodel").value.trim() || "free:auto", messages, stream,
+    ...($("#peffort").value ? { reasoning_effort: $("#peffort").value } : {}),
+    ...(tools ? { tools, parallel_tool_calls: $("#pparallel").checked } : {}) };
+  const rs = $("#preason"), ct = $("#pcontent"), tc = $("#ptcalls"), met = $("#pmet");
+  rs.textContent = ""; ct.textContent = ""; tc.hidden = true;
+  const m = { t0: performance.now(), hdr: 0, ttft: 0, total: 0, chunks: 0, trace: "", tuple: "", finish: "" };
+  const show = () => {
+    met.innerHTML = [["headers", ms(m.hdr)], ["ttft", ms(m.ttft || NaN)], ["total", ms(m.total || NaN)], ["chunks", m.chunks], ["finish", esc(m.finish || "—")], ["tuple", esc(m.tuple || "—")]]
+      .map(([k, v]) => `<span>${k} <b>${v}</b></span>`).join("") + (m.trace ? `<a href="#" id="ptrace">trace</a>` : "");
+    const a = $("#ptrace"); if (a) a.onclick = (ev) => { ev.preventDefault(); openTrace(m.trace); };
+  };
+  const calls = [];
+  const addCalls = (list) => {
+    for (const t of list ?? []) {
+      const c = calls[t.index] ??= { id: t.id, type: t.type, function: { name: "", arguments: "" } };
+      if (t.id) c.id = t.id;
+      c.function.name += t.function?.name ?? "";
+      c.function.arguments += t.function?.arguments ?? "";
+    }
+    if (calls.length) { tc.hidden = false; tc.textContent = JSON.stringify(calls.map((c) => { try { return { ...c, function: { ...c.function, arguments: JSON.parse(c.function.arguments) } }; } catch { return c; } }), null, 2); }
+  };
+  pctl = new AbortController();
+  $("#pgo").disabled = true; $("#pstop").disabled = false;
+  try {
+    const res = await fetch("/v1/chat/completions", { method: "POST", headers: headers(false), body: JSON.stringify(body), signal: pctl.signal });
+    m.hdr = performance.now() - m.t0;
+    m.trace = (res.headers.get("traceparent") ?? "").split("-")[1] ?? "";
+    show();
+    if (!res.ok) throw new Error(`${res.status} ${(await res.json().catch(() => ({})))?.error?.message ?? ""}`);
+    if (!stream) {
+      const j = await res.json();
+      const msg = j.choices?.[0]?.message ?? {};
+      m.total = performance.now() - m.t0; m.ttft = j.telemetry?.observed_ttft_ms ?? NaN; m.finish = j.choices?.[0]?.finish_reason; m.tuple = j.nokey?.tuple_id ?? "";
+      rs.textContent = msg.reasoning_content ?? ""; ct.textContent = msg.content ?? "";
+      addCalls((msg.tool_calls ?? []).map((t, i) => ({ ...t, index: i })));
+    } else {
+      for await (const { data, comment } of sseBlocks(res, pctl.signal)) {
+        if (comment) { status(comment); continue; }
+        if (!data || data === "[DONE]") continue;
+        const j = JSON.parse(data);
+        if (j.error) throw new Error(j.error.message);
+        const d = j.choices?.[0]?.delta ?? {};
+        m.chunks++;
+        if (!m.ttft && (d.content || d.reasoning_content || d.tool_calls)) m.ttft = performance.now() - m.t0;
+        if (d.reasoning_content) rs.textContent += d.reasoning_content;
+        if (d.content) ct.textContent += d.content;
+        if (d.tool_calls) addCalls(d.tool_calls);
+        if (j.choices?.[0]?.finish_reason) m.finish = j.choices[0].finish_reason;
+        if (j.nokey) m.tuple = j.nokey.tuple_id ?? (j.nokey.degraded ? "degraded" : "");
+        show();
+      }
+      m.total = performance.now() - m.t0;
+    }
+    status("done");
+  } catch (e) { status(e.name === "AbortError" ? "stopped" : e.message, e.name !== "AbortError"); }
+  show();
+  $("#pgo").disabled = false; $("#pstop").disabled = true; pctl = null;
+};
+
 const loaded = new Set();
 document.querySelectorAll("nav button").forEach((b) => b.onclick = () => {
   document.querySelectorAll("nav button").forEach((x) => x.setAttribute("aria-selected", x === b));
   document.querySelectorAll(".view").forEach((v) => v.hidden = v.id !== "v-" + b.dataset.v);
   if (b.dataset.v === "endpoints" && !loaded.has("e")) { loaded.add("e"); loadEndpoints(); }
   if (b.dataset.v === "lanes" && health) lanes(health);
+  if (b.dataset.v === "traces" && !loaded.has("t")) { loaded.add("t"); loadTraces(); }
 });
 addEventListener("resize", () => health && lanes(health));
 document.addEventListener("visibilitychange", () => { if (!document.hidden && Number($("#every").value)) pollHealth(); });
