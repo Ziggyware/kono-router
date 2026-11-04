@@ -388,3 +388,28 @@ so the picker mixed both styles.
   shows the grouping instead of repeated strings.
 - `tests/model_list_test.ts` pulls the renderer out of `index.html` and pins
   the collapse/ordering behaviour (5 cases).
+
+## Addendum 11 — 2026-11-04 (grouping understands `provider/subprovider/model:modifier`)
+
+Addendum 10 derived a model's group name from the last `/` segment only, so a
+three-part or modifier-pinned slug grouped under its unmodified name and each
+routing variant became its own option: `community/MarcosFRG/qwen3.8-flash:paid`
+and `community/chigwell/qwen3.8-flash` were listed as two models with the same
+label. Real ids arrive in both shapes (`community/<owner>/<model>`,
+`<provider>/<model>:free|:paid|:batch|:stable`, …) via `discoveredModels`.
+
+- `leafModelName()` now takes the last `/` segment and then the part before the
+  first `:`, so every variant of a model collapses onto one entry — matching on
+  the bare model name, exactly as the router's own alias matching does.
+- The virtual lanes are excluded from that colon strip: `free:smart`/`free:auto`
+  are names, not slugs, so their colon is not a modifier and they must not
+  collapse into one "free" option.
+- When variants collide, the id kept for the option is ranked rather than taken
+  first: provider-qualified beats bare (as before) and an unmodified id beats one
+  pinned to a modifier, so the picker offers the slug that keeps every provider
+  and routing class in the race.
+- `tests/model_list_test.ts` pins the three-part + modifier collapse, the bare
+  `model:modifier` case, the unmodified-id-wins rule, and the lane regression
+  (8 cases). Note: no Deno in the sandbox, so the suite was run under node with
+  a `Deno.test` shim against the same `index.html` slice — 8/8; the new cases
+  fail against the pre-change renderer.

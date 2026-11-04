@@ -38,6 +38,7 @@ const catalog = [
   { id: "anthropic/claude-opus-4.5", owned_by: "openrouter" },
   { id: "google/gemini-3.0-pro", owned_by: "openrouter" },
   { id: "openai/gpt-5.2", owned_by: "openrouter" },
+  { id: "openai/gpt-5.2:extended", owned_by: "openrouter" },
 ];
 
 Deno.test("model list: repeats collapse and slugs stay provider-qualified", () => {
@@ -93,4 +94,48 @@ Deno.test("model list: rendered options carry a grouped label", () => {
     throw new Error(`qualified option missing from ${list.innerHTML}`);
   }
   if (!list.innerHTML.includes('value="free:smart" label="free:smart"')) throw new Error("lane option missing");
+  if (!list.innerHTML.includes('value="openai/gpt-5.2" label="openai · gpt-5.2"')) {
+    throw new Error(`modifier variant must collapse into the plain slug: ${list.innerHTML}`);
+  }
+  if (list.innerHTML.includes("gpt-5.2:extended")) throw new Error("a routing modifier leaked into its own option");
+});
+
+Deno.test("model list: provider/subprovider/model:modifier groups on the bare model name", () => {
+  const { groupedModels } = mount();
+  const groups = groupedModels([
+    { id: "community/MarcosFRG/qwen3.8-flash:paid", owned_by: "kilo" },
+    { id: "community/MarcosFRG/qwen3.8-flash:free", owned_by: "llm7" },
+    { id: "community/chigwell/qwen3.8-flash", owned_by: "services_json_kilo" },
+  ]);
+  if (groups.length !== 1) throw new Error(`expected one group, got ${groups.map((g) => g.vendor).join(",")}`);
+  const [group] = groups;
+  if (group.vendor !== "community") throw new Error(`vendor ${group.vendor}`);
+  if (group.items.length !== 1) {
+    throw new Error(`every modifier variant must collapse to one option, got ${group.items.map((i) => i.id).join(", ")}`);
+  }
+  if (group.items[0].name !== "qwen3.8-flash") throw new Error(`label name ${group.items[0].name}`);
+  if (group.items[0].id !== "community/chigwell/qwen3.8-flash") {
+    throw new Error(`the unmodified slug must win over :paid/:free, got ${group.items[0].id}`);
+  }
+});
+
+Deno.test("model list: a bare model:modifier id groups with its base name", () => {
+  const { groupedModels } = mount();
+  const groups = groupedModels([
+    { id: "gpt-oss-120b:free", owned_by: "kilo" },
+    { id: "gpt-oss-120b", owned_by: "kilo" },
+  ]);
+  const items = groups.flatMap((g) => g.items);
+  if (items.length !== 1) throw new Error(`expected one option, got ${items.map((i) => i.id).join(", ")}`);
+  if (items[0].id !== "gpt-oss-120b") throw new Error(`unmodified id must win, got ${items[0].id}`);
+});
+
+Deno.test("model list: the modifier strip never collapses the free lanes", () => {
+  const { groupedModels } = mount();
+  const lanes = groupedModels(catalog).find((g) => g.vendor === "lanes");
+  if (!lanes) throw new Error("lane group missing");
+  const ids = lanes.items.map((i) => i.id);
+  if (ids.join(",") !== "free:auto,free:smart,free:reasoning") {
+    throw new Error(`lanes must keep their colon-suffixed names, got ${ids.join(",")}`);
+  }
 });
