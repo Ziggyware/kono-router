@@ -3,7 +3,7 @@
   "info": {
     "title": "nokey-router",
     "version": "asck-v1",
-    "description": "OpenAI-compatible free-inference router. Chat and image routes never fail: after an exhaustive endpoint sweep they return 200 with `nokey.degraded=true` (buffered responses also set `X-Nokey-Degraded: 1`; streams send headers before routing settles, so they signal it in-band). Every request is traced: `traceparent` is honoured inbound and returned outbound, spans are exported via OpenTelemetry and kept in a per-isolate ring under `/v1/traces`. The ASCK-T tool plane adds first-class tool support: `GET /v1/tools` lists executable built-ins (math, statistics, text, JSON, time, crypto, encoding, sampling and mesh introspection) with their learned reliability, `POST /v1/tools/execute` runs them directly, and a chat request can attach them with `\"tools\": \"auto\"` so the router executes the calls itself and loops until the model answers."
+    "description": "OpenAI-compatible free-inference router. Chat and image routes never fail: after an exhaustive endpoint sweep they return 200 with `nokey.degraded=true` (buffered responses also set `X-Nokey-Degraded: 1`; streams send headers before routing settles, so they signal it in-band). Every request is traced: `traceparent` is honoured inbound and returned outbound, spans are exported via OpenTelemetry and kept in a per-isolate ring under `/v1/traces`. The ASCK-T tool plane adds first-class tool support: `GET /v1/tools` lists executable built-ins (calculation, data/JSON, text, time, crypto, durable files, clipboard, tasks, memory, RAG, embeddings, web search/fetch, HTTP and mesh introspection) with their learned reliability, `POST /v1/tools/execute` runs them directly, and a chat request can attach them with `\"tools\": \"auto\"` so the router executes the calls itself and loops until the model answers."
   },
   "servers": [
     {
@@ -1157,7 +1157,7 @@
               "name": {
                 "type": "string",
                 "examples": [
-                  "ASCK-T v1"
+                  "ASCK-T v2"
                 ]
               },
               "builtin_tools": {
@@ -1938,20 +1938,25 @@
             "type": "string",
             "description": "Wire-safe id matching ^[a-z0-9_]{1,64}$",
             "examples": [
-              "math_evaluate",
+              "calculate",
               "router_catalog"
             ]
           },
           "kind": {
             "type": "string",
             "enum": [
+              "web",
+              "files",
+              "memory",
+              "rag",
+              "vector",
+              "clipboard",
+              "task",
               "compute",
+              "data",
               "text",
-              "json",
               "time",
               "crypto",
-              "encode",
-              "random",
               "mesh"
             ]
           },
@@ -2064,12 +2069,21 @@
           "plane": {
             "type": "string",
             "examples": [
-              "asck-t-v1"
+              "asck-t-v2"
             ]
           },
           "enabled": {
             "type": "boolean",
             "description": "false when NOKEY_TOOLS=0"
+          },
+          "session": {
+            "type": "object",
+            "description": "Namespace used for every stateful tool (fs_*, memory_*, rag_*, clipboard, task)",
+            "properties": {
+              "namespace": { "type": "string" },
+              "scope_header": { "type": "string", "examples": ["x-nokey-session"] },
+              "storage": { "type": "string", "examples": ["deno-kv"] }
+            }
           },
           "agent": {
             "type": "object",
@@ -2144,7 +2158,7 @@
           "name": {
             "type": "string",
             "examples": [
-              "math_evaluate"
+              "calculate"
             ]
           },
           "arguments": {

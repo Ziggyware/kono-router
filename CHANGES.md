@@ -1,3 +1,66 @@
+# Tool Plane (ASCK-T v2) — 2026-11-04
+
+v1 made the plane *executable*: a schema validator, a repair ladder, a registry
+and a skill posterior. What it could execute was mostly arithmetic. v2 splits
+the code along the seam that actually matters — a vendor-neutral **kernel** and
+a **capability toolbox** — and gives the plane state.
+
+## Split
+- `tools.ts` is now the kernel only (~1.9k lines): validation, repair, resolve,
+  projections, sandbox, skill memory, agent partitioning. It knows nothing about
+  files, SQL or HTTP.
+- `toolbox/` owns capabilities behind one `ToolCaps` contract (`{ kv?, fetch? }`),
+  so nothing below it touches a global, and every module is unit-testable with a
+  memory store and a stub fetcher. `registerToolbox(register, api)` is the only
+  join point; `main.ts` passes Deno KV and the guard-wrapped fetch.
+- Stateful tools are namespaced per tenant: `x-nokey-session` / `x-session-id`,
+  falling back to `shared`. `/v1/tools` now publishes that contract under
+  `session`.
+
+## New capabilities (24 built-ins, 13 kinds)
+- **Durable VFS** (`fs_write`/`read`/`list`/`grep`/`patch`/`delete`): 2 MiB per
+  file, 32 MiB + 2000-file quota checked *before* writing, chunked KV blobs,
+  glob listing, regex grep with context, unified diff and fuzzy hunk anchoring.
+- **Memory** (`memory_write`/`recall`/`forget`/`graph`): conjunctive duplicate
+  consolidation (cosine *and* token containment, so TypeScript and Python notes
+  stop collapsing into each other), hybrid retrieval, MMR, one-hop expansion,
+  reinforcement on read, decay/importance scoring.
+- **RAG** (`rag_index`/`search`/`collections`): content-addressed chunks with
+  duplicate skipping, BM25 + dense fusion, char budget, citations.
+- **Embeddings** (`embed`): deterministic 384-d feature hash, int8 compression,
+  optional neural upgrade via `NOKEY_EMBED_URL` (no key required by default).
+- **Web** (`web_search`/`web_fetch`/`http_request`): keyless multi-engine search
+  fused with RRF, readability extraction to Markdown, SSRF guard, response cache.
+- **Clipboard** (versioned slots with undo/TTL), **task** (durable plan board),
+  and consolidated **`calculate` / `data` / `text` / `time` / `crypto`** replacing
+  the thirteen narrow v1 tools (`math_evaluate`, `json_query`, `encode_*`, …).
+  Every old name still resolves: aliases, dotted spellings and fuzzy matches are
+  folded into the five verbs.
+
+## Bugs the new tests found (all fixed)
+- `rrf()` sized its score array by the longest *ranking* instead of the largest
+  *document index*; two short rankings pointing at different documents produced
+  `NaN` scores and empty recall. Hybrid RAG and memory recall both hit it.
+- Unary minus bound tighter than `^` (`-3^2` evaluated to 9). It now parses its
+  operand at the power precedence, matching Python/Excel.
+- The unified-diff parser turned the patch's trailing newline into a phantom
+  context line, so every anchored hunk failed against the last line of a file.
+- Memory recall dropped every memory when a query had no positive lexical or
+  dense signal (score became `NaN`). Recall now degrades to importance+recency.
+- A batch ran every call in parallel, so `fs_write` then `fs_read` (or
+  `memory_write` then `memory_recall`) raced: the read could not see the write.
+  Stateful calls now execute in call order while pure calls stay parallel, and
+  the KV store reads/lists with strong consistency so the write is visible
+  immediately.
+- Tokenisation ignored inflection (`deploy` never matched `Deploys`). A
+  conservative stemmer folds plurals and `-ing`/`-ed` without Porter's reach.
+
+## Tests
+`tests/tools_test.ts` (23 suites) covers the kernel and every capability with a
+stubbed transport; `tests/tool_plane_test.ts` (25 tests) now pins ASCK-T v2:
+plane string, engine `nokey-sovereign-v6-asck2-toolbox`, the 24-tool roster, the
+new verbs in the agent-loop scripts, and `session.namespace`.
+
 # Tool Plane (ASCK-T v1) — 2026-11-04
 
 First-class tool support. Until now the router only *forwarded* `tools` /

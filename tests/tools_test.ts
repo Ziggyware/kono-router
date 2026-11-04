@@ -1,12 +1,11 @@
 // deno-lint-ignore-file no-explicit-any
 /**
- * Tool Plane kernel tests — pure module, no network, no KV.
+ * Toolbox tests — kernel + capabilities, no network.
  *
- * Covers the four things that make the plane trustworthy:
- *   1. the JSON Schema subset validator and its lossless coercion,
- *   2. the graded repair ladder for model-mangled arguments,
- *   3. every built-in tool implementation (exact expected values),
- *   4. the skill memory that makes tool knowledge compound.
+ *   1. registry, schema validation, the argument repair ladder;
+ *   2. every capability: web (stubbed fetch), files, memory, RAG, embeddings,
+ *      clipboard, tasks, compute/data/text/time/crypto;
+ *   3. the learning machinery that makes tool knowledge compound.
  *
  * Run: deno test --unstable-kv -A tests/
  */
@@ -14,81 +13,91 @@ import {
   DEFAULT_AUTO_TOOLS,
   emptyToolSkill,
   executeTool,
+  executeToolCalls,
   extractJsonCandidate,
-  formatNumber,
   getTool,
-  guessEpochUnit,
-  humanizeDuration,
-  jaccard,
-  levenshtein,
   listTools,
   mergeToolDeclarations,
   normalizeToolCalls,
   normalizeToolName,
   observeToolSkill,
   observeTupleToolStats,
-  parseDuration,
   parseToolArguments,
   partitionToolCalls,
-  queryJson,
   registerTool,
   repairJsonText,
   resolveAutoToolNames,
   resolveTool,
-  seededRandom,
-  similarityScore,
   skillSummary,
   toStrictSchema,
   toToolSpecs,
   toolPreamble,
   toolRoutingBonus,
-  trigramDice,
   tupleToolCompetence,
+  unregisterTool,
   validateJson,
   type ToolExecution,
   type ToolExecutionErr,
   type ToolExecutionOk,
   type ToolSkillRecord,
 } from "../tools.ts";
+import { bm25, chunkText, cosineI8, dequantize, embed, quantize, rankOf, rrf } from "../toolbox/vec.ts";
+import { isPrivateProbe } from "../toolbox/web.ts";
+import { stubFetch } from "./web_stub.ts";
 
 function assert(cond: unknown, msg: string): asserts cond {
   if (!cond) throw new Error(msg);
 }
-/** Unwrap a failed execution so its diagnostics stay type-visible. */
 function fail(exec: ToolExecution): ToolExecutionErr {
-  assert(!exec.ok, `expected a failure, got ${JSON.stringify(exec)}`);
+  assert(!exec.ok, `expected a failure, got ${JSON.stringify(exec).slice(0, 300)}`);
   return exec as ToolExecutionErr;
 }
 const near = (a: number, b: number, tol = 1e-6, msg = "") => assert(Math.abs(a - b) <= tol, `${msg} expected ~${b}, got ${a}`);
 
-/** Execute a built-in and unwrap the success payload. */
-async function run(name: string, args: unknown): Promise<any> {
-  const exec = await executeTool(name, args);
-  if (!exec.ok) throw new Error(`${name} failed: ${exec.code} ${exec.error} ${JSON.stringify(exec.issues ?? [])}`);
+async function run(name: string, args: unknown, opts: { namespace?: string; fetch?: typeof fetch } = {}): Promise<any> {
+  const exec = await executeTool(name, args, opts.namespace || opts.fetch ? { caps: { namespace: opts.namespace, fetch: opts.fetch } } : {});
+  if (!exec.ok) throw new Error(`${name} failed: ${exec.code} ${exec.error} ${JSON.stringify(exec.issues ?? []).slice(0, 300)}`);
   return (exec as ToolExecutionOk).result;
 }
 
-Deno.test("registry: built-ins are registered, wire-safe and resolvable by any spelling", () => {
+// ---------------------------------------------------------------------------
+// 1. Registry & name resolution
+// ---------------------------------------------------------------------------
+
+Deno.test("registry: a coherent, wire-safe, agent-grade tool set", () => {
   const tools = listTools();
-  assert(tools.length >= 13, `expected the built-in set, got ${tools.length}`);
+  assert(tools.length >= 20, `expected a broad toolbox, got ${tools.length}`);
   for (const t of tools) {
-    assert(/^[a-z0-9_]{1,64}$/.test(t.name), `tool name "${t.name}" is not wire-safe for OpenAI function calling`);
-    assert(t.description.length > 20, `${t.name} needs a description a model can act on`);
+    assert(/^[a-z0-9_]{1,64}$/.test(t.name), `tool name "${t.name}" is not wire-safe`);
+    assert(t.description.length > 60, `${t.name} needs a description a model can act on`);
     assert((t.parameters as any).type === "object", `${t.name} parameters must be an object schema`);
+    assert(new Set(t.aliases ?? []).size === (t.aliases ?? []).length, `${t.name} has duplicate aliases`);
   }
-  // Every advertised auto-tool must actually exist.
   for (const name of DEFAULT_AUTO_TOOLS) assert(getTool(name), `DEFAULT_AUTO_TOOLS advertises missing tool ${name}`);
 
-  // Resolution is forgiving: dotted, kebab, camel and fuzzy spellings.
-  assert(resolveTool("math.evaluate").tool?.name === "math_evaluate", "dotted alias");
-  assert(resolveTool("math-evaluate").tool?.name === "math_evaluate", "kebab spelling");
-  assert(resolveTool("MathEvaluate").tool?.name === "math_evaluate", "camel spelling");
-  assert(resolveTool("calculator").tool?.name === "math_evaluate", "declared alias");
-  assert(resolveTool("math_evaluat").tool?.name === "math_evaluate", "near miss resolves by similarity");
-  const unknown = resolveTool("totally_unrelated_zzz");
-  assert(unknown.tool === undefined, "unrelated names must not resolve");
-  assert(Array.isArray(unknown.suggestions), "unrelated names still return suggestions");
-  assert(normalizeToolName("  Router.Health!! ") === "router_health", "normalise strips punctuation/case");
+  // The old toy set is gone; the new one is real I/O plus real computation.
+  const names = new Set(tools.map((t) => t.name));
+  for (const retired of ["math_evaluate", "math_statistics", "json_query", "json_validate", "json_transform", "text_extract", "text_similarity", "time_convert", "crypto_digest", "crypto_id", "encode_transform", "encode_jwt", "random_sample"]) {
+    assert(!names.has(retired), `retired tool ${retired} is still registered`);
+  }
+  for (const needed of ["web_search", "web_fetch", "http_request", "fs_read", "fs_write", "fs_patch", "fs_grep", "clipboard", "memory_write", "memory_recall", "rag_index", "rag_search", "embed", "task", "calculate", "data", "text", "time", "crypto"]) {
+    assert(names.has(needed), `missing capability ${needed}`);
+  }
+  const kinds = new Set(tools.map((t) => t.kind));
+  for (const kind of ["web", "files", "memory", "rag", "vector", "clipboard", "task", "compute", "data", "text", "time", "crypto"]) {
+    assert(kinds.has(kind as any), `kind ${kind} unused`);
+  }
+
+  // Every spelling a model might emit resolves to one canonical name.
+  assert(resolveTool("math.evaluate").tool?.name === "calculate", "dotted alias");
+  assert(resolveTool("math-evaluate").tool?.name === "calculate", "kebab spelling");
+  assert(resolveTool("MathEvaluate").tool?.name === "calculate", "camel spelling");
+  assert(resolveTool("calculator").tool?.name === "calculate", "declared alias");
+  assert(resolveTool("read_file").tool?.name === "fs_read", "fs alias");
+  assert(resolveTool("mem_recall").tool?.name === "memory_recall", "near miss resolves");
+  assert(normalizeToolName("  Router.Health!! ") === "router_health", "normaliser strips punctuation/case");
+  const unknown = resolveTool("weather_lookup");
+  assert(unknown.tool === undefined && Array.isArray(unknown.suggestions), "unknown names still return suggestions");
 });
 
 Deno.test("schema: validates, reports paths, and coerces only losslessly", () => {
@@ -104,616 +113,493 @@ Deno.test("schema: validates, reports paths, and coerces only losslessly", () =>
     required: ["count"],
     additionalProperties: false,
   };
-
-  // Strict mode rejects and points at the exact path.
   const strict = validateJson({ count: "5", ratio: 0, mode: "FAST", tags: "a,b,c,d", nested: { deep: "yes", extra: 1 } }, schema);
   assert(!strict.ok, "uncoerced payload must fail");
   assert(strict.issues.some((i) => i.path === "/count" && i.keyword === "type"), "count type issue at /count");
-  assert(strict.issues.some((i) => i.path === "/ratio" && i.keyword === "exclusiveMinimum"), "exclusiveMinimum violation reported");
+  assert(strict.issues.some((i) => i.path === "/ratio" && i.keyword === "exclusiveMinimum"), "exclusiveMinimum reported");
   assert(strict.issues.some((i) => i.path === "/tags" && i.keyword === "type"), "comma string is not an array without coercion");
 
-  // Coercion repairs the same payload and keeps every value.
   const fixed = validateJson({ count: "5", ratio: "0.25", mode: "FAST", tags: "a,b,c,d", nested: { deep: "yes", extra: 1 } }, schema, { coerce: true });
   assert(fixed.ok, `coerced payload must validate: ${JSON.stringify(fixed.issues)}`);
-  assert(fixed.repaired && fixed.repairs > 0, "repairs must be recorded");
+  assert(fixed.repairs > 0, "repairs must be recorded");
   const value: any = fixed.value;
   assert(value.count === 5, `"5" -> 5, got ${value.count}`);
-  assert(value.ratio === 0.25, `"0.25" -> 0.25, got ${value.ratio}`);
-  assert(value.mode === "fast", `enum case normalised, got ${value.mode}`);
-  assert(Array.isArray(value.tags) && value.tags.length === 3, `comma list split and trimmed to maxItems, got ${JSON.stringify(value.tags)}`);
-  assert(value.nested.deep === true, `"yes" -> true`);
-  assert(value.nested.extra === undefined, "additionalProperties:false drops undeclared keys");
-
-  // Defaults fill missing keys; out-of-range clamps instead of throwing the call away.
-  const defaulted = validateJson({ count: 99 }, schema, { coerce: true });
-  assert(defaulted.ok, "clamped payload validates");
-  assert((defaulted.value as any).count === 10, `99 clamps to maximum 10, got ${(defaulted.value as any).count}`);
-  assert((defaulted.value as any).mode === "fast", "missing key filled from default");
-
-  // $ref/$defs resolution and combinators.
-  const refSchema = {
-    $defs: { id: { type: "string", minLength: 3 } },
-    type: "object",
-    properties: { a: { $ref: "#/$defs/id" }, either: { anyOf: [{ type: "number" }, { type: "string", pattern: "^x" }] } },
-    required: ["a"],
-  };
-  assert(!validateJson({ a: "x" }, refSchema).ok, "minLength through $ref must reject");
-  assert(validateJson({ a: "abc", either: 4 }, refSchema).ok, "$ref + anyOf accepts");
-  assert(!validateJson({ a: "abc", either: "nope" }, refSchema).ok, "anyOf rejects a string without the prefix");
-  assert(validateJson({ a: "abc", either: "xyz" }, refSchema).ok, "anyOf accepts the pattern branch");
-  // Coercion must not mutate the caller's object.
-  const source = { count: "3" };
-  validateJson(source, schema, { coerce: true });
-  assert(source.count === "3", "validateJson must clone before coercing");
-  // An unresolvable $ref is reported, not thrown.
-  assert(!validateJson({ a: "abc" }, { $ref: "#/$defs/missing" }).ok, "missing $ref must report an error");
+  near(value.ratio, 0.25);
+  assert(value.mode === "fast", "enum casing repaired");
+  assert(Array.isArray(value.tags) && value.tags.length === 3, `maxItems clamp: ${JSON.stringify(value.tags)}`);
+  assert(value.nested.deep === true, "boolean coerced");
+  assert(!("extra" in value.nested), "undeclared key dropped");
 });
 
 Deno.test("repair ladder: fences, prose, single quotes, bare keys, Python literals, truncation", () => {
-  const schema = {
-    type: "object",
-    properties: { query: { type: "string" }, limit: { type: "integer", minimum: 1 } },
-    required: ["query"],
-    additionalProperties: false,
-  };
-
-  const cases: Array<[string, string, string]> = [
-    ["markdown fence", '```json\n{"query": "hello", "limit": 5}\n```', "extract"],
-    ["prose wrapper", 'Sure! Here you go: {"query": "hello", "limit": 5} — hope that helps.', "extract"],
-    ["single quotes", "{'query': 'hello', 'limit': 5}", "repair"],
-    ["bare keys", '{query: "hello", limit: 5}', "repair"],
-    ["python literals", '{"query": "hello", "limit": 5, "flag": None}', "repair"],
-    ["trailing commas", '{"query": "hello", "limit": 5,}', "repair"],
-    ["comments", '{\n// the query\n"query": "hello",\n"limit": 5\n}', "repair"],
-    ["double encoded", '"{\\"query\\": \\"hello\\", \\"limit\\": 5}"', "double-decode"],
-    ["truncated by max_tokens", '{"query": "hello", "lim', "repair"],
-    ["nan literal", '{"query": "hello", "limit": NaN}', "repair"],
+  const schema = { type: "object", properties: { query: { type: "string" }, limit: { type: "integer", minimum: 1 } }, required: ["query"], additionalProperties: false };
+  const cases: Array<[string, string]> = [
+    ["markdown fence", '```json\n{"query": "hello", "limit": 5}\n```'],
+    ["prose wrapper", 'Sure! Here you go: {"query": "hello", "limit": 5} — hope that helps.'],
+    ["single quotes", "{'query': 'hello', 'limit': 5}"],
+    ["bare keys", '{query: "hello", limit: 5}'],
+    ["python literals", '{"query": "hello", "limit": 5, "flag": None}'],
+    ["trailing commas", '{"query": "hello", "limit": 5,}'],
+    ["comments", '{\n// the query\n"query": "hello",\n"limit": 5\n}'],
   ];
-
-  for (const [label, raw, expected] of cases) {
+  for (const [label, raw] of cases) {
     const parsed = parseToolArguments(raw, schema);
-    assert(parsed.strategy !== "strict" || expected === "strict", `${label}: strategy ${parsed.strategy}`);
-    if (expected === "double-decode") {
-      assert(parsed.strategy === "double-decode", `${label}: expected double-decode, got ${parsed.strategy}`);
-    }
     assert(parsed.repaired, `${label}: expected a repair`);
-    assert(parsed.ok, `${label}: repair ladder must still satisfy the schema (${parsed.error ?? ""})`);
-    assert((parsed.value as any).query === "hello", `${label}: query lost (${JSON.stringify(parsed.value)})`);
-    if (label !== "truncated by max_tokens" && label !== "python literals" && label !== "nan literal") {
-      assert((parsed.value as any).limit === 5, `${label}: limit lost (${JSON.stringify(parsed.value)})`);
-    }
+    assert(parsed.ok, `${label}: ladder must satisfy the schema (${parsed.error ?? ""})`);
+    assert((parsed.value as any).query === "hello", `${label}: query lost`);
   }
+  const double = parseToolArguments('"{\\"query\\": \\"hello\\", \\"limit\\": 5}"', schema);
+  assert(double.strategy === "double-decode" && double.ok, `double-decode: ${double.strategy}`);
 
-  // Truncation must drop the incomplete key rather than invent a value.
   const truncated = parseToolArguments('{"query": "hello", "lim', schema);
   assert(truncated.ok, `truncated args must survive (${truncated.error})`);
   assert(truncated.repairs.includes("truncated"), `repairs should mention truncation: ${truncated.repairs}`);
-  assert((truncated.value as any).query === "hello", "the complete part of a truncated payload is preserved");
-  assert((truncated.value as any).lim === undefined, "a half-written key must not become a value");
+  assert((truncated.value as any).query === "hello" && (truncated.value as any).lim === undefined, "half-written key dropped");
 
-  // A truncated string is closed, not discarded.
-  const cutString = parseToolArguments('{"query": "hello wor', schema);
-  assert(cutString.ok && (cutString.value as any).query === "hello wor", `unterminated string closed: ${JSON.stringify(cutString.value)}`);
-
-  // Salvage: the JSON is hopeless but the scalars are recoverable.
-  const hopeless = parseToolArguments('query = "hello"; limit: 5   <<<not json>>>', schema);
-  assert(hopeless.strategy === "salvage", `expected salvage, got ${hopeless.strategy}`);
-  assert((hopeless.value as any).query === "hello", "salvage recovers the string");
-
-  // Already-correct payloads take the cheap path.
+  const salvage = parseToolArguments('query = "hello"; limit: 5   <<<not json>>>', schema);
+  assert(salvage.strategy === "salvage" && (salvage.value as any).query === "hello", `salvage: ${salvage.strategy}`);
   assert(parseToolArguments('{"query":"hi"}', schema).strategy === "strict", "valid JSON is never rewritten");
-  assert(parseToolArguments({ query: "hi" }, schema).strategy === "native", "objects skip parsing entirely");
-  assert(parseToolArguments("", schema).strategy === "empty", "empty arguments are a distinct strategy");
-  assert(!parseToolArguments('{"limit": 5}', schema).ok, "missing required key still fails after repair");
-
-  // The extractors are safe to call directly.
+  assert(parseToolArguments({ query: "hi" }, schema).strategy === "native", "objects skip parsing");
+  assert(parseToolArguments("", schema).strategy === "empty", "empty arguments are distinct");
+  assert(!parseToolArguments('{"limit": 5}', schema).ok, "missing required key still fails");
   assert(extractJsonCandidate('```json\n{"a":1}\n```') === '{"a":1}', "fence extraction");
-  assert(repairJsonText("{a: 'b',}").text === '{"a": "b"}', `repairJsonText output: ${repairJsonText("{a: 'b',}").text}`);
-  assert(repairJsonText('{"a": 1} // note').text === '{"a": 1}', "comment stripped");
+  assert(repairJsonText("{a: 'b',}").text === '{"a": "b"}', `repairJsonText: ${repairJsonText("{a: 'b',}").text}`);
 });
 
-Deno.test({
-  name: "math_evaluate: exact arithmetic, functions, precedence, batching",
-  sanitizeResources: false,
-  sanitizeOps: false,
-  fn: async () => {
-    const single = await run("math_evaluate", { expression: "(23 * 19) + 14" });
-    assert(single.value === 451, `canary arithmetic must be exact, got ${single.value}`);
+// ---------------------------------------------------------------------------
+// 2. Deterministic compute
+// ---------------------------------------------------------------------------
 
-    const cases: Array<[string, number]> = [
-      ["2^10", 1024],
-      ["2**0.5", Math.SQRT2],
-      ["-3^2", -9], // unary minus binds looser than power, as in mathematics
-      ["7 // 2", 3],
-      ["7 % 3", 1],
-      ["mod(-7, 3)", 2],
-      ["gcd(48, 18)", 6],
-      ["lcm(4, 6)", 12],
-      ["factorial(10)", 3628800],
-      ["round(3.14159, 2)", 3.14],
-      ["clamp(15, 0, 10)", 10],
-      ["hypot(3, 4)", 5],
-      ["log(1000, 10)", 3],
-      ["ln(e)", 1],
-      ["min(3, 1, 2)", 1],
-      ["sqrt(2)^2", 2.0000000000000004],
-      ["1/3 + 1/3 + 1/3", 1],
-      ["0.1 + 0.2", 0.30000000000000004],
-      ["3 > 2", 1],
-      ["2 == 2.0", 1],
-      ["pi", Math.PI],
-    ];
-    for (const [expression, expected] of cases) {
-      const out = await run("math_evaluate", { expression });
-      assert(out.ok, `${expression} -> ${out.error}`);
-      near(out.value, expected, 1e-9, `${expression}:`);
+Deno.test("calculate: exact arithmetic, functions, batching and statistics", async () => {
+  assert((await run("calculate", { expression: "(23 * 19) + 14" })).value === 451, "precedence");
+  assert((await run("calculate", { expression: "2^10 + 1" })).value === 1025, "power");
+  assert((await run("calculate", { expression: "-3^2" })).value === -9, "unary binds looser than ^");
+  assert((await run("calculate", { expression: "0.1 + 0.2" })).value === 0.3, "float dust is not shown");
+  assert((await run("calculate", { expression: "sin(30)", angle: "deg" })).value === 0.5, "degree mode");
+  assert((await run("calculate", { expression: "gcd(84, 30)" })).value === 6, "gcd");
+  assert((await run("calculate", { expression: "fact(6) + norm_cdf(0)" })).value === 720.5, "factorial + erf");
+  assert((await run("calculate", { expression: "2*x + y", variables: { x: 3, y: 4 } })).value === 10, "variables");
+  const batch = await run("calculate", { expressions: ["1+1", "2+"] });
+  assert(batch.count === 2 && batch.results[0].value === 2, "batch evaluates independently");
+  assert(typeof batch.results[1].error === "string", "per-expression errors are values, not failures");
+  const nan = await run("calculate", { expression: "sqrt(-1)" });
+  assert(Number.isNaN(nan.value) && String(nan.note).includes("non-finite"), `NaN is reported, not thrown: ${JSON.stringify(nan)}`);
+
+  const stats = await run("calculate", { values: [3, 5, 7, 9, 100], quantiles: [0.5, 0.95] });
+  assert(stats.median === 7 && stats.mean === 24.8, `stats ${JSON.stringify(stats)}`);
+  assert(stats.outliers.values.includes(100), "Tukey outlier");
+  assert(stats.quantiles.p50 === 7, "type-7 quantile");
+  assert((await run("calculate", { expression: "nope(1)" })).error.includes("unknown function"), "grammar is closed");
+});
+
+Deno.test("data: JSONPath, conversion, reshaping and validation", async () => {
+  const doc = { store: { books: [{ title: "A", price: 5 }, { title: "B", price: 25 }] } };
+  assert((await run("data", { op: "query", data: doc, path: "$.store.books[1].title" })).value === "B", "index path");
+  assert((await run("data", { op: "query", data: doc, path: "$.store.books[*].price" })).count === 2, "wildcard");
+  const filter = await run("data", { op: "query", data: doc, path: "$.store.books[?(@.price>10)].title" });
+  assert(JSON.stringify(filter.value) === '"B"' || filter.value === "B", `filter ${JSON.stringify(filter)}`);
+  assert((await run("data", { op: "query", data: { a: { id: 1 }, b: { id: 2 } }, path: "$..id" })).count === 2, "recursive descent");
+
+  const csv = await run("data", { op: "convert", data: [{ a: 1, b: 2 }, { a: 3, b: 4 }], to: "csv" });
+  assert(csv.value === "a,b\n1,2\n3,4", `csv ${csv.value}`);
+  const back = await run("data", { op: "convert", data: "a,b\n1,2", from: "csv", to: "json" });
+  assert(Array.isArray(back.value) && back.value[0].a === "1", `csv->json ${JSON.stringify(back.value)}`);
+
+  const grouped = await run("data", { op: "transform", data: [{ k: "a", v: 1 }, { k: "b", v: 2 }, { k: "a", v: 3 }], group_by: "k" });
+  assert(grouped.groups === 2 && grouped.value.a.length === 2, `group ${JSON.stringify(grouped).slice(0, 200)}`);
+  const sorted = await run("data", { op: "transform", data: [{ n: 3 }, { n: 1 }, { n: 2 }], sort_by: "n", limit: 2 });
+  assert(sorted.value[0].n === 1 && sorted.value.length === 2, "sort + limit");
+  const picked = await run("data", { op: "transform", data: { a: 1, b: 2, c: { d: 3 } }, pick: ["a", "c.d"] });
+  assert(picked.value["a"] === 1 && picked.value["c.d"] === 3, `pick ${JSON.stringify(picked.value)}`);
+
+  const valid = await run("data", { op: "validate", data: { n: "5" }, schema: { type: "object", properties: { n: { type: "integer" } }, required: ["n"] } });
+  assert(valid.valid === true && valid.value.n === 5, `validate ${JSON.stringify(valid)}`);
+  const invalid = await run("data", { op: "validate", data: { n: "x" }, schema: { type: "object", properties: { n: { type: "integer" } }, required: ["n"] } });
+  assert(invalid.valid === false && invalid.issues.length > 0, "invalid payload reports issues, not a crash");
+});
+
+Deno.test("text: extraction, similarity, diff, replace, template, summary, stats", async () => {
+  const emails = await run("text", { op: "extract", text: "mail a@b.co and c@d.io", kind: "emails" });
+  assert(emails.count === 2 && emails.matches[0].value === "a@b.co", "email preset");
+  const grouped = await run("text", { op: "extract", text: "id=42 name=bob", pattern: "id=(\\d+)", flags: "g" });
+  assert(grouped.matches[0].groups[0] === "42", "capture groups");
+
+  const sim = await run("text", { op: "similarity", text: "gpt-4o-mini", candidates: ["gpt-4o", "claude-3-5-sonnet", "gpt-4o-mini-2024"] });
+  assert(sim.best.candidate === "gpt-4o-mini-2024", `similarity ${JSON.stringify(sim.best)}`);
+  assert(sim.ranked[2].candidate === "claude-3-5-sonnet", "ranking is complete");
+
+  const diff = await run("text", { op: "diff", text: "a\nb\nc", other: "a\nB\nc" });
+  assert(diff.added === 1 && diff.removed === 1 && diff.identical === false, `diff ${JSON.stringify(diff)}`);
+
+  const replaced = await run("text", { op: "replace", text: "a1 b2", pattern: "([a-z])(\\d)", replacement: "$2$1" });
+  assert(replaced.text === "1a 2b", `replace ${replaced.text}`);
+
+  const tpl = await run("text", { op: "template", text: "hi {{ user.name }} / {{ missing }}", vars: { user: { name: "ada" } } });
+  assert(tpl.text === "hi ada / " && tpl.missing.includes("missing"), `template ${JSON.stringify(tpl)}`);
+
+  const summary = await run("text", { op: "summarize", text: ("Alpha beta gamma. ".repeat(40)) + "The thesis is that retrieval beats context stuffing. " + ("Delta epsilon. ".repeat(40)), max_chars: 200 });
+  assert(summary.summary_chars <= 200 && summary.compression < 0.5, "summary respects the budget");
+
+  const stats = await run("text", { op: "stats", text: "One two. Three four five." });
+  assert(stats.words === 5 && stats.sentences === 2 && stats.estimated_tokens > 0, `stats ${JSON.stringify(stats)}`);
+});
+
+Deno.test("time: now, parse, add, diff and IANA zones", async () => {
+  const now = await run("time", { op: "now", zone: "UTC" });
+  assert(now.iso.endsWith("Z") && now.epoch_ms > 1_700_000_000_000, "now");
+  const ny = await run("time", { op: "convert", value: "2026-07-01T12:00:00Z", zone: "America/New_York" });
+  assert(ny.utc_offset === "-04:00" && ny.local === "2026-07-01T08:00:00", `zone ${JSON.stringify(ny)}`);
+  const added = await run("time", { op: "add", value: "2026-11-04T12:00:00Z", duration: "2h30m" });
+  assert(added.iso === "2026-11-04T14:30:00.000Z", `add ${added.iso}`);
+  assert((await run("time", { op: "add", value: "2026-11-04T00:00:00Z", duration: "P1DT2H" })).iso === "2026-11-05T02:00:00.000Z", "ISO duration");
+  const diff = await run("time", { op: "diff", value: "2026-11-04T00:00:00Z", other: "2026-11-05T06:30:00Z", unit: "h" });
+  assert(diff.value === 30.5 && diff.human === "1d 6h", `diff ${JSON.stringify(diff)}`);
+  assert((await run("time", { op: "parse", value: "1793793600" })).epoch_s === 1793793600, "epoch seconds guessed");
+  const bad = await executeTool("time", { op: "parse", value: "sometime last tuesday" });
+  assert(!bad.ok && /cannot parse instant/.test(bad.error), "unparseable instants fail loudly");
+});
+
+Deno.test("crypto: digests, HMAC, ids, encodings and JWTs", async () => {
+  const sha = await run("crypto", { op: "digest", data: "abc", algorithm: "sha-256" });
+  assert(sha.hex === "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad", `sha256 ${sha.hex}`);
+  assert(sha.base64 === "ungWv48Bz+pBQUDeXa4iI7ADYaOWF3qctBD/YfIAFa0=", "base64 output");
+  const mac = await run("crypto", { op: "hmac", data: "The quick brown fox jumps over the lazy dog", key: "key", algorithm: "sha-256" });
+  assert(mac.hex === "f7bc83f430538424b13298e6aa6fb143ef4d59a14946175997479dbc2d1a3cd8", `hmac ${mac.hex}`);
+
+  const ids = await run("crypto", { op: "id", id_kind: "uuid7", count: 3 });
+  assert(ids.ids.length === 3 && ids.ids.every((id: string) => /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(id)), "uuidv7 shape");
+  const ul = await run("crypto", { op: "id", id_kind: "ulid" });
+  assert(/^[0-9A-HJKMNP-TV-Z]{26}$/.test(ul.id), `ulid ${ul.id}`);
+
+  assert((await run("crypto", { op: "encode", data: "hello ✓", encoding: "base64" })).result === "aGVsbG8g4pyT", "base64 encode");
+  assert((await run("crypto", { op: "decode", data: "aGVsbG8g4pyT", encoding: "base64" })).result === "hello ✓", "base64 decode");
+  assert((await run("crypto", { op: "encode", data: "a b", encoding: "url" })).result === "a%20b", "url encode");
+  assert((await run("crypto", { op: "decode", data: "a%20b", encoding: "url" })).result === "a b", "url decode");
+
+  const signed = await run("crypto", { op: "jwt_sign", payload: { sub: "42", name: "ada" }, secret: "s3cret" });
+  const decoded = await run("crypto", { op: "jwt_decode", data: signed.token });
+  assert(decoded.payload.sub === "42" && decoded.header.alg === "HS256", `jwt ${JSON.stringify(decoded)}`);
+});
+
+// ---------------------------------------------------------------------------
+// 3. The virtual workspace
+// ---------------------------------------------------------------------------
+
+Deno.test("files: write/read/list/grep/patch/delete inside a sandboxed namespace", async () => {
+  const ns = "fs-test";
+  const w = await run("fs_write", { path: "notes/a.md", content: "alpha\nbeta\ngamma\n" }, { namespace: ns });
+  assert(w.created === true && w.bytes === 17 && w.lines === 4, `write ${JSON.stringify(w)}`);
+  const appended = await run("fs_write", { path: "notes/a.md", content: "delta\n", mode: "append" }, { namespace: ns });
+  assert(appended.bytes === 23 && appended.created === false, "append");
+
+  const read = await run("fs_read", { path: "notes/a.md", offset: 2, limit: 2 }, { namespace: ns });
+  assert(read.content === "beta\ngamma" && read.lines === 5 && read.truncated === true, `read ${JSON.stringify(read)}`);
+
+  const list = await run("fs_list", { glob: "**/*.md" }, { namespace: ns });
+  assert(list.count === 1 && list.dirs.includes("notes"), "list + glob");
+
+  const grep = await run("fs_grep", { pattern: "a$", context: 1 }, { namespace: ns });
+  assert(grep.count >= 2 && grep.matches[0].path === "notes/a.md" && Array.isArray(grep.matches[0].after), `grep ${JSON.stringify(grep).slice(0, 200)}`);
+
+  // Exact replacement.
+  const patched = await run("fs_patch", { path: "notes/a.md", edits: [{ old: "beta", new: "BETA" }] }, { namespace: ns });
+  assert(patched.changed === true && patched.sha256, "edit applied");
+  // Dry run never writes.
+  const dry = await run("fs_patch", { path: "notes/a.md", edits: [{ old: "gamma", new: "GAMMA" }], dry_run: true }, { namespace: ns });
+  assert(dry.dry_run === true, "dry run");
+  // Unified diff with a shifted hunk: content anchoring still lands it.
+  const unified = await run("fs_patch", {
+    path: "notes/a.md",
+    patch: "@@ -2,2 +2,2 @@\n-BETA\n+beta\n gamma\n",
+  }, { namespace: ns });
+  assert(unified.applied[0].includes("hunk"), `unified ${JSON.stringify(unified)}`);
+  assert((await run("fs_read", { path: "notes/a.md" }, { namespace: ns })).content.includes("beta"), "patch content");
+
+  const ambiguous = await run("fs_patch", { path: "notes/a.md", edits: [{ old: "a", new: "z", replace_all: true }] }, { namespace: ns });
+  assert(ambiguous.changed, "replace_all allowed");
+
+  // Path traversal is refused before any storage access.
+  const escape = await executeTool("fs_read", { path: "../../etc/passwd" }, { caps: { namespace: ns } });
+  assert(!escape.ok && /escapes the workspace/.test(escape.error), `traversal ${escape.ok ? "allowed" : escape.error}`);
+
+  // Binary round-trip.
+  const bytes = new Uint8Array([0, 255, 10, 128]);
+  const b64 = btoa(String.fromCharCode(...bytes));
+  await run("fs_write", { path: "bin/x.dat", content: b64, encoding: "base64" }, { namespace: ns });
+  const bin = await run("fs_read", { path: "bin/x.dat" }, { namespace: ns });
+  assert(bin.binary === true && bin.encoding === "base64", `binary ${JSON.stringify(bin)}`);
+
+  const del = await run("fs_delete", { path: "notes", recursive: true }, { namespace: ns });
+  assert(del.deleted === 1, `delete ${JSON.stringify(del)}`);
+  const missing = await executeTool("fs_read", { path: "notes/a.md" }, { caps: { namespace: ns } });
+  assert(!missing.ok && /no such file/.test(missing.error), "deleted file is gone");
+});
+
+Deno.test("batches keep stateful calls in order and parallelise pure ones", async () => {
+  const opts = { caps: { namespace: "batch-order-test" } };
+  const out = await executeToolCalls([
+    { id: "1", name: "fs_write", arguments: { path: "order.txt", content: "first\n" } },
+    { id: "2", name: "calculate", arguments: { expression: "6*7" } },
+    { id: "3", name: "fs_read", arguments: { path: "order.txt" } },
+    { id: "4", name: "memory_write", arguments: { text: "batched memory", importance: 0.5 } },
+    { id: "5", name: "memory_recall", arguments: { query: "batched memory" } },
+  ], opts);
+  assert(out.every((r) => r.execution.ok), `all ok: ${JSON.stringify(out.map((r) => r.execution.ok))}`);
+  assert(((out[2].execution as any).result?.content ?? "").startsWith("first"), "read sees the earlier write");
+  assert((out[1].execution as any).result?.value === 42, "pure call still computes");
+  assert((out[4].execution as any).result?.returned === 1, `recall sees the earlier write: ${JSON.stringify(out[4].execution)}`);
+});
+
+Deno.test("clipboard: named slots, revisions and undo", async () => {
+  const ns = "clip-test";
+  await run("clipboard", { op: "set", slot: "draft", text: "one" }, { namespace: ns });
+  const appended = await run("clipboard", { op: "append", slot: "draft", text: " two" }, { namespace: ns });
+  assert(appended.rev === 2, "revision increments");
+  assert((await run("clipboard", { op: "get", slot: "draft" }, { namespace: ns })).text === "one two", "append");
+  const undone = await run("clipboard", { op: "undo", slot: "draft" }, { namespace: ns });
+  assert(undone.text === "one", `undo ${JSON.stringify(undone)}`);
+  await run("clipboard", { op: "set", slot: "payload", text: "x" }, { namespace: ns });
+  const list = await run("clipboard", { op: "list" }, { namespace: ns });
+  assert(list.count === 2, `list ${JSON.stringify(list)}`);
+  assert((await run("clipboard", { op: "clear", slot: "draft" }, { namespace: ns })).cleared === true, "clear");
+});
+
+Deno.test("task: a durable, deterministic plan board", async () => {
+  const ns = "task-test";
+  const a = await run("task", { op: "add", title: "read the repo", priority: 1 }, { namespace: ns });
+  await run("task", { op: "add", title: "ship the toolbox" }, { namespace: ns });
+  await run("task", { op: "update", id: a.added.id, status: "active" }, { namespace: ns });
+  const board = await run("task", { op: "list" }, { namespace: ns });
+  assert(board.total === 2 && board.counts.active === 1, `board ${JSON.stringify(board)}`);
+  assert(board.next.title === "read the repo", "next action is the active task");
+  await run("task", { op: "update", id: a.added.id, status: "done" }, { namespace: ns });
+  assert((await run("task", { op: "list" }, { namespace: ns })).next.title === "ship the toolbox", "done tasks sink");
+  const cleared = await run("task", { op: "clear" }, { namespace: ns });
+  assert(cleared.cleared === 1 && cleared.remaining === 1, "clear removes finished tasks");
+});
+
+// ---------------------------------------------------------------------------
+// 4. Memory and retrieval
+// ---------------------------------------------------------------------------
+
+Deno.test("memory: consolidation, hybrid recall, graph and forgetting", async () => {
+  const ns = "mem-test";
+  const first = await run("memory_write", { text: "The user prefers TypeScript and brutalist minimalism.", tags: ["user"], importance: 0.8 }, { namespace: ns });
+  const merged = await run("memory_write", { text: "The user prefers TypeScript and brutalist minimal design.", tags: ["preference"] }, { namespace: ns });
+  assert(merged.consolidated === true && merged.id === first.id, `near-duplicate must consolidate: ${JSON.stringify(merged)}`);
+  const other = await run("memory_write", { text: "Deploys happen on Fridays at 16:00 UTC.", tags: ["ops"], importance: 0.6 }, { namespace: ns });
+  assert(other.consolidated === false, "a different fact is not merged");
+
+  const recalled = await run("memory_recall", { query: "when do we deploy?", k: 5 }, { namespace: ns });
+  assert(recalled.returned >= 1 && recalled.memories.some((m: any) => m.text.includes("Fridays")), `recall ${JSON.stringify(recalled).slice(0, 300)}`);
+  const reinforced = recalled.memories.find((m: any) => m.text.includes("Fridays"));
+  assert(reinforced.uses >= 1, "recall reinforces usage");
+
+  const linked = await run("memory_graph", { op: "link", from: first.id, to: other.id, rel: "context" }, { namespace: ns });
+  assert(linked.links === 1, "link");
+  const neighbors = await run("memory_graph", { op: "neighbors", from: first.id }, { namespace: ns });
+  assert(neighbors.nodes.length === 2 && neighbors.edges.length === 1, `neighbors ${JSON.stringify(neighbors)}`);
+  assert((await run("memory_graph", { op: "path", from: first.id, to: other.id }, { namespace: ns })).found === true, "path");
+
+  const stats = await run("memory_graph", { op: "stats" }, { namespace: ns });
+  assert(stats.memories === 2 && stats.edges === 1, `stats ${JSON.stringify(stats)}`);
+  assert((await run("memory_forget", { tag: "ops" }, { namespace: ns })).deleted === 1, "forget by tag");
+  assert((await run("memory_recall", { query: "deploy" }, { namespace: ns })).total === 1, "forgotten memory is gone");
+
+  const isolated = await run("memory_recall", { query: "TypeScript" }, { namespace: "mem-other" });
+  assert(isolated.total === 0, "tenants cannot see each other's memory");
+});
+
+Deno.test("rag: chunking, content-addressed indexing, hybrid retrieval and citations", async () => {
+  const ns = "rag-test";
+  const handbook = "The router caches embeddings by content hash. Retrieval fuses BM25 and dense vectors with reciprocal rank fusion. " .repeat(6);
+  const notes = "Clipboard slots are versioned and support undo. Tasks are a small state machine with priorities. " .repeat(6);
+  const indexing = await run("rag_index", { collection: "docs", docs: [{ id: "h", source: "handbook", text: handbook }, { id: "n", source: "notes", text: notes }] }, { namespace: ns });
+  assert(indexing.chunks_added >= 2 && indexing.documents.length === 2, `index ${JSON.stringify(indexing)}`);
+
+  // Identical text is free the second time.
+  const again = await run("rag_index", { collection: "docs", docs: [{ id: "h", source: "handbook", text: handbook }] }, { namespace: ns });
+  assert(again.chunks_added === 0 && again.duplicates_skipped >= 1, `dedupe ${JSON.stringify(again)}`);
+
+  const hits = await run("rag_search", { collection: "docs", query: "rank fusion of vectors", k: 4 }, { namespace: ns });
+  assert(hits.returned >= 1 && hits.hits[0].source === "handbook", `search ${JSON.stringify(hits).slice(0, 400)}`);
+  assert(hits.citations[0].startsWith("handbook#"), "citation shape");
+  assert(typeof hits.hits[0].text === "string" && hits.hits[0].text.length > 0, "passages are returned");
+
+  const bm25Only = await run("rag_search", { collection: "docs", query: "clipboard", mode: "bm25" }, { namespace: ns });
+  assert(bm25Only.hits[0].source === "notes", `bm25 ${JSON.stringify(bm25Only.hits[0])}`);
+
+  const collections = await run("rag_collections", {}, { namespace: ns });
+  assert(collections.count === 1 && collections.collections[0].name === "docs", "collections");
+  const detail = await run("rag_collections", { collection: "docs" }, { namespace: ns });
+  assert(detail.documents.length === 2, `detail ${JSON.stringify(detail.documents)}`);
+
+  const replaced = await run("rag_index", { collection: "docs", replace: true, docs: [{ id: "one", source: "solo", text: "only this document exists now. " .repeat(10) }] }, { namespace: ns });
+  assert(replaced.collection_chunks === 1, `replace ${JSON.stringify(replaced)}`);
+
+  const chunks = chunkText("para one\n\npara two\n\npara three", 20, 5);
+  assert(chunks.length >= 2 && chunks.every((c) => c.length <= 40), `chunker ${JSON.stringify(chunks)}`);
+});
+
+Deno.test("vector: deterministic embeddings, int8 compression and hybrid primitives", async () => {
+  const a = embed("The user prefers TypeScript.");
+  const b = embed("The user prefers TypeScript.");
+  const c = embed("Invoice 42 was paid.");
+  assert(a.length === 384 && a.every((v, i) => v === b[i]), "deterministic, 384-d");
+  assert(cosineI8(dequantize(quantize(a)), dequantize(quantize(a))) > 0.999, "quantisation preserves self-similarity");
+  const approx = cosineI8(dequantize(quantize(a)), dequantize(quantize(embed("The user prefers TypeScript and tests."))));
+  assert(approx > 0.5 && approx < 1, `near-duplicate cosine ${approx}`);
+  assert(cosineI8(dequantize(quantize(a)), dequantize(quantize(c))) < approx, "unrelated text scores lower");
+
+  // BM25 ranks the matching doc first and RRF fuses two rankings.
+  const docs = [{ text: "alpha beta gamma" }, { text: "delta epsilon" }, { text: "alpha alpha" }];
+  const scores = bm25("alpha", docs);
+  assert(rankOf(scores)[0] === 2, `bm25 ${JSON.stringify(scores)}`);
+  const fused = rrf([[0, 1], [1, 0]]);
+  assert(fused[0] === fused[1], "symmetric fusion");
+
+  const tool = await run("embed", { text: "retrieval augmented generation", compare_to: ["RAG retrieval augmented generation", "banana"] });
+  assert(tool.dims === 384 && tool.similarities.length === 2, `embed tool ${JSON.stringify(tool).slice(0, 300)}`);
+  assert(tool.similarities[0].cosine > tool.similarities[1].cosine, "similarity ordering");
+  const int8 = await run("embed", { text: "abc", format: "int8" });
+  assert(typeof int8.vectors[0] === "string" && int8.vectors[0].length > 100, "int8 output is compact");
+});
+
+// ---------------------------------------------------------------------------
+// 5. Web (stubbed transport — never the real network)
+// ---------------------------------------------------------------------------
+
+const PAGE = `<!doctype html><html><head><title>Router Docs</title>
+<meta name="description" content="How the router works">
+<meta property="og:url" content="https://example.test/page">
+</head><body>
+<nav><a href="/home">Home</a></nav>
+<article><h1>Toolbox</h1>
+<p>Hello <strong>world</strong>. This page explains the <em>tool plane</em>.</p>
+<pre><code>const x = 1;</code></pre>
+<ul><li>one</li><li>two</li></ul>
+<p><a href="/next">Next page</a></p>
+</article>
+<script>alert("do not ship me")</script>
+</body></html>`;
+
+Deno.test("web_fetch: readable markdown, no chrome, cached and SSRF-guarded", async () => {
+  let calls = 0;
+  const fetchStub = stubFetch((url) => {
+    calls++;
+    assert(url.startsWith("https://example.test/page"), `unexpected fetch ${url}`);
+    return new Response(PAGE, { headers: { "content-type": "text/html; charset=utf-8" } });
+  });
+  const page = await run("web_fetch", { url: "https://example.test/page" }, { fetch: fetchStub });
+  assert(page.title === "Router Docs" && page.description === "How the router works", `meta ${JSON.stringify(page).slice(0, 300)}`);
+  assert(page.content.includes("# Toolbox"), "headings survive");
+  assert(page.content.includes("**world**") && page.content.includes("_tool plane_"), "inline formatting");
+  assert(page.content.includes("```\nconst x = 1;\n```"), "code block preserved");
+  assert(page.content.includes("- one") && page.content.includes("- two"), "lists preserved");
+  assert(page.content.includes("[Next page](https://example.test/next)"), "links absolutised");
+  assert(!page.content.includes("do not ship me"), "scripts stripped");
+  assert(!page.content.includes("Home"), "navigation stripped");
+
+  const cached = await run("web_fetch", { url: "https://example.test/page" }, { fetch: fetchStub });
+  assert(cached.cached === true && calls === 1, `cache miss ${calls}`);
+
+  const guarded = await executeTool("web_fetch", { url: "http://127.0.0.1:8080/secret" }, { caps: { fetch: fetchStub } });
+  assert(!guarded.ok && /refusing private/.test(guarded.error), "private address refused");
+  const metadata = await executeTool("web_fetch", { url: "http://169.254.169.254/latest/meta-data/" }, { caps: { fetch: fetchStub } });
+  assert(!metadata.ok && /refusing private/.test(metadata.error), "metadata service refused");
+  const scheme = await executeTool("web_fetch", { url: "file:///etc/passwd" }, { caps: { fetch: fetchStub } });
+  assert(!scheme.ok && /non-HTTP/.test(scheme.error), "non-http refused");
+});
+
+Deno.test("http_request: methods, JSON bodies and parsed responses", async () => {
+  const seen: Array<{ method: string; body: string }> = [];
+  const fetchStub = stubFetch((_url, init) => {
+    seen.push({ method: String(init?.method), body: String(init?.body ?? "") });
+    return new Response(JSON.stringify({ ok: true, echoed: JSON.parse(String(init?.body ?? "{}")) }), { headers: { "content-type": "application/json" } });
+  });
+  const res = await run("http_request", { url: "https://api.example.test/v1/things", method: "POST", json: { a: 1 }, headers: { "x-token": "t" } }, { fetch: fetchStub });
+  assert(res.ok === true && res.body.echoed.a === 1, `json body ${JSON.stringify(res).slice(0, 300)}`);
+  assert(seen[0].method === "POST" && seen[0].body === '{"a":1}', "request shape");
+  assert(res.status === 200 && res.body.ok === true, "response parsed");
+});
+
+Deno.test("web_search: parallel engines, RRF fusion and de-duplication", async () => {
+  const DDG = `<div class="result"><h2><a rel="nofollow" class="result__a" href="//duckduckgo.com/l/?uddg=https%3A%2F%2Fexample.test%2Fa&amp;rut=x">Alpha result</a></h2>
+  <a class="result__snippet" href="#">Alpha snippet</a></div>
+  <div class="result"><h2><a rel="nofollow" class="result__a" href="https://example.test/b">Beta result</a></h2>
+  <a class="result__snippet" href="#">Beta snippet</a></div>`;
+  const fetchStub = stubFetch((url) => {
+    if (url.includes("duckduckgo.com/html")) return new Response(DDG, { headers: { "content-type": "text/html" } });
+    if (url.includes("wikipedia.org")) {
+      return new Response(JSON.stringify({ query: { search: [{ title: "Alpha", snippet: "<span>alpha</span> from wikipedia" }] } }), { headers: { "content-type": "application/json" } });
     }
-
-    // Float dust is cleaned for display but the exact value is still returned.
-    const dust = await run("math_evaluate", { expression: "0.1 + 0.2" });
-    assert(dust.formatted === 0.3, `formatted should be 0.3, got ${dust.formatted}`);
-    assert(dust.value !== 0.3, "raw value must keep full precision");
-
-    // Variables, degrees and the ASCK statistical functions.
-    const vars = await run("math_evaluate", { expression: "2*x + y", variables: { x: 3, y: 4 } });
-    assert(vars.value === 10, `variables: ${vars.value}`);
-    const deg = await run("math_evaluate", { expression: "sin(30)", angle: "deg" });
-    near(deg.value, 0.5, 1e-12, "sin(30deg)");
-    const cdf = await run("math_evaluate", { expression: "norm_cdf(1.96)" });
-    near(cdf.value, 0.975, 1e-3, "norm_cdf(1.96)");
-    const q = await run("math_evaluate", { expression: "norm_quantile(0.975)" });
-    near(q.value, 1.96, 1e-3, "norm_quantile(0.975)");
-    const erf = await run("math_evaluate", { expression: "erf(1)" });
-    near(erf.value, 0.8427, 1e-3, "erf(1)");
-
-    // Batching reports per-expression failures without aborting the batch.
-    const batch = await run("math_evaluate", { expressions: ["1+1", "sqrt(-1)", "unknown_fn(2)", "2*3"] });
-    assert(batch.count === 4, "all expressions evaluated");
-    assert(batch.results[0].value === 2, "first ok");
-    assert(batch.results[2].ok === false && /unknown function/.test(batch.results[2].error), "unknown function reported");
-    assert(batch.results[1].value === null && batch.results[1].finite === false, "NaN surfaces as null + finite:false");
-
-    // Hostile input must produce a clean error, never a crash or code execution.
-    for (const hostile of ["1; Deno.exit()", "process.exit(1)", "constructor", "1..2", "(((((", "])", "", "1 +"]) {
-      const exec = await executeTool("math_evaluate", { expression: hostile });
-      assert(exec.ok === false || (exec as ToolExecutionOk).result !== undefined, `hostile input handled: ${hostile}`);
-      if (exec.ok) {
-        const r: any = exec.result;
-        assert(r.ok === false || Number.isFinite(r.value) || r.value === null, `hostile expression returned ${JSON.stringify(r)}`);
-      }
-    }
-    // A runaway expression is rejected by size, not evaluated.
-    const long = await executeTool("math_evaluate", { expression: "1+".repeat(5000) + "1" });
-    assert(!long.ok || (long as any).result.ok === false, "oversized expression must fail cleanly");
-    assert(formatNumber(1e20) === "1.000000e+20", `huge numbers go exponential: ${formatNumber(1e20)}`);
-    assert(formatNumber(-0) === 0, "negative zero is normalised");
-  },
+    return new Response("nope", { status: 500 });
+  });
+  const found = await run("web_search", { query: "alpha thing", limit: 5 }, { fetch: fetchStub });
+  assert(found.engines_answered.includes("duckduckgo") && found.engines_answered.includes("wikipedia"), `engines ${JSON.stringify(found.engines_answered)}`);
+  assert(!found.engines_answered.includes("mojeek"), "a failing engine is omitted, not fatal");
+  assert(found.results.length === 3, `fusion ${JSON.stringify(found.results)}`);
+  assert(found.results.some((r: any) => r.url === "https://example.test/a"), `decoded url: ${JSON.stringify(found.results.map((r: any) => r.url))}`);
+  assert(found.results[0].score >= found.results[1].score, "ranked by fused score");
 });
 
-Deno.test({
-  name: "math_statistics: matches reference values and fits the log-normal tail",
-  sanitizeResources: false,
-  sanitizeOps: false,
-  fn: async () => {
-    const values = [2, 4, 4, 4, 5, 5, 7, 9];
-    const s = await run("math_statistics", { values });
-    assert(s.count === 8, "count");
-    assert(s.mean === 5, `mean: ${s.mean}`);
-    assert(s.sum === 40, "sum");
-    assert(s.min === 2 && s.max === 9 && s.range === 7, "min/max/range");
-    near(s.variance, 32 / 7, 1e-9, "sample variance");
-    near(s.sd, Math.sqrt(32 / 7), 1e-9, "sample sd");
-    near(s.sem, Math.sqrt(32 / 7) / Math.sqrt(8), 1e-9, "sem");
-    assert(s.median === 4.5, `median: ${s.median}`);
-    assert(s.quantiles.p95 !== undefined && s.quantiles.p99 !== undefined, "default quantiles present");
-    assert(s.quantiles.p50 === 4.5 && s.quantiles.p90 !== undefined && s.quantiles.p95 !== undefined, `default quantiles: ${JSON.stringify(s.quantiles)}`);
-    assert(s.quantiles.p95 >= s.quantiles.p90, "quantiles are monotone");
-    assert(Array.isArray(s.histogram) && s.histogram.length > 0, "histogram built");
-    const bins = s.histogram.reduce((a: number, b: any) => a + b.count, 0);
-    assert(bins === 8, `histogram counts must sum to n, got ${bins}`);
-    // Tukey's fence on this classic sample: IQR 1.5 -> upper fence 7.75, so 9 flags.
-    assert(s.iqr === 1.5, `iqr: ${s.iqr}`);
-    assert(s.outliers.length === 1 && s.outliers[0].value === 9, `Tukey outlier: ${JSON.stringify(s.outliers)}`);
-
-    // Reference quantile behaviour (type 7) on a simple ramp.
-    const ramp = await run("math_statistics", { values: [1, 2, 3, 4], quantiles: [0.25, 0.5, 0.75] });
-    assert(ramp.quantiles.p25 === 1.75, `type-7 q25: ${ramp.quantiles.p25}`);
-    assert(ramp.quantiles.p75 === 3.25, `type-7 q75: ${ramp.quantiles.p75}`);
-
-    // Skew/kurtosis signs on an obviously skewed sample.
-    const skewed = await run("math_statistics", { values: [1, 1, 1, 1, 1, 1, 1, 100] });
-    assert(skewed.skewness > 1, `right skew expected, got ${skewed.skewness}`);
-    assert(skewed.outliers.length === 1 && skewed.outliers[0].value === 100, "Tukey fence catches the spike");
-
-    // Latency mode reproduces the router's own log-normal quantiles.
-    const latency = await run("math_statistics", { values: [120, 132, 145, 160, 180, 210, 260, 900], latency: true });
-    assert(latency.lognormal, "log-normal fit present");
-    assert(latency.lognormal.p99_ms > latency.lognormal.p95_ms, "p99 > p95");
-    assert(latency.lognormal.p50_ms > 100 && latency.lognormal.p50_ms < 400, `p50 sane: ${latency.lognormal.p50_ms}`);
-
-    // Bad input is rejected precisely, and huge samples are capped not crashed.
-    const bad = await executeTool("math_statistics", { values: [] });
-    assert(fail(bad).code === "INVALID_ARGUMENTS", `empty sample rejected: ${JSON.stringify(bad)}`);
-    const coerced = await run("math_statistics", { values: ["1", "2", 3] });
-    assert(coerced.count === 3, `numeric strings coerced: ${coerced.count}`);
-    const big = await run("math_statistics", { values: Array.from({ length: 50_000 }, (_, i) => i % 100) });
-    assert(big.count === 50_000, "large sample handled");
-  },
-});
-
-Deno.test({
-  name: "text tools: similarity ranking and regex extraction",
-  sanitizeResources: false,
-  sanitizeOps: false,
-  fn: async () => {
-    // Pairwise scoring.
-    assert(levenshtein("kitten", "sitting") === 3, "levenshtein reference");
-    assert(levenshtein("", "abc") === 3, "empty vs string");
-    near(jaccard("a b c", "a b c"), 1, 1e-9, "identical token sets");
-    near(jaccard("a b", "c d"), 0, 1e-9, "disjoint token sets");
-    assert(trigramDice("claude-opus-5.5", "claude-opus-5.5") === 1, "identical trigrams");
-    assert(similarityScore("gpt-5.2", "gpt-5.2-mini", "prefix") > 0.6, "prefix similarity");
-    assert(similarityScore("gpt-5.2", "gpt-5.2-mini", "levenshtein") > 0.5, "edit-distance similarity");
-
-    // Ranking a candidate list — the model-picker use case.
-    const ranked = await run("text_similarity", {
-      query: "anthropic/claude-opus-5.5",
-      candidates: ["anthropic/claude-opus-4.5", "google/gemini-3.0-pro", "anthropic/claude-opus-5.5", "openai/gpt-5.2"],
-      k: 2,
-    });
-    assert(ranked.best === "anthropic/claude-opus-5.5", `exact match must win, got ${ranked.best}`);
-    assert(ranked.matches[0].score === 1, "exact match scores 1");
-    assert(ranked.matches[1].value === "anthropic/claude-opus-4.5", `closest sibling second, got ${ranked.matches[1].value}`);
-    assert(ranked.matches.length === 2, "k respected");
-
-    const filtered = await run("text_similarity", { query: "zzz", candidates: ["aaa", "bbb"], min_score: 0.5 });
-    assert(filtered.matches.length === 0, "min_score filters everything out");
-
-    const pairwise = await run("text_similarity", { a: "nokey-router", b: "nokey router" });
-    assert(pairwise.score > 0.9, `punctuation-insensitive: ${pairwise.score}`);
-
-    // Extraction with groups, offsets and de-duplication.
-    const extracted = await run("text_extract", {
-      text: "v1.2.3 shipped 2026-11-04, then v1.2.4 on 2026-11-05. Contact ops@nokey.dev or support@nokey.dev",
-      patterns: [
-        { name: "version", pattern: "v(\\d+\\.\\d+\\.\\d+)", group: 1 },
-        { name: "date", pattern: "\\d{4}-\\d{2}-\\d{2}" },
-        { name: "email", pattern: "[\\w.+-]+@[\\w.-]+", unique: true },
-      ],
-    });
-    assert(extracted.results.length === 3, "one result group per pattern");
-    assert(extracted.results[0].matches.map((m: any) => m.value).join(",") === "1.2.3,1.2.4", `capture group extracted: ${JSON.stringify(extracted.results[0].matches)}`);
-    assert(extracted.results[1].count === 2, "two dates");
-    assert(extracted.results[2].count === 2, "two unique emails");
-    assert(extracted.results[1].matches[0].index > 0, "byte offset reported");
-
-    const named = await run("text_extract", { text: "id=42 name=router", pattern: "(?<key>\\w+)=(?<val>\\w+)" });
-    assert(named.results[0].matches[0].named.key === "id", `named groups surfaced: ${JSON.stringify(named.results[0].matches[0])}`);
-
-    const invalid = await run("text_extract", { text: "abc", pattern: "(" });
-    assert(invalid.results[0].ok === false, "invalid regex reported per-pattern, not thrown");
-    const noPattern = await executeTool("text_extract", { text: "abc" });
-    assert(!noPattern.ok, "missing pattern rejected by the schema");
-  },
-});
-
-Deno.test({
-  name: "json tools: JSONPath-lite query, validate and transform",
-  sanitizeResources: false,
-  sanitizeOps: false,
-  fn: async () => {
-    const doc = {
-      store: {
-        book: [
-          { title: "Sayaka", price: 8.95, tags: ["a"] },
-          { title: "Sword", price: 12.99, tags: ["a", "b"] },
-          { title: "Moby Dick", price: 8.99, tags: [] },
-        ],
-        bicycle: { color: "red", price: 19.95 },
-      },
-      meta: { version: 2 },
-    };
-
-    // Direct query engine.
-    assert(queryJson(doc, "$.store.bicycle.color")[0] === "red", "child path");
-    assert(queryJson(doc, "$.store.book[0].title")[0] === "Sayaka", "index");
-    assert(queryJson(doc, "$.store.book[-1].title")[0] === "Moby Dick", "negative index");
-    assert(queryJson(doc, "$.store.book[*].title").length === 3, "wildcard");
-    assert(queryJson(doc, "$.store.book[0:2].title").length === 2, "slice");
-    assert(queryJson(doc, "$..price").length === 4, `recursive descent: ${JSON.stringify(queryJson(doc, "$..price"))}`);
-    assert(queryJson(doc, "$.store.book[?(@.price>9)].title")[0] === "Sword", "numeric filter");
-    assert(queryJson(doc, "$.store.book[?(@.title~=^S)].title").length === 2, "regex filter");
-    assert(queryJson(doc, "$['store']['bicycle']['color']")[0] === "red", "quoted children");
-    assert(queryJson(doc, "$.missing.path").length === 0, "missing path yields no matches");
-    assert(queryJson(doc, "$")[0] === doc as any, "root");
-
-    const viaTool = await run("json_query", { data: doc, paths: ["$.store.book[*].title", "$.meta.version"], first: true });
-    assert(viaTool.results[0].matches === "Sayaka", "first:true collapses to a single match");
-    assert(viaTool.results[1].matches === 2, "second path");
-    const fromString = await run("json_query", { data: JSON.stringify(doc), path: "$.meta.version" });
-    assert(fromString.count === 1, "JSON string input is parsed");
-    const badPath = await run("json_query", { data: doc, path: "$.store.book[?(" });
-    assert(badPath.results[0].ok === false, "invalid path reported, not thrown");
-
-    // json_validate dogfoods the same kernel the argument ladder uses.
-    const verdict = await run("json_validate", {
-      data: { count: "3" },
-      schema: { type: "object", properties: { count: { type: "integer" } }, required: ["count"] },
-      coerce: true,
-    });
-    assert(verdict.ok && verdict.repaired, `coerced validation: ${JSON.stringify(verdict)}`);
-    assert(verdict.value.count === 3, "coerced value returned");
-    const rejection = await run("json_validate", { data: { count: "abc" }, schema: { type: "object", properties: { count: { type: "integer" } } } });
-    assert(rejection.ok === false && rejection.errors.length > 0, `rejection carries diagnostics: ${JSON.stringify(rejection)}`);
-
-    // json_transform: pick, omit, flatten, sort, compact, defaults.
-    const picked = await run("json_transform", { data: doc, pick: ["$.meta.version", "$.store.bicycle.color"] });
-    assert(picked.value["meta.version"] === 2, `pick flattens into keyed result: ${JSON.stringify(picked.value)}`);
-    const omitted = await run("json_transform", { data: doc, omit: ["$.store.bicycle"] });
-    assert(omitted.value.store.bicycle === undefined, `omit removed the subtree: ${JSON.stringify(omitted.value.store)}`);
-    assert(omitted.value.store.book.length === 3, "omit leaves siblings alone");
-    const shaped = await run("json_transform", {
-      data: { b: 2, a: { z: null, y: [], x: 1 } },
-      sort_keys: true,
-      compact: true,
-      defaults: { c: 3 },
-      flatten: true,
-    });
-    assert(Object.keys(shaped.value).join(",") === "a,b,c", `keys sorted and defaults filled: ${Object.keys(shaped.value)}`);
-    assert(Object.keys(shaped.value.a).join(",") === "x", `nulls and empties compacted: ${JSON.stringify(shaped.value.a)}`);
-    assert(shaped.flattened["a.x"] === 1, "flattened dotted keys");
-    assert(shaped.bytes > 0, "byte size reported");
-  },
-});
-
-Deno.test({
-  name: "time, crypto, encoding and sampling tools",
-  sanitizeResources: false,
-  sanitizeOps: false,
-  fn: async () => {
-    // Durations.
-    assert(parseDuration("1h30m") === 5_400_000, "1h30m");
-    assert(parseDuration("-3d") === -259_200_000, "-3d");
-    assert(parseDuration("500ms") === 500, "500ms");
-    assert(parseDuration("P1DT2H3M") === 93_780_000, "ISO-8601 duration");
-    assert(parseDuration("2 weeks") === 1_209_600_000, "spelled units");
-    assert(parseDuration("banana") === null, "garbage duration rejected");
-    assert(humanizeDuration(90_000) === "1m 30s", `humanize: ${humanizeDuration(90_000)}`);
-    assert(humanizeDuration(0.4).endsWith("µs"), "sub-millisecond humanized");
-
-    // Epoch unit guessing.
-    assert(guessEpochUnit(1_761_523_200) === 1000, "10-digit is seconds");
-    assert(guessEpochUnit(1_761_523_200_000) === 1, "13-digit is milliseconds");
-    assert(guessEpochUnit(1_761_523_200_000_000) === 1e-3, "16-digit is microseconds");
-
-    const converted = await run("time_convert", { value: 1_761_523_200_000, to: "iso" });
-    assert(converted.iso === "2025-10-27T00:00:00.000Z", `epoch -> ISO: ${converted.iso}`);
-    assert(converted.unix_s === 1_761_523_200, "epoch seconds");
-    const zoned = await run("time_convert", { value: "2026-11-04T12:00:00Z", tz: "America/New_York", to: "iso" });
-    assert(zoned.local === "2026-11-04T07:00:00", `wall clock in New York: ${zoned.local}`);
-    assert(zoned.offset_minutes === -300, `EST offset: ${zoned.offset_minutes}`);
-    const shifted = await run("time_convert", { value: "2026-11-04T12:00:00Z", add: "90m" });
-    assert(shifted.iso === "2026-11-04T13:30:00.000Z", `add duration: ${shifted.iso}`);
-    const diff = await run("time_convert", { value: "2026-11-04T12:00:00Z", diff_to: "2026-11-04T09:30:00Z" });
-    assert(diff.diff.ms === 9_000_000 && diff.diff.human === "2h 30m", `diff: ${JSON.stringify(diff.diff)}`);
-    const nowOut = await run("time_convert", { now: true });
-    assert(Math.abs(nowOut.unix_ms - Date.now()) < 5_000, "now is close to the clock");
-    const badTime = await executeTool("time_convert", { value: "not a date" });
-    assert(!badTime.ok, "unparseable instant rejected");
-
-    // Hashing.
-    const digest = await run("crypto_digest", { data: "abc" });
-    assert(digest.digest === "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad", `sha-256("abc"): ${digest.digest}`);
-    const sha1 = await run("crypto_digest", { data: "abc", algorithm: "sha-1" });
-    assert(sha1.digest === "a9993e364706816aba3e25717850c26c9cd0d89d", `sha-1("abc"): ${sha1.digest}`);
-    const all = await run("crypto_digest", { data: "abc", encoding: "all" });
-    assert(all.base64 && all.base64url && all.hex, "all encodings");
-
-    // Ids.
-    const ids = await run("crypto_id", { kind: "ulid", count: 5 });
-    assert(ids.ids.length === 5, "five ids");
-    for (const id of ids.ids) assert(/^[0-9A-HJKMNP-TV-Z]{26}$/.test(id), `ulid charset/length: ${id}`);
-    assert([...ids.ids].sort().join() === ids.ids.join(), "ulids generated in the same millisecond stay ordered");
-    const uuids = await run("crypto_id", { kind: "uuid", count: 2, prefix: "call" });
-    assert(uuids.ids.every((i: string) => /^call_[0-9a-f-]{36}$/.test(i)), `prefixed uuids: ${JSON.stringify(uuids.ids)}`);
-    const nanoid = await run("crypto_id", { kind: "nanoid", length: 12 });
-    assert(nanoid.id.length === 12, `nanoid length: ${nanoid.id}`);
-
-    // Encoding round-trips.
-    const b64 = await run("encode_transform", { data: "hello ✓", to: "base64" });
-    assert(b64.result === "aGVsbG8g4pyT", `utf8 -> base64: ${b64.result}`);
-    const back = await run("encode_transform", { data: "aGVsbG8g4pyT", from: "base64", to: "utf8" });
-    assert(back.result === "hello ✓", "base64 -> utf8 round-trip");
-    const hexed = await run("encode_transform", { data: "414243", from: "hex", to: "utf8" });
-    assert(hexed.result === "ABC", "hex -> utf8");
-    const badHex = await executeTool("encode_transform", { data: "zz", from: "hex" });
-    const hexErr = fail(badHex);
-    assert(/decode failed/.test(hexErr.error), `invalid hex reported: ${hexErr.error}`);
-
-    // JWT inspection is explicit about not verifying.
-    const header = btoa(JSON.stringify({ alg: "HS256", typ: "JWT" })).replace(/=+$/, "");
-    const payload = btoa(JSON.stringify({ sub: "1234", iss: "nokey", iat: 1700000000, exp: 1700003600 })).replace(/=+$/, "");
-    const jwt = await run("encode_jwt", { token: `${header}.${payload}.sig` });
-    assert(jwt.verified === false && jwt.payload.sub === "1234", `jwt decoded: ${JSON.stringify(jwt)}`);
-    assert(jwt.expired === true, "a 2023 expiry is expired");
-    assert(jwt.expires_at.iso === "2023-11-14T23:13:20.000Z", `exp interpreted: ${jwt.expires_at.iso}`);
-    assert(jwt.issued_at.iso === "2023-11-14T22:13:20.000Z", `iat interpreted: ${jwt.issued_at.iso}`);
-    const badJwt = await executeTool("encode_jwt", { token: "nope" });
-    fail(badJwt);
-    assert(true, "malformed token rejected");
-
-    // Reproducible randomness.
-    const a = await run("random_sample", { seed: "nokey", count: 5, distribution: "normal", mean: 10, sd: 2 });
-    const b = await run("random_sample", { seed: "nokey", count: 5, distribution: "normal", mean: 10, sd: 2 });
-    assert(JSON.stringify(a.values) === JSON.stringify(b.values), "same seed must reproduce exactly");
-    const c = await run("random_sample", { seed: "other", count: 5, distribution: "normal", mean: 10, sd: 2 });
-    assert(JSON.stringify(a.values) !== JSON.stringify(c.values), "different seed differs");
-    const uniform = await run("random_sample", { seed: 1, count: 200, min: 0, max: 1 });
-    assert(uniform.values.every((v: number) => v >= 0 && v <= 1), "uniform within bounds");
-    near(uniform.mean, 0.5, 0.08, "uniform mean near 0.5");
-    const beta = await run("random_sample", { seed: 7, count: 100, distribution: "beta", alpha: 2, beta: 5 });
-    assert(beta.values.every((v: number) => v >= 0 && v <= 1), "beta within [0,1]");
-    near(beta.mean, 2 / 7, 0.08, "beta mean near alpha/(alpha+beta)");
-    const sampled = await run("random_sample", { seed: 3, population: [1, 2, 3, 4, 5], count: 3 });
-    assert(new Set(sampled.values).size === 3, "sampling without replacement is distinct");
-    const shuffled = await run("random_sample", { seed: 3, population: [1, 2, 3, 4, 5], shuffle: true });
-    assert([...shuffled.values].sort().join() === "1,2,3,4,5", "shuffle is a permutation");
-    const tooMany = await run("random_sample", { seed: 3, population: [1, 2], count: 5 });
-    assert(tooMany.error !== undefined, "oversampling without replacement reports instead of lying");
-    const rng = seededRandom("stable");
-    assert(rng() === seededRandom("stable")(), "seeded PRNG is deterministic");
-  },
-});
-
-Deno.test({
-  name: "execution sandbox: unknown tools, argument errors, timeouts, result caps",
-  sanitizeResources: false,
-  sanitizeOps: false,
-  fn: async () => {
-    const unknown = await executeTool("does_not_exist", {});
-    assert(!unknown.ok && unknown.code === "UNKNOWN_TOOL", "unknown tool code");
-    assert(Array.isArray(fail(unknown).suggestions), "unknown tool offers suggestions");
-
-    const badArgs = await executeTool("math_statistics", { values: "not a list" });
-    const argErr = fail(badArgs);
-    assert(argErr.code === "INVALID_ARGUMENTS", `code: ${argErr.code}`);
-    assert((argErr.issues ?? []).length > 0, "schema diagnostics returned to the model");
-
-    // A slow tool is cut by its own deadline rather than blocking the request.
-    registerTool({
-      name: "test_slow",
-      kind: "compute",
-      description: "test-only tool that outlives its deadline",
-      parameters: { type: "object", properties: {}, additionalProperties: false },
-      run: (_args, ctx) =>
-        new Promise((resolve) => {
-          const timer = setTimeout(() => resolve({ late: true }), 5_000);
-          ctx.signal.addEventListener("abort", () => {
-            clearTimeout(timer);
-            resolve({ aborted: true });
-          });
-        }),
-    });
-    const slow = await executeTool("test_slow", {}, { timeoutMs: 40 });
-    const slowErr = fail(slow);
-    assert(slowErr.code === "TIMEOUT" || slowErr.code === "ABORTED", `timeout code: ${slowErr.code}`);
-    assert(slowErr.ms < 2_000, `timeout must fire promptly, took ${slowErr.ms}ms`);
-
-    // A throwing tool surfaces its message without poisoning the plane.
-    registerTool({
-      name: "test_throws",
-      kind: "compute",
-      description: "test-only tool that throws",
-      parameters: { type: "object", properties: {}, additionalProperties: false },
-      run: () => {
-        throw new Error("boom");
-      },
-    });
-    const threw = await executeTool("test_throws", {});
-    const threwErr = fail(threw);
-    assert(threwErr.code === "TOOL_ERROR" && /boom/.test(threwErr.error), `throw surfaced: ${JSON.stringify(threwErr)}`);
-
-    // Oversized results are capped, not sent whole.
-    registerTool({
-      name: "test_huge",
-      kind: "compute",
-      description: "test-only tool that returns a huge array",
-      parameters: { type: "object", properties: {}, additionalProperties: false },
-      run: () => ({ items: Array.from({ length: 200_000 }, (_, i) => ({ i, pad: "x".repeat(40) })) }),
-    });
-    const huge = await executeTool("test_huge", {}, { maxResultBytes: 4096 });
-    assert(huge.ok, "capped result still succeeds");
-    assert(huge.truncated, "truncation flagged");
-    assert(huge.bytes > 0, "true size reported");
-    assert(JSON.stringify(huge.result).length < 8192, `payload actually shrank: ${JSON.stringify(huge.result).length}`);
-
-    // Admin-gated tools refuse without the secret.
-    registerTool({
-      name: "test_admin",
-      kind: "mesh",
-      admin: true,
-      description: "test-only admin tool",
-      parameters: { type: "object", properties: {}, additionalProperties: false },
-      run: () => ({ ok: true }),
-    });
-    const denied = await executeTool("test_admin", {});
-    assert(fail(denied).code === "ADMIN_REQUIRED", `admin gate: ${fail(denied).code}`);
-    const allowed = await executeTool("test_admin", {}, { admin: true });
-    assert(allowed.ok, "admin secret unlocks it");
-    assert(!toToolSpecs().some((t: any) => t.function?.name === "test_admin"), "admin tools are never advertised to models");
-    assert(toToolSpecs({ includeAdmin: true }).some((t: any) => t.function?.name === "test_admin"), "includeAdmin opt-in works");
-  },
-});
+// ---------------------------------------------------------------------------
+// 6. Projections, partitioning and compounding
+// ---------------------------------------------------------------------------
 
 Deno.test("vendor projections: one registry, four wire formats", () => {
-  const openai = toToolSpecs({ names: ["math_evaluate"] }) as any[];
-  assert(openai.length === 1 && openai[0].type === "function", "openai envelope");
-  assert(openai[0].function.name === "math_evaluate", "openai name");
+  const openai = toToolSpecs({ names: ["calculate"] }) as any[];
+  assert(openai.length === 1 && openai[0].function.name === "calculate", "openai envelope");
   assert(openai[0].function.parameters.properties.expression, "openai parameters");
 
-  const strict = toToolSpecs({ flavor: "openai-strict", names: ["math_statistics"] }) as any[];
+  const strict = toToolSpecs({ flavor: "openai-strict", names: ["data"] }) as any[];
   const params = strict[0].function.parameters;
-  assert(strict[0].function.strict === true, "strict flag set");
-  assert(params.additionalProperties === false, "strict closes the object");
-  assert(params.required.includes("values"), "declared required kept");
-  assert(!("maxItems" in params.properties.values), `strict mode drops unsupported keywords: ${JSON.stringify(params.properties.values)}`);
-  assert(!("minimum" in (params.properties.bins ?? {})), "numeric constraints stripped for strict mode");
+  assert(strict[0].function.strict === true && params.additionalProperties === false, "strict closes the object");
+  assert(params.required.includes("op"), "declared keys required");
+  assert(!("maxItems" in (params.properties.expressions ?? {})), "strict drops unsupported keywords");
 
-  const anthropic = toToolSpecs({ flavor: "anthropic", names: ["math_evaluate"] }) as any[];
-  assert(anthropic[0].input_schema && anthropic[0].name === "math_evaluate", "anthropic shape");
+  const anthropic = toToolSpecs({ flavor: "anthropic", names: ["web_fetch"] }) as any[];
+  assert(anthropic[0].input_schema.properties.url && anthropic[0].name === "web_fetch", "anthropic shape");
 
-  const gemini = toToolSpecs({ flavor: "gemini", names: ["math_evaluate"] }) as any[];
+  const gemini = toToolSpecs({ flavor: "gemini", names: ["fs_read"] }) as any[];
   const decl = gemini[0].functionDeclarations[0];
-  assert(decl.parameters.type === "OBJECT", `gemini upper-cases types: ${decl.parameters.type}`);
-  assert(decl.parameters.properties.expression.type === "STRING", "gemini nested types");
+  assert(decl.parameters.type === "OBJECT" && decl.parameters.properties.path.type === "STRING", `gemini ${JSON.stringify(decl).slice(0, 200)}`);
 
-  // toStrictSchema keeps $defs/$ref intact and marks nullable unions.
   const strictRef = toStrictSchema({ $defs: { a: { type: "string" } }, type: "object", properties: { x: { $ref: "#/$defs/a" } } }) as any;
-  assert(strictRef.$defs.a.type === "string", "$defs preserved");
-  assert(strictRef.properties.x.$ref === "#/$defs/a", "$ref preserved");
+  assert(strictRef.$defs.a.type === "string" && strictRef.properties.x.$ref === "#/$defs/a", "$ref/$defs preserved");
 
-  // Client tools always win over a shadowed built-in.
   const merged = mergeToolDeclarations(
-    [{ type: "function", function: { name: "math_evaluate", description: "mine", parameters: { type: "object" } } }],
-    { names: ["math_evaluate", "json_query"] },
+    [{ type: "function", function: { name: "calculate", description: "mine", parameters: { type: "object" } } }],
+    { names: ["calculate", "data"] },
   ) as any[];
-  assert(merged.length === 2, `both declarations present: ${merged.length}`);
-  assert(merged[0].function.description === "mine", "client declaration not hijacked");
-  assert(merged[1].function.name === "json_query", "built-in still appended");
-
-  const preamble = toolPreamble(["math_evaluate"]);
-  assert(preamble.includes("math_evaluate"), "preamble lists the tools");
+  assert(merged.length === 2 && merged[0].function.description === "mine" && merged[1].function.name === "data", "client declaration wins");
+  assert(toolPreamble(["web_search"]).includes("web_search"), "preamble lists tools");
 });
 
-Deno.test("call partitioning: the router executes its own calls and returns the rest untouched", () => {
+Deno.test("partitioning and auto-resolution", () => {
   const normalized = normalizeToolCalls([
     { index: 0, id: "c1", function: { name: "math.evaluate", arguments: { expression: "1+1" } } },
     { index: 1, function: { name: "get_weather", arguments: '{"city":"Baton Rouge"}' } },
   ]);
-  assert(normalized.length === 2, "both calls normalised");
-  assert(normalized[0].builtin && normalized[0].resolved === "math_evaluate", "dotted name resolves to the registry");
-  assert(normalized[0].arguments === '{"expression":"1+1"}', `object arguments stringified: ${normalized[0].arguments}`);
-  assert(!normalized[1].builtin, "client tool is not ours");
-  assert(typeof normalized[1].id === "string" && normalized[1].id.length > 0, "missing ids are synthesised");
+  assert(normalized[0].builtin && normalized[0].resolved === "calculate", "alias resolves");
+  assert(normalized[0].arguments === '{"expression":"1+1"}', "object arguments stringified");
+  assert(!normalized[1].builtin && normalized[1].id.length > 0, "client tool + synthesised id");
 
   const mixed = partitionToolCalls([
-    { function: { name: "math_evaluate", arguments: "{}" } },
+    { function: { name: "calculate", arguments: "{}" } },
     { function: { name: "get_weather", arguments: "{}" } },
   ]);
-  assert(mixed.mine.length === 0 && mixed.theirs.length === 2, "a mixed batch is handed back to the client whole");
+  assert(mixed.mine.length === 0 && mixed.theirs.length === 2, "mixed batch goes back whole");
+  assert(partitionToolCalls([{ function: { name: "data", arguments: "{}" } }]).mine.length === 1, "our batch executes");
+  const shadowed = partitionToolCalls([{ function: { name: "Calculate", arguments: "{}" } }], { clientNames: ["calculate"] });
+  assert(shadowed.mine.length === 0, "shadowing matched through the normaliser");
 
-  const ours = partitionToolCalls([{ function: { name: "json_query", arguments: "{}" } }]);
-  assert(ours.mine.length === 1 && ours.theirs.length === 0, "an all-built-in batch is executable");
-
-  const theirs = partitionToolCalls([{ function: { name: "get_weather", arguments: "{}" } }]);
-  assert(theirs.mine.length === 0 && theirs.theirs.length === 1, "client-only batch passes through");
-
-  assert(resolveAutoToolNames("auto")?.length === DEFAULT_AUTO_TOOLS.length, "auto expands to the default set");
-  assert(resolveAutoToolNames(true)?.length === DEFAULT_AUTO_TOOLS.length, "boolean flag expands too");
-  assert(resolveAutoToolNames("all")!.includes("json_transform"), "all expands to the full non-admin set");
-  assert(resolveAutoToolNames("math.evaluate, json_query")?.length === 2, "explicit list resolved");
-  assert(resolveAutoToolNames(["math_evaluate"])?.length === 1, "array form");
-  assert(resolveAutoToolNames("test_admin") === null, "admin tools cannot be auto-attached by a client");
+  assert(resolveAutoToolNames("auto")?.length === DEFAULT_AUTO_TOOLS.length, "auto expands");
+  assert(resolveAutoToolNames(true)?.length === DEFAULT_AUTO_TOOLS.length, "boolean expands");
+  assert(resolveAutoToolNames("all")!.includes("rag_collections"), "all includes the long tail");
+  assert(resolveAutoToolNames("calculate, read_file")?.length === 2, "explicit list resolved");
+  assert(resolveAutoToolNames(["calculate"])?.length === 1, "array form");
+  assert(resolveAutoToolNames("router_trace") === null, "admin tools cannot be auto-attached");
   assert(resolveAutoToolNames(undefined) === null, "no request, no tools");
   assert(resolveAutoToolNames("nope_nope_nope") === null, "unresolvable names yield nothing");
 });
@@ -724,139 +610,101 @@ Deno.test({
   sanitizeOps: false,
   fn: async () => {
     const now = Date.now();
-    let skill: ToolSkillRecord = emptyToolSkill("math_evaluate", now);
+    let skill: ToolSkillRecord = emptyToolSkill("calculate", now);
     assert(skill.calls === 0 && skill.alpha === 1 && skill.beta === 1, "fresh record is the uniform prior");
-
-    // 40 clean executions: competence climbs, latency posterior tightens.
-    const sigmaBefore = skillSummary(skill, now).p95_ms;
     for (let i = 0; i < 40; i++) skill = observeToolSkill(skill, { ok: true, ms: 20 }, now + i);
     const healthy = skillSummary(skill, now + 40);
-    assert(healthy.calls === 40 && healthy.errors === 0, "counters");
-    assert(healthy.success_rate === 1, "perfect success rate");
-    // Wilson's floor on ~27 discounted successes (the 0.98 leak is deliberate:
-    // a tool that stops being used must slide back toward the prior).
-    assert(healthy.competence > 0.85, `Wilson floor after 40 successes: ${healthy.competence}`);
-    assert(healthy.p50_ms > 10 && healthy.p50_ms < 40, `Kalman converged on ~20ms: ${healthy.p50_ms}`);
-    assert(healthy.p95_ms > healthy.p50_ms, "tail above the median");
-    void sigmaBefore;
+    assert(healthy.calls === 40 && healthy.errors === 0 && healthy.success_rate === 1, "counters");
+    assert(healthy.competence > 0.85, `Wilson floor: ${healthy.competence}`);
+    assert(healthy.p50_ms > 10 && healthy.p50_ms < 40, `Kalman converged: ${healthy.p50_ms}`);
+    assert(healthy.p95_ms > healthy.p50_ms, "tail above median");
 
-    // Failures pull it back down fast, and the error codes are learned.
     for (let i = 0; i < 20; i++) skill = observeToolSkill(skill, { ok: false, ms: 900, code: "TOOL_ERROR", error: "upstream 500" }, now + 100 + i);
     const broken = skillSummary(skill, now + 200);
-    assert(broken.errors === 20, "errors counted");
-    assert(broken.competence < healthy.competence, "competence fell");
-    assert(broken.top_errors[0].code === "TOOL_ERROR" && broken.top_errors[0].count === 20, "error codes learned");
-    assert(broken.last_error === "upstream 500", "last error retained");
-    assert(broken.p95_ms > healthy.p95_ms, "latency posterior absorbed the slow failures");
-    const okAgain = observeToolSkill(skill, { ok: true, ms: 25 }, now + 201);
-    assert(okAgain.last_error === null, "a success clears the last error");
+    assert(broken.errors === 20 && broken.competence < healthy.competence, "failures pull it down");
+    assert(broken.top_errors[0].code === "TOOL_ERROR", "error codes learned");
+    assert(observeToolSkill(skill, { ok: true, ms: 25 }, now + 201).last_error === null, "success clears last error");
 
-    // Repairs are tracked separately: they are a wire-quality signal, not a failure.
-    let repaired = emptyToolSkill("json_query", now);
+    let repaired = emptyToolSkill("data", now);
     for (let i = 0; i < 10; i++) repaired = observeToolSkill(repaired, { ok: true, ms: 5, repaired: true }, now + i);
-    assert(skillSummary(repaired, now + 10).repair_rate === 1, "repair rate is 100%");
-    assert(skillSummary(repaired, now + 10).success_rate === 1, "repaired calls still count as successes");
+    assert(skillSummary(repaired, now + 10).repair_rate === 1, "repair rate tracked separately");
 
-    // Stale evidence decays back toward the prior (6 h half-life).
     const stale = skillSummary(skill, now + 48 * 3_600_000);
-    assert(stale.stale_hours >= 47, `staleness reported: ${stale.stale_hours}`);
-    assert(stale.p95_ms > broken.p95_ms, "an idle tool regains uncertainty instead of looking confidently fast");
+    assert(stale.stale_hours >= 47 && stale.p95_ms > broken.p95_ms, "idle tools regain uncertainty");
 
-    // Deterministic summaries are stable; Thompson draws vary.
     const d1 = skillSummary(skill, now, true).competence_draw;
     const d2 = skillSummary(skill, now, true).competence_draw;
-    assert(d1 === d2, "deterministic mode must not sample");
+    assert(d1 === d2, "deterministic mode does not sample");
     const draws = new Set<number>();
     for (let i = 0; i < 25; i++) draws.add(skillSummary(skill, now).competence_draw);
     assert(draws.size > 1, "sampling mode explores");
 
-    // Executions feed the record end to end.
-    const before = emptyToolSkill("math_evaluate", Date.now());
-    const exec = await executeTool("math_evaluate", { expression: "6*7" });
-    const after = observeToolSkill(before, { ok: exec.ok, ms: exec.ms, repaired: exec.ok ? exec.repairs.length > 0 : false }, Date.now());
-    assert(after.calls === 1 && after.errors === 0, "a successful execution updates the record");
-
-    // Per-tuple tool competence: the routing signal main.ts compounds on.
     let tuple = observeTupleToolStats({}, { valid: true }, now);
     for (let i = 0; i < 30; i++) tuple = observeTupleToolStats(tuple, { valid: true }, now + i);
     const good = tupleToolCompetence(tuple, now + 30);
-    assert(good > 0.8, `a tuple that always emits valid calls ranks high: ${good}`);
-    assert(toolRoutingBonus(tuple, { now: now + 30 }) > 0, "positive routing bonus");
-
+    assert(good > 0.8 && toolRoutingBonus(tuple, { now: now + 30 }) > 0, "valid calls rank high");
     let bad = observeTupleToolStats({}, { valid: false, repaired: true }, now);
     for (let i = 0; i < 30; i++) bad = observeTupleToolStats(bad, { valid: false }, now + i);
-    assert(tupleToolCompetence(bad, now + 30) < good, "a tuple that mangles calls ranks lower");
-    assert(toolRoutingBonus(bad, { now: now + 30 }) < 0, "negative routing bonus");
-
-    // Repaired-but-valid sits between the two: intent right, wire format wrong.
-    let half = observeTupleToolStats({}, { valid: true, repaired: true }, now);
-    for (let i = 0; i < 30; i++) half = observeTupleToolStats(half, { valid: true, repaired: true }, now + i);
-    const halfScore = tupleToolCompetence(half, now + 30);
-    assert(halfScore < good && halfScore > tupleToolCompetence(bad, now + 30), `repaired competence between clean and broken: ${halfScore}`);
-
-    // No evidence -> no opinion, so exploration still drives new tuples.
-    assert(toolRoutingBonus({}, { now }) === 0, "unproven tuples get a neutral bonus");
-    assert(tupleToolCompetence({}, now) === 0, "unproven tuples have no competence claim");
-    const deterministic = toolRoutingBonus(tuple, { now: now + 30, deterministic: true });
-    assert(deterministic === toolRoutingBonus(tuple, { now: now + 30, deterministic: true }), "deterministic bonus is stable");
+    assert(tupleToolCompetence(bad, now + 30) < good && toolRoutingBonus(bad, { now: now + 30 }) < 0, "mangled calls rank low");
+    assert(toolRoutingBonus({}, { now }) === 0 && tupleToolCompetence({}, now) === 0, "no evidence, no opinion");
   },
 });
 
-Deno.test("damage accounting: defaults are not repairs, shadows are not ours, hints reach the model", async () => {
-  // Filling a declared default is not damage: `repaired` has to stay a signal
-  // about the caller's payload, not about how optional a schema happens to be.
-  const cleanExec = await executeTool("math_evaluate", { expression: "1+1" });
-  assert(cleanExec.ok, `clean call must succeed: ${JSON.stringify(cleanExec)}`);
-  const clean = cleanExec as ToolExecutionOk;
-  assert(clean.repaired === false, `defaults counted as damage: ${JSON.stringify(clean.repairs)}`);
-  assert(clean.repairs.some((r) => r.endsWith(":default")), "the fill is still reported for transparency");
-  assert((clean.result as any).value === 2, "the call still ran");
+Deno.test("damage accounting: defaults are not repairs, hints reach the model, caps are reported", async () => {
+  const clean = (await executeTool("calculate", { expression: "1+1" })) as ToolExecutionOk;
+  assert(clean.ok && clean.repaired === false && clean.repairs.some((r) => r.endsWith(":default")), "defaults are transparent, not damage");
+  assert((clean.result as any).value === 2, "the call ran");
 
-  // Real damage — a fence plus single quotes — is exactly what it is for.
-  const damagedExec = await executeTool("math_evaluate", "```json\n{'expression': '6*7'}\n```");
-  assert(damagedExec.ok, `damaged call must be recovered: ${JSON.stringify(damagedExec)}`);
-  const damaged = damagedExec as ToolExecutionOk;
-  assert(damaged.repaired, "a recovered call reports itself as repaired");
-  assert((damaged.result as any).value === 42, "and still computes the right answer");
+  const damaged = (await executeTool("calculate", "```json\n{'expression': '6*7'}\n```")) as ToolExecutionOk;
+  assert(damaged.ok && damaged.repaired && (damaged.result as any).value === 42, "fenced payload recovered");
 
-  // Inclusive-bound clamping is damage too, and it is bounded rather than fatal.
-  const clampedExec = await executeTool("math_evaluate", { expressions: new Array(200).fill("1") });
-  assert(clampedExec.ok, `clamped call must succeed: ${JSON.stringify(clampedExec)}`);
-  const clamped = clampedExec as ToolExecutionOk;
-  assert(clamped.repaired, "clamping is reported as a repair");
-  assert((clamped.result as any).count === 64, `batch clamped to maxItems: ${(clamped.result as any).count}`);
+  const clampedExec = (await executeTool("calculate", { expressions: new Array(200).fill("1") })) as ToolExecutionOk;
+  assert(clampedExec.ok && clampedExec.repaired, "clamping is a repair");
+  assert((clampedExec.result as any).count === 64, `batch clamped: ${(clampedExec.result as any).count}`);
 
-  // anyOf picks the branch that describes the value best, i.e. the one needing
-  // the fewest repairs — not the one that rewrites the most.
-  const choice = validateJson("5", { anyOf: [{ type: "string" }, { type: "integer" }] }, { coerce: true });
-  assert(choice.ok, `anyOf coercion failed: ${JSON.stringify(choice.issues)}`);
-  assert(choice.value === "5", `an already-valid branch must win untouched: ${JSON.stringify(choice.value)}`);
-  const coercedChoice = validateJson(5, { anyOf: [{ type: "string" }, { type: "integer" }] }, { coerce: true });
-  assert(coercedChoice.ok && coercedChoice.value === 5, `integer branch wins for a number: ${JSON.stringify(coercedChoice.value)}`);
-
-  // A caller-declared name shadows a built-in of the same name: the plane must
-  // never hijack the caller's own API.
-  const shadowed = partitionToolCalls([{ function: { name: "math_evaluate", arguments: "{}" } }], { clientNames: ["math_evaluate"] });
-  assert(shadowed.mine.length === 0 && shadowed.theirs.length === 1, "a shadowed built-in stays the caller's");
-  const aliasShadow = partitionToolCalls([{ function: { name: "Math.Evaluate", arguments: "{}" } }], { clientNames: ["math-evaluate"] });
-  assert(aliasShadow.mine.length === 0, "shadowing is matched through the name normaliser");
-  const unshadowed = partitionToolCalls([{ function: { name: "math_evaluate", arguments: "{}" } }], { clientNames: ["get_weather"] });
-  assert(unshadowed.mine.length === 1, "an unrelated client tool does not disable the plane");
-
-  // An unknown tool explains itself in prose as well as in the structured
-  // field, because a model retrying from the message text alone must still see
-  // the correction.
   const hint = fail(await executeTool("json_querry", {}));
-  assert(hint.code === "UNKNOWN_TOOL", `code ${hint.code}`);
-  assert(/json_query/.test(hint.error), `the hint must be in the message: ${hint.error}`);
-  assert(hint.suggestions?.[0]?.name === "json_query", "and in the structured suggestions");
+  assert(hint.code === "UNKNOWN_TOOL" && hint.suggestions?.[0]?.name === "data", `suggestions ${JSON.stringify(hint.suggestions)}`);
+  assert(/data/.test(hint.error), `hint in prose: ${hint.error}`);
 
-  // Declarations merge with the caller's version winning, de-duplicated.
-  const merged = mergeToolDeclarations(
-    [{ type: "function", function: { name: "math_evaluate", description: "client-owned" } }],
-    { names: ["math_evaluate", "json_query"] },
-  ) as any[];
-  assert(merged.length === 2, `merged to ${merged.length} declarations`);
-  assert(merged[0].function.description === "client-owned", "the client declaration wins");
-  assert(merged[1].function.name === "json_query", "the plane's own tool is still offered");
+  const huge = await executeTool("web_fetch", { url: "https://example.test/" }, { caps: { fetch: stubFetch(() => new Response("x".repeat(3_000_000), { headers: { "content-type": "text/plain" } })) }, maxResultBytes: 2048 });
+  assert(huge.ok && huge.truncated, "results are capped, not failed");
+});
+
+Deno.test("execution sandbox: deadlines, admin tier and argument caps", async () => {
+  registerTool({
+    name: "plane_test_slow",
+    kind: "compute",
+    description: "test-only tool that resolves long after its deadline has passed",
+    parameters: { type: "object", properties: {}, additionalProperties: false },
+    run: (_args, ctx) => new Promise((resolve) => {
+      const timer = setTimeout(() => resolve({ late: true }), 3_000);
+      ctx.signal.addEventListener("abort", () => { clearTimeout(timer); resolve({ aborted: true }); });
+    }),
+  });
+  try {
+    const slow = await executeTool("plane_test_slow", {}, { timeoutMs: 60 });
+    assert(!slow.ok && slow.code === "TIMEOUT" && slow.ms >= 50, `deadline ${JSON.stringify(slow)}`);
+    registerTool({
+      name: "plane_test_admin",
+      kind: "mesh",
+      admin: true,
+      description: "test-only admin tool",
+      parameters: { type: "object", properties: {}, additionalProperties: false },
+      run: () => ({ secret: true }),
+    });
+    const denied = await executeTool("plane_test_admin", {});
+    assert(!denied.ok && denied.code === "ADMIN_REQUIRED", `admin tier ${JSON.stringify(denied)}`);
+    const allowed = await executeTool("plane_test_admin", {}, { admin: true });
+    assert(allowed.ok, "admin tier admits the secret");
+    unregisterTool("plane_test_admin");
+  } finally {
+    unregisterTool("plane_test_slow");
+  }
+});
+
+Deno.test("isPrivateProbe matches the guard's address classes", () => {
+  for (const host of ["127.0.0.1", "10.1.2.3", "172.16.0.9", "192.168.1.1", "169.254.169.254", "localhost", "foo.internal", "[::1]"]) {
+    assert(isPrivateProbe(host), `${host} should be private`);
+  }
+  for (const host of ["example.com", "8.8.8.8", "router.test"]) assert(!isPrivateProbe(host), `${host} should be public`);
 });

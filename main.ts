@@ -20,9 +20,11 @@ import {
   emptyToolSkill,
   executeTool,
   executeToolCalls,
+  isStatefulTool,
   listTools,
   mergeToolDeclarations,
   normalizeToolCalls,
+  normalizeToolName,
   observeToolSkill,
   observeTupleToolStats,
   parseToolArguments,
@@ -35,6 +37,7 @@ import {
   toolRoutingBonus,
   toToolSpecs,
   tupleToolCompetence,
+  type ToolCaps,
   type ToolExecution,
   type ToolFlavor,
   type ToolSkillRecord,
@@ -2421,6 +2424,13 @@ async function hedgedDispatch(
 //  That is the compounding part: the mesh gets better at *tools* over time.
 // ---------------------------------------------------------------------------
 
+/** Tenant/tool namespace: one header scopes files, memory, RAG and clipboard.
+ *  Absent header → a shared namespace, never another tenant's. */
+function toolNamespace(c: Context): string {
+  const raw = c.req.header("x-nokey-session") ?? c.req.header("x-session-id") ?? "";
+  return normalizeToolName(raw).slice(0, 48) || "shared";
+}
+
 /** The plane is on unless an operator explicitly turns it off. */
 function toolPlaneEnabled(): boolean {
   return Deno.env.get("NOKEY_TOOLS") !== "0";
@@ -2620,6 +2630,45 @@ function registerMeshTools(): void {
   });
 
   registerTool({
+    name: "router_capabilities",
+    aliases: ["router.capabilities", "what_can_you_do", "tools_list", "capabilities"],
+    kind: "mesh",
+    deterministic: true,
+    description:
+      "The router's own tool map: every callable tool with its description, aliases and learned reliability (Wilson competence floor, Kalman p50/p95 latency, repair rate). Ask this when unsure what the plane can do, or which tool is healthy right now.",
+    parameters: {
+      type: "object",
+      properties: {
+        kind: { type: "string", description: "Filter by kind: web, files, memory, rag, vector, clipboard, task, compute, data, text, time, crypto, mesh." },
+        with_schemas: { type: "boolean", default: false },
+        flavor: { type: "string", enum: ["openai", "openai-strict", "anthropic", "gemini"], description: "Also return the wire projection." },
+      },
+      additionalProperties: false,
+    },
+    run: (args, ctx) => {
+      const skills = (ctx.locals.tool_skills ?? {}) as Record<string, ToolSkillRecord>;
+      const kind = typeof args.kind === "string" ? args.kind.toLowerCase() : "";
+      const tools = listTools()
+        .filter((t) => !t.admin && (!kind || t.kind === kind))
+        .map((t) => {
+          const record = skills[t.name];
+          return {
+            name: t.name,
+            kind: t.kind,
+            description: t.description,
+            aliases: t.aliases ?? [],
+            deterministic: t.deterministic ?? false,
+            ...(args.with_schemas === true ? { parameters: t.parameters } : {}),
+            ...(record ? { skill: skillSummary(record, ctx.now, true) } : {}),
+          };
+        });
+      const out: Json = { count: tools.length, kinds: [...new Set(tools.map((t) => t.kind))], auto_tools: DEFAULT_AUTO_TOOLS, tools };
+      if (typeof args.flavor === "string") out[args.flavor.replace("-", "_")] = toToolSpecs({ flavor: args.flavor as ToolFlavor });
+      return out;
+    },
+  });
+
+  registerTool({
     name: "router_trace",
     aliases: ["router.trace", "traces", "inspect_trace"],
     kind: "mesh",
@@ -2661,7 +2710,7 @@ export interface ToolRoundOutcome {
  *  of them. Client-declared tools are handed straight back to the caller. */
 async function executeOwnedToolCalls(
   calls: unknown[],
-  opts: { span?: Span; admin?: boolean; signal?: AbortSignal; now?: number; clientNames?: string[] } = {},
+  opts: { span?: Span; admin?: boolean; signal?: AbortSignal; now?: number; clientNames?: string[]; caps?: ToolCaps } = {},
 ): Promise<ToolRoundOutcome> {
   const { mine } = partitionToolCalls(calls, { clientNames: opts.clientNames });
   if (mine.length === 0) return { loop: false, messages: [], executed: [] };
@@ -2672,6 +2721,7 @@ async function executeOwnedToolCalls(
     mine.map((call) => ({ id: call.id, name: call.resolved ?? call.name, arguments: call.arguments })),
     {
       admin: opts.admin ?? false,
+      caps: opts.caps,
       locals,
       signal: opts.signal,
       now: opts.now,
@@ -3015,7 +3065,7 @@ async function buildHealthPayload(): Promise<Json> {
     return { configured_endpoints: 0, registry_endpoints: 0, catalog_tuples: L1_CACHE.size, sweep_candidates: 0 };
   });
   return {
-    engine: "nokey-sovereign-v6-asck1-toolplane",
+    engine: "nokey-sovereign-v6-asck2-toolbox",
     runtime: "deno-deploy-kv-cas-l1",
     control_kernel: {
       name: "ASCK v1",
@@ -3028,7 +3078,7 @@ async function buildHealthPayload(): Promise<Json> {
       strict_errors: Deno.env.get("NOKEY_STRICT_ERRORS") === "1",
     },
     tool_plane: {
-      name: "ASCK-T v1",
+      name: "ASCK-T v2",
       builtin_tools: toolPlaneTotals().tools,
       instrumented_tools: toolPlaneTotals().instrumented,
       executions: toolPlaneTotals().calls,
@@ -3162,9 +3212,10 @@ honoApp.get("/v1/tools", async (c) => {
     }));
   return c.json({
     object: "list",
-    plane: "asck-t-v1",
+    plane: "asck-t-v2",
     enabled: toolPlaneEnabled(),
     agent: { max_rounds: maxToolRounds(), auto_tools: DEFAULT_AUTO_TOOLS },
+    session: { namespace: toolNamespace(c), scope_header: "x-nokey-session", storage: "deno-kv" },
     count: registry.length,
     totals: toolPlaneTotals(now),
     data: registry,
@@ -3198,13 +3249,18 @@ honoApp.post("/v1/tools/execute", async (c) => {
 
     await hydrateToolSkills().catch(logErr);
     const locals: Json = { tool_skills: Object.fromEntries([...TOOL_SKILLS.entries()]) as Json };
-    const timeoutMs = Math.round(clampNum(Number(body.timeout_ms) || 4000, 50, 30_000));
+    const timeoutMs = body.timeout_ms === undefined ? undefined : Math.round(clampNum(Number(body.timeout_ms) || 4000, 50, 120_000));
 
-    const results = await Promise.all(calls.map(async (call) => {
+    // Stateful calls run in order (write-then-read in one batch), pure ones in
+    // parallel. The scheduler lives in the kernel so both entry points agree.
+    let batchTail: Promise<unknown> = Promise.resolve();
+    const results = await Promise.all(calls.map((call) => {
+      const run = async () => {
       const span = root.child("tool", { name: call.name, id: call.id });
       const execution = await executeTool(call.name, call.arguments, {
         admin,
         locals,
+        caps: { kv, namespace: toolNamespace(c) },
         timeoutMs,
         now: Date.now(),
         event: (name, attrs) => span.event(name, traceAttrs(attrs ?? {})),
@@ -3227,6 +3283,11 @@ honoApp.post("/v1/tools/execute", async (c) => {
           ? { result: execution.result, strategy: execution.strategy, repairs: execution.repairs, truncated: execution.truncated, bytes: execution.bytes }
           : { error: execution.error, code: execution.code, suggestions: execution.suggestions ?? [], issues: execution.issues ?? [] }),
       };
+      };
+      if (!isStatefulTool(call.name)) return run();
+      const ordered = batchTail.then(run);
+      batchTail = ordered.catch(() => undefined);
+      return ordered;
     }));
 
     const ok = results.every((r) => r.ok);
@@ -3641,7 +3702,7 @@ honoApp.post("/v1/chat/completions", async (c) => {
             (res.toolCalls?.length ?? 0) > 0 && !master.signal.aborted;
           if (wantLoop) {
             const roundSpan = root.child("tool_round", { round: toolRound + 1, calls: res.toolCalls!.length, tuple: cand.tupleId });
-            const outcome = await executeOwnedToolCalls(res.toolCalls!, { span: roundSpan, signal: master.signal, clientNames: clientToolNames });
+            const outcome = await executeOwnedToolCalls(res.toolCalls!, { span: roundSpan, signal: master.signal, clientNames: clientToolNames, caps: { kv, namespace: toolNamespace(c) } });
             if (outcome.loop) {
               for (const e of outcome.executed) {
                 toolLog.push({
@@ -3831,7 +3892,7 @@ honoApp.post("/v1/chat/completions", async (c) => {
             }
 
             const roundSpan = root.child("tool_round", { round: toolRound + 1, calls: quiet.toolCalls?.length ?? 0, tuple: cand.tupleId });
-            const outcome = await executeOwnedToolCalls(quiet.toolCalls ?? [], { span: roundSpan, signal: master.signal, clientNames: clientToolNames });
+            const outcome = await executeOwnedToolCalls(quiet.toolCalls ?? [], { span: roundSpan, signal: master.signal, clientNames: clientToolNames, caps: { kv, namespace: toolNamespace(c) } });
             if (outcome.loop) {
               roundSpan.end("ok", {
                 executed: outcome.executed.length,
