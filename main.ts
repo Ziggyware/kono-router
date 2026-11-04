@@ -31,6 +31,7 @@ import {
   partitionToolCalls,
   registerTool,
   resolveAutoToolNames,
+  unregisterTool,
   skillSummary,
   toolPreamble,
   toolResultContent,
@@ -38,6 +39,8 @@ import {
   toToolSpecs,
   tupleToolCompetence,
   type ToolCaps,
+  type ToolContext,
+  type ToolSpec,
   type ToolExecution,
   type ToolFlavor,
   type ToolSkillRecord,
@@ -217,6 +220,167 @@ async function recordToolExecution(tool: string, exec: ToolExecution): Promise<v
   } catch (err) {
     console.error("[tools] skill update failed:", err);
   }
+}
+
+
+// ---------------------------------------------------------------------------
+// FORGED TOOLS — tools the router creates for itself at runtime.
+//
+// A forged tool is a ToolSpec whose `run` is compiled from a JavaScript
+// function body supplied at forge time — by an admin over HTTP, or by a
+// model through the forge_tool meta-tool inside an admin session.
+// Definitions persist in Deno KV and hydrate into the registry on a TTL,
+// so a tool forged once is callable everywhere the plane runs (the agent
+// loop, /v1/tools/execute, router_capabilities) with the same schema
+// validation, deadlines and skill telemetry as a built-in.
+//
+// Trust model: forging is admin-only, because forged code executes in the
+// isolate. The compiler shadows the ambient globals that matter (Deno,
+// process, globalThis, Function) inside the tool body and hands the
+// code a narrow `api` object ({ fetch, kv, namespace, signal, now,
+// deadlineMs, locals, event }). That blocks accidents, not adversaries —
+// treat forged code as operator code, because it is.
+// ---------------------------------------------------------------------------
+
+const FORGED_TOOL_PREFIX = "mesh_forged_tools_v1";
+const FORGED_TOOLS = new Map<string, ForgedToolDef>();
+let forgedHydratedAt = 0;
+let forgedRefresh: Promise<void> | null = null;
+const FORGED_TTL_MS = 30_000;
+const FORGED_CODE_MAX = 16_384;
+const FORGED_KINDS = new Set(["web", "files", "memory", "rag", "vector", "clipboard", "task", "compute", "data", "text", "time", "crypto", "mesh"]);
+
+interface ForgedToolDef {
+  name: string;
+  description: string;
+  parameters: Json;
+  kind: string;
+  code: string;
+  deterministic?: boolean;
+  admin?: boolean;
+  timeout_ms?: number;
+  created_at: number;
+  updated_at: number;
+}
+
+const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor as new (...params: string[]) => (...args: unknown[]) => Promise<unknown>;
+
+/** Compile a function body into a ToolSpec.run. The body receives `args`
+ *  (the schema-validated arguments object) and `api`; its return value is
+ *  the tool result. Throws on a syntax error, so an unparseable body can
+ *  never register. */
+function compileForgedRun(code: string): (args: Json, ctx: ToolContext) => Promise<unknown> {
+  // No "eval" parameter and no strict-mode prelude: `eval` is an illegal
+  // binding name in strict mode, and the AsyncFunction constructor would
+  // reject the whole body before a line of tool code runs.
+  const factory = new AsyncFunction(
+    "args", "api", "Deno", "process", "globalThis", "self", "window", "Function",
+    code,
+  );
+  return async (args: Json, ctx: ToolContext) => {
+    const api = {
+      now: ctx.now,
+      signal: ctx.signal,
+      deadlineMs: ctx.deadlineMs,
+      namespace: ctx.caps?.namespace ?? "shared",
+      kv: ctx.caps?.kv,
+      fetch: (input: string, init?: Record<string, unknown>) => (ctx.caps?.fetch ?? fetch)(input, init as RequestInit),
+      locals: ctx.locals,
+      event: ctx.event,
+    };
+    return await factory(args, api, undefined, undefined, undefined, undefined, undefined, undefined);
+  };
+}
+
+function validateForgedDef(input: Json): ForgedToolDef {
+  const name = normalizeToolName(String(input.name ?? ""));
+  if (!/^[a-z0-9_]{1,64}$/.test(name)) throw new Error(`invalid tool name: ${String(input.name ?? "").slice(0, 64)}`);
+  const clash = listTools().find((t) => t.name === name && !t.dynamic);
+  if (clash) throw new Error(`"${name}" is a built-in tool and cannot be overwritten`);
+  const description = String(input.description ?? "").trim();
+  if (!description) throw new Error("a description is required — it is how models decide to call the tool");
+  if (description.length > 1024) throw new Error("description exceeds 1024 chars");
+  const parameters = (typeof input.parameters === "object" && input.parameters !== null && !Array.isArray(input.parameters))
+    ? input.parameters as Json
+    : { type: "object", properties: {} };
+  const code = String(input.code ?? "");
+  if (!code.trim()) throw new Error("code (a JavaScript function body) is required");
+  if (code.length > FORGED_CODE_MAX) throw new Error(`code exceeds ${FORGED_CODE_MAX} chars`);
+  compileForgedRun(code); // syntax gate: a body that does not parse never registers
+  const now = Date.now();
+  return {
+    name,
+    description,
+    parameters,
+    kind: FORGED_KINDS.has(String(input.kind)) ? String(input.kind) : "compute",
+    code,
+    deterministic: input.deterministic === true,
+    admin: input.admin === true,
+    timeout_ms: input.timeout_ms === undefined ? undefined : Math.round(clampNum(Number(input.timeout_ms) || 4000, 100, 30_000)),
+    created_at: FORGED_TOOLS.get(name)?.created_at ?? now,
+    updated_at: now,
+  };
+}
+
+function registerForgedTool(def: ForgedToolDef): void {
+  FORGED_TOOLS.set(def.name, def);
+  registerTool({
+    name: def.name,
+    description: def.description,
+    parameters: def.parameters,
+    kind: def.kind as ToolSpec["kind"],
+    deterministic: def.deterministic,
+    admin: def.admin,
+    timeoutMs: def.timeout_ms,
+    dynamic: true,
+    run: compileForgedRun(def.code),
+  });
+}
+
+/** Validate, persist and register a forged tool (create or replace). */
+async function forgeTool(input: Json): Promise<ForgedToolDef> {
+  const def = validateForgedDef(input);
+  await kv.set([FORGED_TOOL_PREFIX, def.name], def);
+  registerForgedTool(def);
+  return def;
+}
+
+/** Remove a forged tool from the registry and KV. Built-ins are refused. */
+async function retireForgedTool(nameRaw: string): Promise<boolean> {
+  const name = normalizeToolName(nameRaw);
+  if (!FORGED_TOOLS.has(name)) return false;
+  FORGED_TOOLS.delete(name);
+  unregisterTool(name);
+  await kv.delete([FORGED_TOOL_PREFIX, name]);
+  return true;
+}
+
+async function refreshForgedTools(): Promise<void> {
+  const fresh = new Map<string, ForgedToolDef>();
+  for await (const entry of kv.list<ForgedToolDef>({ prefix: [FORGED_TOOL_PREFIX] })) {
+    const def = entry.value;
+    if (def && typeof def.name === "string" && typeof def.code === "string") fresh.set(def.name, def);
+  }
+  for (const name of [...FORGED_TOOLS.keys()]) {
+    if (!fresh.has(name)) { FORGED_TOOLS.delete(name); unregisterTool(name); }
+  }
+  for (const def of fresh.values()) {
+    const prev = FORGED_TOOLS.get(def.name);
+    if (!prev || prev.updated_at !== def.updated_at) {
+      try { registerForgedTool(def); } catch (e) { console.error("forged tool register:", e); }
+    }
+  }
+  forgedHydratedAt = Date.now();
+}
+
+function hydrateForgedTools(force = false): Promise<void> {
+  if (!force && forgedHydratedAt > 0 && Date.now() - forgedHydratedAt < FORGED_TTL_MS) return Promise.resolve();
+  if (!forgedRefresh) {
+    forgedRefresh = refreshForgedTools()
+      .catch((e) => console.error("forged tool refresh:", e))
+      .finally(() => { forgedRefresh = null; });
+  }
+  return forgedRefresh;
 }
 
 /** Learned telemetry for every registered tool, exposed on /v1/tools + /health. */
@@ -2690,9 +2854,59 @@ function registerMeshTools(): void {
       return { found: true, count: limit, traces: listTraces(limit) };
     },
   });
+
+  registerTool({
+    name: "forge_tool",
+    aliases: ["forge.tool", "create_tool", "make_tool", "define_tool"],
+    kind: "mesh",
+    admin: true,
+    description:
+      "ADMIN ONLY. Create a NEW router tool on the fly — or replace one forged earlier — from a JavaScript function body. The tool persists, joins the registry and the auto tool set immediately, and is executed by the plane with schema validation and deadlines like any built-in. The body receives `args` (the validated arguments) and `api` ({ fetch, kv, namespace, signal, now, locals }); its return value is the tool result. Ambient globals (Deno, process, globalThis, Function) are unavailable inside the body.",
+    parameters: {
+      type: "object",
+      properties: {
+        name: { type: "string", description: "Tool name: lowercase letters, digits, underscores." },
+        description: { type: "string", description: "What the tool does — models read this to decide when to call it." },
+        parameters: { type: "object", description: "JSON Schema for the arguments object." },
+        code: { type: "string", description: "JavaScript function body. Receives args and api; return the result." },
+        kind: { type: "string", enum: ["web", "files", "memory", "rag", "vector", "clipboard", "task", "compute", "data", "text", "time", "crypto", "mesh"] },
+        deterministic: { type: "boolean", default: false },
+        admin: { type: "boolean", default: false, description: "If true, the forged tool itself needs the admin secret to execute." },
+        timeout_ms: { type: "integer", minimum: 100, maximum: 30000 },
+      },
+      required: ["name", "description", "code"],
+      additionalProperties: false,
+    },
+    run: async (args) => {
+      const def = await forgeTool(args);
+      return { forged: def.name, kind: def.kind, admin: def.admin ?? false, updated_at: def.updated_at, tools_total: listTools().length, note: "callable from the next tool round onward, and in every later request" };
+    },
+  });
+
+  registerTool({
+    name: "retire_tool",
+    aliases: ["retire.tool", "delete_tool", "remove_tool"],
+    kind: "mesh",
+    admin: true,
+    description:
+      "ADMIN ONLY. Retire a tool previously created with forge_tool: removes it from the registry and deletes its persisted definition. Built-in tools cannot be retired.",
+    parameters: {
+      type: "object",
+      properties: { name: { type: "string" } },
+      required: ["name"],
+      additionalProperties: false,
+    },
+    run: async (args) => {
+      const name = String(args.name ?? "");
+      const gone = await retireForgedTool(name);
+      return gone ? { retired: normalizeToolName(name) } : { retired: null, error: `"${name.slice(0, 64)}" is not a forged tool` };
+    },
+  });
 }
 
+
 registerMeshTools();
+hydrateForgedTools(true).catch((e) => console.error("forged tool boot hydrate:", e));
 
 // ---------------------------------------------------------------------------
 // AGENT LOOP PLUMBING
@@ -3193,6 +3407,7 @@ const TOOL_FLAVORS = ["openai", "openai-strict", "anthropic", "gemini"] as const
 honoApp.get("/v1/tools", async (c) => {
   const now = Date.now();
   await hydrateToolSkills().catch((err) => console.error("tool skill hydrate:", err));
+  await hydrateForgedTools().catch((err) => console.error("forged tool hydrate:", err));
   const admin = isAdminContext(c);
   const flavorRaw = (c.req.query("flavor") ?? "openai").toLowerCase();
   const flavor = (TOOL_FLAVORS.includes(flavorRaw as typeof TOOL_FLAVORS[number]) ? flavorRaw : "openai") as ToolFlavor;
@@ -3207,6 +3422,7 @@ honoApp.get("/v1/tools", async (c) => {
       aliases: t.aliases ?? [],
       deterministic: t.deterministic ?? false,
       admin: t.admin ?? false,
+      dynamic: t.dynamic ?? false,
       ...(withSchemas ? { parameters: t.parameters } : {}),
       skill: skills[t.name] ?? null,
     }));
@@ -3248,6 +3464,7 @@ honoApp.post("/v1/tools/execute", async (c) => {
       });
 
     await hydrateToolSkills().catch(logErr);
+    await hydrateForgedTools().catch(logErr);
     const locals: Json = { tool_skills: Object.fromEntries([...TOOL_SKILLS.entries()]) as Json };
     const timeoutMs = body.timeout_ms === undefined ? undefined : Math.round(clampNum(Number(body.timeout_ms) || 4000, 50, 120_000));
 
@@ -3304,6 +3521,24 @@ honoApp.post("/v1/tools/execute", async (c) => {
     root.end("error", { error: errText(err).slice(0, 200) });
     return c.json({ object: "list", count: 0, ok: false, error: errText(err), results: [] }, 200, traceHeaders);
   }
+});
+
+
+honoApp.post("/v1/tools/forge", requireAdmin, async (c) => {
+  const body = await c.req.json().catch(() => ({} as Json)) as Json;
+  try {
+    const def = await forgeTool(body);
+    return c.json({ forged: def.name, kind: def.kind, description: def.description, parameters: def.parameters, admin: def.admin ?? false, dynamic: true, updated_at: def.updated_at, tools_total: listTools().length });
+  } catch (err) {
+    return c.json({ error: { message: errText(err) } }, 400);
+  }
+});
+
+honoApp.delete("/v1/tools/forge/:name", requireAdmin, async (c) => {
+  const gone = await retireForgedTool(c.req.param("name"));
+  return gone
+    ? c.json({ retired: normalizeToolName(c.req.param("name")) })
+    : c.json({ error: { message: "not a forged tool" } }, 404);
 });
 
 honoApp.post("/v1/probe", requireAdmin, async (c) => {
@@ -3553,8 +3788,15 @@ honoApp.post("/v1/chat/completions", async (c) => {
     const autoRequest = body.tools === "auto" || body.tools === true
       ? "auto"
       : body.nokey_tools ?? c.req.header("x-nokey-tools") ?? undefined;
+    if (toolPlaneEnabled()) await hydrateForgedTools().catch(logErr);
     const autoTools = toolPlaneEnabled() ? resolveAutoToolNames(autoRequest) : null;
     const declaredTools = autoTools ? mergeToolDeclarations(clientTools, { names: autoTools }) : clientTools;
+    // Admin sessions may forge tools on the fly: offer the forge on the wire.
+    // mergeToolDeclarations drops admin tools by design, so append directly.
+    if (autoTools && isAdminContext(c)) {
+      for (const name of ["forge_tool", "retire_tool"]) if (!autoTools.includes(name)) autoTools.push(name);
+      declaredTools.push(...(toToolSpecs({ names: ["forge_tool", "retire_tool"], includeAdmin: true }) as Json[]));
+    }
     const hasTools = declaredTools.length > 0;
     // Names the caller declared itself. A client tool that shadows a built-in
     // stays the client's, so the plane never hijacks the caller's own API.
@@ -3847,7 +4089,7 @@ honoApp.post("/v1/chat/completions", async (c) => {
             (res.toolCalls?.length ?? 0) > 0 && !master.signal.aborted;
           if (wantLoop) {
             const roundSpan = root.child("tool_round", { round: toolRound + 1, calls: res.toolCalls!.length, tuple: cand.tupleId });
-            const outcome = await executeOwnedToolCalls(res.toolCalls!, { span: roundSpan, signal: master.signal, clientNames: clientToolNames, caps: { kv, namespace: toolNamespace(c) } });
+            const outcome = await executeOwnedToolCalls(res.toolCalls!, { span: roundSpan, signal: master.signal, admin: isAdminContext(c), clientNames: clientToolNames, caps: { kv, namespace: toolNamespace(c) } });
             if (outcome.loop) {
               for (const e of outcome.executed) {
                 toolLog.push({
@@ -4037,7 +4279,7 @@ honoApp.post("/v1/chat/completions", async (c) => {
             }
 
             const roundSpan = root.child("tool_round", { round: toolRound + 1, calls: quiet.toolCalls?.length ?? 0, tuple: cand.tupleId });
-            const outcome = await executeOwnedToolCalls(quiet.toolCalls ?? [], { span: roundSpan, signal: master.signal, clientNames: clientToolNames, caps: { kv, namespace: toolNamespace(c) } });
+            const outcome = await executeOwnedToolCalls(quiet.toolCalls ?? [], { span: roundSpan, signal: master.signal, admin: isAdminContext(c), clientNames: clientToolNames, caps: { kv, namespace: toolNamespace(c) } });
             if (outcome.loop) {
               roundSpan.end("ok", {
                 executed: outcome.executed.length,

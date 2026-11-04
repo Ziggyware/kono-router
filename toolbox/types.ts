@@ -54,6 +54,8 @@ export interface ToolSpec {
   deterministic?: boolean;
   /** Requires the admin secret to execute over HTTP. */
   admin?: boolean;
+  /** Created at runtime by the forge (persisted in KV, not from source). */
+  dynamic?: boolean;
   timeoutMs?: number;
   run: (args: Json, ctx: ToolContext) => unknown;
 }

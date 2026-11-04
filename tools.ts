@@ -1868,13 +1868,20 @@ export const DEFAULT_AUTO_TOOLS = [
   "web_search",
 ];
 
+/** The default set, plus every forged tool: a tool created on the fly is
+ *  pointless if the next request cannot see it. */
+export function defaultAutoToolNames(): string[] {
+  const forged = listTools().filter((t) => t.dynamic && !t.admin).map((t) => t.name);
+  return [...new Set([...DEFAULT_AUTO_TOOLS, ...forged])];
+}
+
 export function resolveAutoToolNames(requested: unknown): string[] | null {
-  if (requested === true || requested === "auto" || requested === "*") return [...DEFAULT_AUTO_TOOLS];
+  if (requested === true || requested === "auto" || requested === "*") return defaultAutoToolNames();
   if (typeof requested === "string") {
     const parts = requested.split(/[,\s]+/).map((s) => s.trim()).filter(Boolean);
     if (parts.length === 0) return null;
     if (parts.length === 1 && ["auto", "*", "all", "true"].includes(parts[0].toLowerCase())) {
-      return parts[0].toLowerCase() === "all" ? listTools().filter((t) => !t.admin).map((t) => t.name) : [...DEFAULT_AUTO_TOOLS];
+      return parts[0].toLowerCase() === "all" ? listTools().filter((t) => !t.admin).map((t) => t.name) : defaultAutoToolNames();
     }
     const resolved: string[] = [];
     for (const part of parts) {
