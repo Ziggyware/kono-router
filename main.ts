@@ -2859,9 +2859,8 @@ function registerMeshTools(): void {
     name: "forge_tool",
     aliases: ["forge.tool", "create_tool", "make_tool", "define_tool"],
     kind: "mesh",
-    admin: true,
     description:
-      "ADMIN ONLY. Create a NEW router tool on the fly — or replace one forged earlier — from a JavaScript function body. The tool persists, joins the registry and the auto tool set immediately, and is executed by the plane with schema validation and deadlines like any built-in. The body receives `args` (the validated arguments) and `api` ({ fetch, kv, namespace, signal, now, locals }); its return value is the tool result. Ambient globals (Deno, process, globalThis, Function) are unavailable inside the body.",
+      "Create a NEW router tool on the fly — or replace one forged earlier — from a JavaScript function body. The tool persists, joins the registry and the auto tool set immediately, and is executed by the plane with schema validation and deadlines like any built-in. The body receives `args` (the validated arguments) and `api` ({ fetch, kv, namespace, signal, now, locals }); its return value is the tool result. Ambient globals (Deno, process, globalThis, Function) are unavailable inside the body.",
     parameters: {
       type: "object",
       properties: {
@@ -3791,11 +3790,12 @@ honoApp.post("/v1/chat/completions", async (c) => {
     if (toolPlaneEnabled()) await hydrateForgedTools().catch(logErr);
     const autoTools = toolPlaneEnabled() ? resolveAutoToolNames(autoRequest) : null;
     const declaredTools = autoTools ? mergeToolDeclarations(clientTools, { names: autoTools }) : clientTools;
-    // Admin sessions may forge tools on the fly: offer the forge on the wire.
-    // mergeToolDeclarations drops admin tools by design, so append directly.
+    // forge_tool rides the normal auto set; retire_tool stays admin-only,
+    // so admin sessions get it appended on the wire (the merge drops admin
+    // tools by design).
     if (autoTools && isAdminContext(c)) {
-      for (const name of ["forge_tool", "retire_tool"]) if (!autoTools.includes(name)) autoTools.push(name);
-      declaredTools.push(...(toToolSpecs({ names: ["forge_tool", "retire_tool"], includeAdmin: true }) as Json[]));
+      if (!autoTools.includes("retire_tool")) autoTools.push("retire_tool");
+      declaredTools.push(...(toToolSpecs({ names: ["retire_tool"], includeAdmin: true }) as Json[]));
     }
     const hasTools = declaredTools.length > 0;
     // Names the caller declared itself. A client tool that shadows a built-in
