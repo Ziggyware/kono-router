@@ -1018,11 +1018,17 @@
                 "schema": {
                   "type": "object",
                   "properties": {
-                    "ok": { "type": "boolean" },
-                    "room": { "type": "string" },
+                    "ok": {
+                      "type": "boolean"
+                    },
+                    "room": {
+                      "type": "string"
+                    },
                     "messages": {
                       "type": "array",
-                      "items": { "type": "object" }
+                      "items": {
+                        "type": "object"
+                      }
                     }
                   }
                 }
@@ -1044,13 +1050,25 @@
             "application/json": {
               "schema": {
                 "type": "object",
-                "required": ["content"],
+                "required": [
+                  "content"
+                ],
                 "properties": {
-                  "room": { "type": "string" },
-                  "user": { "type": "string" },
-                  "content": { "type": "string" },
-                  "avatar": { "type": "string" },
-                  "replyTo": { "type": "object" }
+                  "room": {
+                    "type": "string"
+                  },
+                  "user": {
+                    "type": "string"
+                  },
+                  "content": {
+                    "type": "string"
+                  },
+                  "avatar": {
+                    "type": "string"
+                  },
+                  "replyTo": {
+                    "type": "object"
+                  }
                 }
               }
             }
@@ -1064,8 +1082,12 @@
                 "schema": {
                   "type": "object",
                   "properties": {
-                    "ok": { "type": "boolean" },
-                    "message": { "type": "object" }
+                    "ok": {
+                      "type": "boolean"
+                    },
+                    "message": {
+                      "type": "object"
+                    }
                   }
                 }
               }
@@ -1113,6 +1135,127 @@
                 }
               }
             }
+          }
+        }
+      }
+    },
+    "/pricing": {
+      "get": {
+        "tags": [
+          "pages"
+        ],
+        "summary": "Pricing page: free tier terms and the $5/month unlimited plan",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/forge-docs": {
+      "get": {
+        "tags": [
+          "pages"
+        ],
+        "summary": "Forge-a-tool documentation: fields, params schema, code API surface",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/v1/tools/forge": {
+      "post": {
+        "tags": [
+          "tools"
+        ],
+        "summary": "Forge a new tool from a JS function body (admin)",
+        "security": [
+          {
+            "bearerAuth": [],
+            "adminSecret": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/v1/tools/forge/{name}": {
+      "delete": {
+        "tags": [
+          "tools"
+        ],
+        "summary": "Retire a forged tool (admin)",
+        "security": [
+          {
+            "bearerAuth": [],
+            "adminSecret": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/v1/feedback": {
+      "post": {
+        "tags": [
+          "learning"
+        ],
+        "summary": "Join a delayed reward (thumbs / regenerate / edit / abandon) to a chat decision by trace id",
+        "security": [
+          {
+            "bearerAuth": [],
+            "adminSecret": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/v1/learning": {
+      "get": {
+        "tags": [
+          "learning"
+        ],
+        "summary": "Learning report: per-class posteriors, arm shares, regret curve, calibration, off-policy estimates, lesson ledger (admin)",
+        "security": [
+          {
+            "bearerAuth": [],
+            "adminSecret": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/v1/learning/arms": {
+      "post": {
+        "tags": [
+          "learning"
+        ],
+        "summary": "Add or update a strategy arm without a deploy (admin)",
+        "security": [
+          {
+            "bearerAuth": [],
+            "adminSecret": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
           }
         }
       }
@@ -2226,9 +2369,21 @@
             "type": "object",
             "description": "Namespace used for every stateful tool (fs_*, memory_*, rag_*, clipboard, task)",
             "properties": {
-              "namespace": { "type": "string" },
-              "scope_header": { "type": "string", "examples": ["x-nokey-session"] },
-              "storage": { "type": "string", "examples": ["deno-kv"] }
+              "namespace": {
+                "type": "string"
+              },
+              "scope_header": {
+                "type": "string",
+                "examples": [
+                  "x-nokey-session"
+                ]
+              },
+              "storage": {
+                "type": "string",
+                "examples": [
+                  "deno-kv"
+                ]
+              }
             }
           },
           "agent": {

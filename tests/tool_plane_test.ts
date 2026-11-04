@@ -106,10 +106,19 @@ function answerCompletion(content: string): Response {
   });
 }
 
+// The suite authenticates with the key it configures: without a key these
+// requests ride the anonymous free tier (50/day per IP in shared KV) and the
+// edge rate bucket, which made the tail of this file fail with 429s once the
+// free tier shipped. Production behavior is unchanged; tests just present
+// the credential they already set in the environment.
+const AUTH: Record<string, string> = {
+  authorization: `Bearer ${Deno.env.get("ROUTER_API_KEY") ?? "testkey"}`,
+};
+
 function chatRequest(body: Record<string, unknown>, headers: Record<string, string> = {}): Request {
   return new Request("https://router.test/v1/chat/completions", {
     method: "POST",
-    headers: { "content-type": "application/json", ...headers },
+    headers: { "content-type": "application/json", ...AUTH, ...headers },
     body: JSON.stringify(body),
   });
 }
@@ -121,7 +130,7 @@ async function asJson(res: Response): Promise<any> {
 async function postJson(path: string, body: unknown, headers: Record<string, string> = {}): Promise<any> {
   const res = await app.fetch(new Request(`https://router.test${path}`, {
     method: "POST",
-    headers: { "content-type": "application/json", ...headers },
+    headers: { "content-type": "application/json", ...AUTH, ...headers },
     body: JSON.stringify(body),
   }));
   if (res.status !== 200) throw new Error(`${path} -> status ${res.status}`);
@@ -129,7 +138,7 @@ async function postJson(path: string, body: unknown, headers: Record<string, str
 }
 
 async function getJson(path: string, headers: Record<string, string> = {}): Promise<any> {
-  const res = await app.fetch(new Request(`https://router.test${path}`, { headers }));
+  const res = await app.fetch(new Request(`https://router.test${path}`, { headers: { ...AUTH, ...headers } }));
   if (res.status !== 200) throw new Error(`${path} -> status ${res.status}`);
   return await asJson(res);
 }
@@ -282,7 +291,7 @@ test("POST /v1/tools/execute runs built-ins and reports the repair ladder it use
   try {
     const res = await app.fetch(new Request("https://router.test/v1/tools/execute", {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: { "content-type": "application/json", ...AUTH },
       body: JSON.stringify({ name: "calculate", arguments: { expression: "2^10 + 1" } }),
     }));
     if (res.status !== 200) throw new Error(`status ${res.status}`);
@@ -370,7 +379,7 @@ test("POST /v1/tools/execute reports failures per call so a model can retry", as
       throw new Error(JSON.stringify(empty));
     }
     const unparsable = await app.fetch(new Request("https://router.test/v1/tools/execute", {
-      method: "POST", headers: { "content-type": "application/json" }, body: "{not json",
+      method: "POST", headers: { "content-type": "application/json", ...AUTH }, body: "{not json",
     }));
     if (unparsable.status !== 200) throw new Error(`unparsable body -> ${unparsable.status}`);
     const unparsableBody = await asJson(unparsable);
@@ -433,7 +442,7 @@ test("execution stays bounded: deadlines are enforced and oversized inputs are c
     // payload is refused at the edge rather than parsed.
     const oversized = await app.fetch(new Request("https://router.test/v1/tools/execute", {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: { "content-type": "application/json", ...AUTH },
       body: JSON.stringify({ name: "crypto", arguments: { data: "x".repeat(700_000) } }),
     }));
     if (oversized.status !== 413) throw new Error(`oversized body -> ${oversized.status}`);
@@ -844,11 +853,11 @@ test("NOKEY_TOOL_ROUNDS=0 turns the plane into pure OpenAI passthrough", async (
     // Out-of-range and unparsable values are clamped, never trusted.
     await withEnv("NOKEY_TOOL_ROUNDS", "9999", async () => {
       const listing = await getJson("/v1/tools");
-      if (listing.agent.max_rounds !== 8) throw new Error(`clamp high ${listing.agent.max_rounds}`);
+      if (listing.agent.max_rounds !== 32) throw new Error(`clamp high ${listing.agent.max_rounds}`);
     });
     await withEnv("NOKEY_TOOL_ROUNDS", "not-a-number", async () => {
       const listing = await getJson("/v1/tools");
-      if (listing.agent.max_rounds !== 3) throw new Error(`default ${listing.agent.max_rounds}`);
+      if (listing.agent.max_rounds !== 8) throw new Error(`default ${listing.agent.max_rounds}`);
     });
   } finally {
     restoreMock();
@@ -1024,7 +1033,7 @@ test("GET /health publishes the tool plane and a tool-ranked best-of list", asyn
     const data = await getJson("/health");
     if (data.tool_plane?.name !== "ASCK-T v2") throw new Error(`tool_plane ${JSON.stringify(data.tool_plane)}`);
     if (!(data.tool_plane.builtin_tools >= 19)) throw new Error(`builtin_tools ${data.tool_plane.builtin_tools}`);
-    if (data.tool_plane.agent_rounds !== 3) throw new Error(`agent_rounds ${data.tool_plane.agent_rounds}`);
+    if (data.tool_plane.agent_rounds !== 8) throw new Error(`agent_rounds ${data.tool_plane.agent_rounds}`);
     if (data.tool_plane.auto_tools < 5) throw new Error(`auto_tools ${data.tool_plane.auto_tools}`);
     if (typeof data.tool_plane.learning !== "string") throw new Error("learning not described");
     if (!Array.isArray(data.current_best_tools)) throw new Error("missing current_best_tools");

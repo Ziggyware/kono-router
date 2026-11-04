@@ -17,6 +17,7 @@ import {
 } from "./math.ts";
 import {
   DEFAULT_AUTO_TOOLS,
+  defaultAutoToolNames,
   emptyToolSkill,
   executeTool,
   executeToolCalls,
@@ -46,6 +47,44 @@ import {
   type ToolSkillRecord,
   type ToolSkillSummary,
 } from "./tools.ts";
+import {
+  armsForClass,
+  type BanditCandidate,
+  betaMean,
+  type BetaCell,
+  calibrationBuckets,
+  chooseThompson,
+  classifyTask,
+  type ComputeDecision,
+  type ComputeMode,
+  type DecisionRecord,
+  correctionFor,
+  decideCompute,
+  DEFAULT_STRATEGY_ARMS,
+  effectivePosterior,
+  emptyCell,
+  estimateShrinkageKappa,
+  evaluateArmPolicies,
+  failureSignature,
+  fitRegretExponent,
+  gradeReward,
+  type GradedReward,
+  type Lesson,
+  observeCell,
+  posteriorLowerBound,
+  PROMPT_VARIANTS,
+  pruneCells,
+  rankLessons,
+  type RewardSignal,
+  regretCurve,
+  rewardPerExtraToken,
+  shouldPruneLesson,
+  type StrategyArm,
+  type TaskClass,
+  type TaskContext,
+  thompsonPropensity,
+} from "./learning.ts";
+import { evaluate as evaluateCalc } from "./toolbox/calc.ts";
 
 // ============================================================================
 // 1. DENO KV + L1 ISOLATE CACHE + CAS ATOMIC STATE ENGINE
@@ -222,6 +261,402 @@ async function recordToolExecution(tool: string, exec: ToolExecution): Promise<v
   }
 }
 
+
+
+// ---------------------------------------------------------------------------
+// ASCK-L — THE LEARNING LOOP. Extends the ASCK posteriors above: every
+// router choice (tuple, strategy arm, compute budget, injected lesson) is
+// scored by a graded reward with provenance, and the scores live in
+// contextual Beta cells in KV, shrunk toward the tuple's global posterior
+// by empirical-Bayes pseudo-counts (learning.ts). Learning is pooled
+// globally by default; a tenant's own cells only take over once that
+// tenant has >= 30 pulls of evidence in the cell. No raw user content is
+// ever stored — only classes, signatures, rewards and ids.
+// ---------------------------------------------------------------------------
+
+const LEARN_CELL_PREFIX = "mesh_learning_cells_v1";
+const LEARN_ARM_CELL_PREFIX = "mesh_learning_arm_cells_v1";
+const LEARN_ARM_DEF_PREFIX = "mesh_learning_arms_v1";
+const LEARN_DECISION_PREFIX = "mesh_learning_decisions_v1";
+const LESSON_PREFIX = "mesh_lessons_v1";
+const DECISION_TTL_MS = 7 * 86_400_000;
+const FEEDBACK_TTL_MS = 24 * 3_600_000;
+const TENANT_EVIDENCE_MIN = 30;
+const MAX_LEARN_CELLS = 4000;
+
+interface LearningCellRecord extends BetaCell {
+  scope: string;
+  tuple_id: string;
+  task_class: TaskClass;
+}
+interface ArmCellRecord extends BetaCell {
+  arm_id: string;
+  task_class: TaskClass;
+}
+interface StoredDecision extends Omit<DecisionRecord, "reward"> {
+  reward: number | null;
+  armPropensity: number;
+  tuplePropensity: number;
+  tenant: string;
+  feedbackApplied?: boolean;
+}
+
+const LEARNING_CELLS = new Map<string, LearningCellRecord>();
+const ARM_CELLS = new Map<string, ArmCellRecord>();
+const ARM_DEFS = new Map<string, StrategyArm>();
+const LESSONS = new Map<string, Lesson>();
+let learnHydratedAt = 0;
+let learnHydratedOnce = false;
+let learnRefresh: Promise<void> | null = null;
+const LEARN_TTL_MS = 30_000;
+
+const learnCellKey = (scope: string, tuple: string, cls: TaskClass) => `${scope}|${tuple}|${cls}`;
+const armCellKey = (arm: string, cls: TaskClass) => `${arm}|${cls}`;
+
+async function refreshLearning(force: boolean): Promise<void> {
+  const cells = new Map<string, LearningCellRecord>();
+  for await (const e of kv.list<LearningCellRecord>({ prefix: [LEARN_CELL_PREFIX] })) {
+    if (e.value?.tuple_id) cells.set(learnCellKey(e.value.scope, e.value.tuple_id, e.value.task_class), e.value);
+  }
+  const armCells = new Map<string, ArmCellRecord>();
+  for await (const e of kv.list<ArmCellRecord>({ prefix: [LEARN_ARM_CELL_PREFIX] })) {
+    if (e.value?.arm_id) armCells.set(armCellKey(e.value.arm_id, e.value.task_class), e.value);
+  }
+  const defs = new Map<string, StrategyArm>(DEFAULT_STRATEGY_ARMS.map((a) => [a.id, a]));
+  for await (const e of kv.list<StrategyArm>({ prefix: [LEARN_ARM_DEF_PREFIX] })) {
+    if (e.value?.id) defs.set(e.value.id, e.value);
+  }
+  const lessons = new Map<string, Lesson>();
+  for await (const e of kv.list<Lesson>({ prefix: [LESSON_PREFIX] })) {
+    if (e.value?.id) lessons.set(e.value.id, e.value);
+  }
+  if (cells.size > 0 || force) {
+    LEARNING_CELLS.clear();
+    for (const [k, v] of cells) LEARNING_CELLS.set(k, v);
+  }
+  if (armCells.size > 0 || force) {
+    ARM_CELLS.clear();
+    for (const [k, v] of armCells) ARM_CELLS.set(k, v);
+  }
+  ARM_DEFS.clear();
+  for (const [k, v] of defs) ARM_DEFS.set(k, v);
+  if (lessons.size > 0 || force) {
+    LESSONS.clear();
+    for (const [k, v] of lessons) LESSONS.set(k, v);
+  }
+  learnHydratedAt = Date.now();
+  learnHydratedOnce = true;
+}
+
+function hydrateLearning(force = false): Promise<void> {
+  const refresh = () => (learnRefresh ??= refreshLearning(force).finally(() => (learnRefresh = null)));
+  if (force || !learnHydratedOnce) return refresh();
+  if (Date.now() - learnHydratedAt >= LEARN_TTL_MS) refresh().catch((e) => console.error("learning refresh:", e));
+  return Promise.resolve();
+}
+
+async function loadStrategyArms(): Promise<StrategyArm[]> {
+  await hydrateLearning();
+  return [...ARM_DEFS.values()];
+}
+
+/** Empirical-Bayes strength, estimated from the pooled cells themselves. */
+let kappaCache = { at: 0, value: 8 };
+function learningKappa(): number {
+  const now = Date.now();
+  if (now - kappaCache.at < LEARN_TTL_MS) return kappaCache.value;
+  const samples = [...LEARNING_CELLS.values()]
+    .filter((c) => c.scope === "global")
+    .map((c) => ({ successes: c.rewardSum, trials: c.pulls }));
+  kappaCache = { at: now, value: estimateShrinkageKappa(samples, 8) };
+  return kappaCache.value;
+}
+
+function tupleGlobalPosterior(r: MeshModelRecord, now: number): { alpha: number; beta: number } {
+  return discountedPosterior(
+    Number(r.alpha_success || 2.0),
+    Number(r.beta_failure || 1.0),
+    r.last_success_at ?? r.last_probed ?? now,
+    now,
+  );
+}
+
+/** Which scope reads for this tenant: its own cells only with real evidence. */
+function scopeFor(tenant: string, tuple: string, cls: TaskClass): string {
+  if (tenant && tenant !== "global") {
+    const own = LEARNING_CELLS.get(learnCellKey(tenant, tuple, cls));
+    if (own && own.pulls >= TENANT_EVIDENCE_MIN) return tenant;
+  }
+  return "global";
+}
+
+function contextualPosterior(
+  r: MeshModelRecord,
+  cls: TaskClass,
+  tenant: string,
+  now: number,
+): { alpha: number; beta: number; mean: number; pulls: number; scope: string } {
+  const scope = scopeFor(tenant, r.tuple_id, cls);
+  const cell = LEARNING_CELLS.get(learnCellKey(scope, r.tuple_id, cls)) ?? emptyCell();
+  const eff = effectivePosterior(cell, tupleGlobalPosterior(r, now), learningKappa());
+  return { ...eff, mean: betaMean(eff.alpha, eff.beta), pulls: cell.pulls, scope };
+}
+
+function armGlobalPosterior(armId: string): { alpha: number; beta: number } {
+  let s = 0;
+  let f = 0;
+  for (const c of ARM_CELLS.values()) {
+    if (c.arm_id !== armId) continue;
+    s += Math.max(0, c.alpha - 1);
+    f += Math.max(0, c.beta - 1);
+  }
+  return { alpha: 1 + s, beta: 1 + f };
+}
+
+/** CAS write for learning records (same discipline as the tool skills). */
+async function casLearn<T>(key: Deno.KvKey, seed: () => T, mutator: (cur: T) => T): Promise<T | null> {
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const entry = await kv.get<T>(key);
+    const updated = mutator(entry.value ?? seed());
+    const res = await kv.atomic().check(entry).set(key, updated).commit();
+    if (res.ok) return updated;
+    await new Promise((r) => setTimeout(r, 10 * (attempt + 1) + Math.random() * 10));
+  }
+  return null;
+}
+
+async function updateLearnCell(scope: string, tuple: string, cls: TaskClass, reward: number, now: number): Promise<void> {
+  const k = learnCellKey(scope, tuple, cls);
+  const cur = LEARNING_CELLS.get(k) ?? { ...emptyCell(), scope, tuple_id: tuple, task_class: cls };
+  LEARNING_CELLS.set(k, { ...observeCell(cur, reward, now), scope, tuple_id: tuple, task_class: cls });
+  const saved = await casLearn<LearningCellRecord>(
+    [LEARN_CELL_PREFIX, scope, tuple, cls],
+    () => ({ ...emptyCell(), scope, tuple_id: tuple, task_class: cls }),
+    (c) => ({ ...observeCell(c, reward, now), scope, tuple_id: tuple, task_class: cls }),
+  );
+  if (saved) LEARNING_CELLS.set(k, saved);
+}
+
+async function updateArmCell(armId: string, cls: TaskClass, reward: number, now: number): Promise<void> {
+  const k = armCellKey(armId, cls);
+  const cur = ARM_CELLS.get(k) ?? { ...emptyCell(), arm_id: armId, task_class: cls };
+  ARM_CELLS.set(k, { ...observeCell(cur, reward, now), arm_id: armId, task_class: cls });
+  const saved = await casLearn<ArmCellRecord>(
+    [LEARN_ARM_CELL_PREFIX, armId, cls],
+    () => ({ ...emptyCell(), arm_id: armId, task_class: cls }),
+    (c) => ({ ...observeCell(c, reward, now), arm_id: armId, task_class: cls }),
+  );
+  if (saved) ARM_CELLS.set(k, saved);
+}
+
+async function updateLessonEfficacy(lesson: Lesson, reward: number, now: number): Promise<void> {
+  const next = { ...observeCell(lesson, reward, now), id: lesson.id, taskClass: lesson.taskClass, failureSignature: lesson.failureSignature, correction: lesson.correction, createdAt: lesson.createdAt, pruned: lesson.pruned };
+  if (shouldPruneLesson(next)) next.pruned = true;
+  LESSONS.set(lesson.id, next);
+  await kv.set([LESSON_PREFIX, lesson.id], next).catch(logErr);
+}
+
+function lessonIdFor(cls: TaskClass, signature: string): string {
+  let h = 0x811c9dc5;
+  const s = `${cls}|${signature}`;
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 0x01000193);
+  }
+  return `lesson_${(h >>> 0).toString(16)}`;
+}
+
+/** A verified failure becomes a structured lesson: ledger entry for
+ *  efficacy tracking + a memory_write copy through the existing plane. */
+async function writeLesson(cls: TaskClass, signature: string): Promise<void> {
+  const id = lessonIdFor(cls, signature);
+  if (LESSONS.has(id)) return;
+  const lesson: Lesson = {
+    ...emptyCell(),
+    id,
+    taskClass: cls,
+    failureSignature: signature,
+    correction: correctionFor(signature),
+    createdAt: Date.now(),
+    pruned: false,
+  };
+  LESSONS.set(id, lesson);
+  await kv.set([LESSON_PREFIX, id], lesson).catch(logErr);
+  try {
+    await executeTool("memory_write", {
+      text: `Router lesson [${cls}] ${signature}: ${lesson.correction}`,
+      tags: ["nokey-lesson", cls, signature],
+      kind: "insight",
+      importance: 0.7,
+      source: "nokey-router-learning",
+    }, { caps: { kv, namespace: "router_lessons" }, admin: true });
+  } catch (e) {
+    logErr(e);
+  }
+}
+
+/** Bounded KV growth: cap the contextual cells, evicting the stalest. */
+async function compactLearningCells(): Promise<void> {
+  if (LEARNING_CELLS.size <= MAX_LEARN_CELLS) return;
+  const all = [...LEARNING_CELLS.values()];
+  const kept = new Set(pruneCells(all, MAX_LEARN_CELLS, Date.now()).map((c) => learnCellKey(c.scope, c.tuple_id, c.task_class)));
+  for (const c of all) {
+    const k = learnCellKey(c.scope, c.tuple_id, c.task_class);
+    if (!kept.has(k)) {
+      LEARNING_CELLS.delete(k);
+      await kv.delete([LEARN_CELL_PREFIX, c.scope, c.tuple_id, c.task_class]).catch(() => {});
+    }
+  }
+}
+
+interface LearnCtx {
+  traceId: string;
+  taskCtx: TaskContext;
+  arm: StrategyArm;
+  armPropensity: number;
+  tenant: string;
+  lessons: Lesson[];
+  hasVerifier: boolean;
+  planeActive: boolean;
+  compute: ComputeDecision;
+}
+
+interface PendingDecision {
+  traceId: string;
+  ts: number;
+  taskClass: TaskClass;
+  tupleId: string;
+  armId: string;
+  tenant: string;
+  armPropensity: number;
+  tuplePropensity: number;
+  tokens: number;
+  extraTokens: number;
+  expectedReward: number;
+  computeMode: ComputeMode;
+  lessonIds: string[];
+}
+
+/** Fold one graded reward into every posterior the decision touched. */
+async function recordLearningReward(d: PendingDecision, graded: GradedReward): Promise<void> {
+  const now = Date.now();
+  await updateLearnCell("global", d.tupleId, d.taskClass, graded.reward, now).catch(logErr);
+  if (d.tenant && d.tenant !== "global") {
+    await updateLearnCell(d.tenant, d.tupleId, d.taskClass, graded.reward, now).catch(logErr);
+  }
+  await updateArmCell(d.armId, d.taskClass, graded.reward, now).catch(logErr);
+  for (const id of d.lessonIds) {
+    const lesson = LESSONS.get(id);
+    if (lesson) await updateLessonEfficacy(lesson, graded.reward, now).catch(logErr);
+  }
+  compactLearningCells().catch(logErr);
+}
+
+async function saveDecision(d: PendingDecision, reward: number | null): Promise<void> {
+  const rec: StoredDecision = {
+    traceId: d.traceId,
+    ts: d.ts,
+    taskClass: d.taskClass,
+    action: d.armId,
+    tupleId: d.tupleId,
+    propensity: d.armPropensity,
+    armPropensity: d.armPropensity,
+    tuplePropensity: d.tuplePropensity,
+    tokens: d.tokens,
+    extraTokens: d.extraTokens,
+    expectedReward: d.expectedReward,
+    computeMode: d.computeMode,
+    lessonIds: d.lessonIds,
+    tenant: d.tenant,
+    reward,
+  };
+  await kv.set([LEARN_DECISION_PREFIX, d.traceId], rec, { expireIn: DECISION_TTL_MS }).catch(logErr);
+}
+
+/** Grade a finished decision and persist everything the loop learns from. */
+async function finalizeLearning(args: {
+  ctx: LearnCtx;
+  cand: ScoredCandidate;
+  ranked: ScoredCandidate[];
+  signals: RewardSignal[];
+  tokens: number;
+  extraTokens: number;
+  now: number;
+}): Promise<void> {
+  const { ctx, cand } = args;
+  const top = args.ranked.slice(0, 8);
+  if (!top.some((c) => c.tupleId === cand.tupleId)) top.push(cand);
+  const cands: BanditCandidate[] = top.map((c) => {
+    const rec = L1_CACHE.get(c.tupleId);
+    const post = rec
+      ? contextualPosterior(rec, ctx.taskCtx.taskClass, ctx.tenant, args.now)
+      : { alpha: 2, beta: 1, pulls: 0 };
+    return { id: c.tupleId, alpha: post.alpha, beta: post.beta, pulls: post.pulls };
+  });
+  const winner = cands.find((c) => c.id === cand.tupleId) ?? cands[0];
+  const tuplePropensity = thompsonPropensity(cands, cand.tupleId, Math.random, 120);
+  const d: PendingDecision = {
+    traceId: ctx.traceId,
+    ts: args.now,
+    taskClass: ctx.taskCtx.taskClass,
+    tupleId: cand.tupleId,
+    armId: ctx.arm.id,
+    tenant: ctx.tenant,
+    armPropensity: ctx.armPropensity,
+    tuplePropensity,
+    tokens: args.tokens,
+    extraTokens: args.extraTokens,
+    expectedReward: winner ? Number(betaMean(winner.alpha, winner.beta).toFixed(4)) : 0.5,
+    computeMode: ctx.compute.mode,
+    lessonIds: ctx.lessons.map((l) => l.id),
+  };
+  if (!d.traceId) return;
+  const graded = gradeReward(args.signals, { tupleId: cand.tupleId, armId: ctx.arm.id });
+  await saveDecision(d, graded?.reward ?? null);
+  if (graded) await recordLearningReward(d, graded);
+}
+
+/** Arithmetic verifier: the deterministic calculate evaluator, independent
+ *  of whatever model produced the answer. */
+function verifyMathAnswer(userText: string, answer: string): { pass: boolean; expected: number } | null {
+  const m = userText.replace(/,/g, "").match(/\d+(?:\.\d+)?(?:\s*[-+*/^%()]\s*\d+(?:\.\d+)?)+/);
+  if (!m) return null;
+  const expr = m[0].trim();
+  if (expr.length > 120) return null;
+  let expected: number;
+  try {
+    expected = evaluateCalc(expr);
+  } catch {
+    return null;
+  }
+  if (!Number.isFinite(expected)) return null;
+  const nums = (answer.match(/-?\d+(?:\.\d+)?/g) ?? []).map(Number);
+  const pass = nums.some((n) => Math.abs(n - expected) <= Math.max(1e-6, Math.abs(expected) * 1e-6));
+  return { pass, expected };
+}
+
+/** JSON verifier: parse + JSON-schema validation via the tool plane's own
+ *  validator — again, code that did not generate the answer. */
+function verifyJsonAnswer(content: string, responseFormat: unknown): { pass: boolean; signature: string } | null {
+  let text = content.trim();
+  if (!text) return null;
+  const fence = text.match(/```(?:json)?\s*([\s\S]*?)```/);
+  if (fence) text = fence[1].trim();
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    return { pass: false, signature: "parse" };
+  }
+  const rf = (responseFormat ?? {}) as Json;
+  const holder = (rf.json_schema ?? {}) as Json;
+  const schema = holder.schema ?? (rf.type === "json_schema" ? rf.schema : undefined);
+  if (schema !== undefined) {
+    const v = parseToolArguments(parsed, schema, { coerce: false });
+    return { pass: v.ok, signature: v.ok ? "" : "invalid" };
+  }
+  return { pass: true, signature: "" };
+}
 
 // ---------------------------------------------------------------------------
 // FORGED TOOLS — tools the router creates for itself at runtime.
@@ -1825,6 +2260,9 @@ export interface ScoredCandidate {
    *  0 while unproven — no evidence is not evidence of incompetence. */
   toolCompetence: number;
   toolPulls: number;
+  /** ASCK-L contextual posterior mean for this request's task class. */
+  learningMean?: number;
+  learningPulls?: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -1873,6 +2311,9 @@ function breakerProviderId(tupleId: string): string {
 interface RankOptions {
   includeCoolingDown?: boolean;
   verifiedOnly?: boolean;
+  /** ASCK-L: rank with the contextual (tuple, task class) posterior. */
+  taskClass?: TaskClass;
+  tenant?: string;
   /** Exhaustive mode: ignore breaker, tuple cooldown, vision and IQ gates. */
   unrestricted?: boolean;
   /** Tool-bearing request: fold each tuple's learned tool competence into the
@@ -1893,6 +2334,7 @@ function scoreRecord(
   totalPulls: number,
   now: number,
   toolAware = false,
+  learning?: { taskClass: TaskClass; tenant: string },
 ): ScoredCandidate {
   const iqPrior = Number(r.iq_prior);
   // Rank-time trust clamp: a tuple that has never completed a request cannot
@@ -1940,8 +2382,21 @@ function scoreRecord(
   // Compounding tool intelligence: a Thompson draw over this tuple's own
   // tool-call posterior (0 with no evidence, so exploration still wins there).
   const toolBonus = toolAware ? toolRoutingBonus(r, { deterministic, now }) : 0;
+  // ASCK-L: the contextual (tuple, task class) posterior, shrunk toward this
+  // tuple's global posterior — the router learns which tuple is best *for
+  // this kind of task*, not just which tuple answers at all.
+  let learningBonus = 0;
+  let learningMean: number | undefined;
+  let learningPulls: number | undefined;
+  if (learning) {
+    const ctxPost = contextualPosterior(r, learning.taskClass, learning.tenant, now);
+    const draw = deterministic ? posteriorLowerBound(ctxPost.alpha, ctxPost.beta) : sampleBeta(ctxPost.alpha, ctxPost.beta);
+    learningBonus = (draw - 0.5) * 0.10;
+    learningMean = Number(ctxPost.mean.toFixed(4));
+    learningPulls = ctxPost.pulls;
+  }
   const smartScore = Number(
-    (iqEffective + codeBonus + reasoningBonus + thompsonBonus + toolBonus + exploration + plackettLuce - latencyPenalty)
+    (iqEffective + codeBonus + reasoningBonus + thompsonBonus + toolBonus + learningBonus + exploration + plackettLuce - latencyPenalty)
       .toFixed(4),
   );
 
@@ -1963,6 +2418,7 @@ function scoreRecord(
     smartScore,
     toolCompetence: toolAware || (r.tool_pulls ?? 0) > 0 ? tupleToolCompetence(r, now) : 0,
     toolPulls: r.tool_pulls ?? 0,
+    ...(learningMean !== undefined ? { learningMean, learningPulls } : {}),
   };
 }
 
@@ -1991,6 +2447,8 @@ async function getRankedCandidates(
     }
   }
   const totalPulls = totalCatalogPulls(catalog);
+  if (opts.taskClass) await hydrateLearning().catch((e) => console.error("learning hydrate:", e));
+  const learning = opts.taskClass ? { taskClass: opts.taskClass, tenant: opts.tenant ?? "global" } : undefined;
 
   const candidates: ScoredCandidate[] = [];
   for (const r of catalog.values()) {
@@ -1998,7 +2456,7 @@ async function getRankedCandidates(
     if (!opts.includeCoolingDown && !opts.unrestricted && r.cooldown_until > now) continue;
     if (opts.verifiedOnly && !opts.unrestricted && r.success_count <= 0) continue;
     if (requireVision && !opts.unrestricted && !r.supports_vision) continue;
-    candidates.push(scoreRecord(r, mode, deterministic, totalPulls, now, opts.toolAware ?? false));
+    candidates.push(scoreRecord(r, mode, deterministic, totalPulls, now, opts.toolAware ?? false, learning));
   }
 
   if (mode === "fast" && !opts.unrestricted && !opts.toolAware) {
@@ -2830,7 +3288,7 @@ function registerMeshTools(): void {
             ...(record ? { skill: skillSummary(record, ctx.now, true) } : {}),
           };
         });
-      const out: Json = { count: tools.length, kinds: [...new Set(tools.map((t) => t.kind))], auto_tools: DEFAULT_AUTO_TOOLS, tools };
+      const out: Json = { count: tools.length, kinds: [...new Set(tools.map((t) => t.kind))], auto_tools: defaultAutoToolNames(), tools };
       if (typeof args.flavor === "string") out[args.flavor.replace("-", "_")] = toToolSpecs({ flavor: args.flavor as ToolFlavor });
       return out;
     },
@@ -2863,6 +3321,7 @@ function registerMeshTools(): void {
     name: "forge_tool",
     aliases: ["forge.tool", "create_tool", "make_tool", "define_tool"],
     kind: "mesh",
+    dynamic: true,
     description:
       "Create a NEW router tool on the fly — or replace one forged earlier — from a JavaScript function body. The tool persists, joins the registry and the auto tool set immediately, and is executed by the plane with schema validation and deadlines like any built-in. The body receives `args` (the validated arguments) and `api` ({ fetch, kv, namespace, signal, now, locals }); its return value is the tool result. Ambient globals (Deno, process, globalThis, Function) are unavailable inside the body.",
     parameters: {
@@ -3271,6 +3730,217 @@ honoApp.get("/v1/traces/:id", requireAdmin, (c) => {
   return t ? c.json(t) : c.json({ error: { message: "Trace not in this isolate's ring" } }, 404);
 });
 
+// ---------------------------------------------------------------------------
+// ASCK-L — delayed rewards and the learning report.
+// POST /v1/feedback joins an explicit or implicit grade to the decision
+// that produced an answer, through its trace id, inside a TTL window.
+// GET /v1/learning (admin) exposes what the loop has actually learned:
+// per-class posteriors, arm shares, the regret curve, calibration, the
+// off-policy estimates and the lesson ledger — as data, not adjectives.
+// ---------------------------------------------------------------------------
+
+const FEEDBACK_VALUES: Record<string, { value: number; weight: number; kind: string }> = {
+  thumbs_up: { value: 1, weight: 1.5, kind: "feedback" },
+  thumbs_down: { value: 0, weight: 1.5, kind: "feedback" },
+  regenerate: { value: 0.15, weight: 0.6, kind: "implicit" },
+  edit: { value: 0.25, weight: 0.6, kind: "implicit" },
+  abandon: { value: 0.1, weight: 0.5, kind: "implicit" },
+};
+
+honoApp.post("/v1/feedback", async (c) => {
+  const body = await c.req.json().catch(() => ({} as Json)) as Json;
+  const traceId = typeof body.trace_id === "string" ? body.trace_id : "";
+  const signalName = typeof body.signal === "string" ? body.signal : "";
+  const spec = FEEDBACK_VALUES[signalName];
+  if (!traceId || !spec) {
+    return c.json({ error: { message: "expected { trace_id, signal: thumbs_up|thumbs_down|regenerate|edit|abandon }" } }, 400);
+  }
+  const entry = await kv.get<StoredDecision>([LEARN_DECISION_PREFIX, traceId]);
+  const d = entry.value;
+  if (!d) return c.json({ error: { message: "no decision recorded for that trace id" } }, 404);
+  if (Date.now() - d.ts > FEEDBACK_TTL_MS) {
+    return c.json({ applied: false, reason: "feedback window expired", trace_id: traceId });
+  }
+  if (d.feedbackApplied) {
+    return c.json({ applied: false, reason: "feedback already applied", trace_id: traceId });
+  }
+  // The grade's source is fixed server-side ("user"): a caller cannot dress
+  // a self-grade up as feedback, and the arm under test can never be the
+  // source of its own reward.
+  const graded = gradeReward(
+    [{ kind: spec.kind, value: spec.value, weight: spec.weight, source: "user" }],
+    { tupleId: d.tupleId, armId: d.action },
+  );
+  if (!graded) return c.json({ applied: false, reason: "signal rejected", trace_id: traceId });
+  const pending: PendingDecision = {
+    traceId: d.traceId,
+    ts: d.ts,
+    taskClass: d.taskClass,
+    tupleId: d.tupleId,
+    armId: d.action,
+    tenant: d.tenant,
+    armPropensity: d.armPropensity,
+    tuplePropensity: d.tuplePropensity,
+    tokens: d.tokens ?? 0,
+    extraTokens: d.extraTokens ?? 0,
+    expectedReward: d.expectedReward ?? 0.5,
+    computeMode: d.computeMode,
+    lessonIds: d.lessonIds,
+  };
+  await recordLearningReward(pending, graded);
+  if (signalName === "thumbs_down") {
+    writeLesson(d.taskClass, failureSignature("feedback", "thumbs_down")).catch(logErr);
+  }
+  await kv.set([LEARN_DECISION_PREFIX, traceId], { ...d, reward: graded.reward, feedbackApplied: true }, { expireIn: DECISION_TTL_MS }).catch(logErr);
+  return c.json({ applied: true, trace_id: traceId, reward: graded.reward, task_class: d.taskClass, tuple: d.tupleId, arm: d.action });
+});
+
+honoApp.get("/v1/learning", requireAdmin, async (c) => {
+  await hydrateLearning(true).catch(logErr);
+  await hydrateL1Cache(false).catch(() => {});
+  const now = Date.now();
+  const kappa = learningKappa();
+
+  const decisions: StoredDecision[] = [];
+  for await (const e of kv.list<StoredDecision>({ prefix: [LEARN_DECISION_PREFIX] })) {
+    if (e.value?.traceId) decisions.push(e.value);
+  }
+  decisions.sort((a, b) => a.ts - b.ts);
+  const rewarded = decisions.filter((d) => d.reward !== null && d.reward !== undefined);
+  const asRecords: DecisionRecord[] = rewarded.map((d) => ({
+    traceId: d.traceId,
+    ts: d.ts,
+    taskClass: d.taskClass,
+    action: d.action,
+    tupleId: d.tupleId,
+    propensity: d.propensity,
+    reward: d.reward as number,
+    tokens: d.tokens,
+    extraTokens: d.extraTokens,
+    expectedReward: d.expectedReward,
+    computeMode: d.computeMode,
+    lessonIds: d.lessonIds,
+  }));
+
+  // Per-(tuple, class) posteriors against each tuple's global posterior.
+  const posteriors = [...LEARNING_CELLS.values()]
+    .filter((cell) => cell.scope === "global")
+    .map((cell) => {
+      const rec = L1_CACHE.get(cell.tuple_id);
+      const global = rec ? tupleGlobalPosterior(rec, now) : { alpha: 2, beta: 1 };
+      const eff = effectivePosterior(cell, global, kappa);
+      return {
+        tuple_id: cell.tuple_id,
+        task_class: cell.task_class,
+        pulls: cell.pulls,
+        mean: Number(betaMean(eff.alpha, eff.beta).toFixed(4)),
+        lower_bound: Number(posteriorLowerBound(eff.alpha, eff.beta).toFixed(4)),
+        variance: Number((eff.alpha * eff.beta / ((eff.alpha + eff.beta) ** 2 * (eff.alpha + eff.beta + 1))).toFixed(4)),
+        alpha: Number(eff.alpha.toFixed(2)),
+        beta: Number(eff.beta.toFixed(2)),
+        last_at: cell.lastAt,
+      };
+    })
+    .sort((a, b) => b.pulls - a.pulls)
+    .slice(0, 200);
+
+  const bestByClass = new Map<TaskClass, number>();
+  for (const p of posteriors) {
+    bestByClass.set(p.task_class, Math.max(bestByClass.get(p.task_class) ?? 0, p.mean));
+  }
+  const curve = regretCurve(asRecords, (cls) => bestByClass.get(cls) ?? 0.5);
+  const sampledCurve = curve.filter((_, i) => i % Math.max(1, Math.floor(curve.length / 50)) === 0 || i === curve.length - 1);
+
+  // Arm shares per class: where the bandit actually sends traffic.
+  const armCells = [...ARM_CELLS.values()].map((cell) => ({
+    arm: cell.arm_id,
+    task_class: cell.task_class,
+    pulls: cell.pulls,
+    mean: Number(betaMean(cell.alpha, cell.beta).toFixed(4)),
+  }));
+  const shares: Record<string, Record<string, number>> = {};
+  for (const cell of armCells) {
+    const byClass = armCells.filter((x) => x.task_class === cell.task_class);
+    const total = byClass.reduce((a, x) => a + x.pulls, 0);
+    (shares[cell.task_class] ??= {})[cell.arm] = total > 0 ? Number((cell.pulls / total).toFixed(3)) : 0;
+  }
+
+  return c.json({
+    object: "learning",
+    engine: "asck-l-v1",
+    task_classes: ["chat", "qa", "code", "math", "tool", "vision", "json", "reasoning", "multilingual", "longform", "summarize", "creative"],
+    kappa,
+    exploration_floor: 0.05,
+    tenant_evidence_min: TENANT_EVIDENCE_MIN,
+    posteriors,
+    tenant_cells: [...LEARNING_CELLS.values()].filter((x) => x.scope !== "global").length,
+    arms: {
+      definitions: [...ARM_DEFS.values()],
+      cells: armCells,
+      shares,
+    },
+    regret: {
+      curve: sampledCurve,
+      exponent: fitRegretExponent(curve),
+      total: curve.length ? curve[curve.length - 1].regret : 0,
+      decisions: asRecords.length,
+    },
+    calibration: calibrationBuckets(asRecords),
+    reward_per_extra_token: rewardPerExtraToken(asRecords),
+    off_policy: evaluateArmPolicies(asRecords.map((r) => ({ ...r }))),
+    lessons: [...LESSONS.values()].map((l) => ({
+      id: l.id,
+      task_class: l.taskClass,
+      failure_signature: l.failureSignature,
+      correction: l.correction,
+      pulls: l.pulls,
+      mean: Number(betaMean(l.alpha, l.beta).toFixed(4)),
+      pruned: l.pruned,
+      created_at: l.createdAt,
+    })),
+    decisions: {
+      stored: decisions.length,
+      rewarded: rewarded.length,
+      recent: decisions.slice(-20).map((d) => ({
+        trace_id: d.traceId,
+        ts: d.ts,
+        task_class: d.taskClass,
+        tuple: d.tupleId,
+        arm: d.action,
+        arm_propensity: d.armPropensity,
+        tuple_propensity: d.tuplePropensity,
+        compute_mode: d.computeMode,
+        expected_reward: d.expectedReward,
+        reward: d.reward,
+        tokens: d.tokens,
+        extra_tokens: d.extraTokens,
+      })),
+    },
+    caps: { max_cells: MAX_LEARN_CELLS, cells: LEARNING_CELLS.size, decision_ttl_days: 7, feedback_ttl_hours: 24 },
+  });
+});
+
+honoApp.post("/v1/learning/arms", requireAdmin, async (c) => {
+  const body = await c.req.json().catch(() => ({} as Json)) as Json;
+  const id = typeof body.id === "string" ? body.id.trim().toLowerCase() : "";
+  if (!/^[a-z0-9_]{1,48}$/.test(id)) return c.json({ error: { message: "arm id must match [a-z0-9_]{1,48}" } }, 400);
+  const variant = ["plain", "verify", "concise"].includes(String(body.prompt_variant)) ? String(body.prompt_variant) as StrategyArm["promptVariant"] : "plain";
+  const compute = ["single", "verify_retry", "best_of_n"].includes(String(body.compute)) ? String(body.compute) as StrategyArm["compute"] : "single";
+  const armDef: StrategyArm = {
+    id,
+    label: typeof body.label === "string" ? body.label.slice(0, 120) : id,
+    promptVariant: variant,
+    temperatureDelta: Number(clampNum(Number(body.temperature_delta) || 0, -1, 1).toFixed(2)),
+    compute,
+    enabled: body.enabled !== false,
+    ...(Array.isArray(body.classes) ? { classes: (body.classes as unknown[]).filter((x): x is TaskClass => typeof x === "string").slice(0, 12) as TaskClass[] } : {}),
+  };
+  await kv.set([LEARN_ARM_DEF_PREFIX, id], armDef);
+  ARM_DEFS.set(id, armDef);
+  return c.json({ arm: armDef, total_arms: ARM_DEFS.size });
+});
+
+
 
 const PRICING_HTML = `<!DOCTYPE html>
 <html lang="en">
@@ -3518,9 +4188,9 @@ async function buildHealthPayload(): Promise<Json> {
       executions: toolPlaneTotals().calls,
       errors: toolPlaneTotals().errors,
       repaired_calls: toolPlaneTotals().repairs,
-      auto_tools: DEFAULT_AUTO_TOOLS.length,
+      auto_tools: defaultAutoToolNames().length,
       agent_rounds: maxToolRounds(),
-      learning: "per-tool Beta posterior + Kalman latency, per-tuple tool-call competence",
+      learning: "ASCK-L: contextual Beta posteriors per (tuple, task class) with empirical-Bayes shrinkage, strategy arms, VOI compute allocation, lesson memory with efficacy tracking, off-policy logging (IPS/DR)",
     },
     security: {
       auth_enabled: Boolean(Deno.env.get("ROUTER_API_KEY")),
@@ -3650,7 +4320,7 @@ honoApp.get("/v1/tools", async (c) => {
     object: "list",
     plane: "asck-t-v2",
     enabled: toolPlaneEnabled(),
-    agent: { max_rounds: maxToolRounds(), auto_tools: DEFAULT_AUTO_TOOLS },
+    agent: { max_rounds: maxToolRounds(), auto_tools: defaultAutoToolNames() },
     session: { namespace: toolNamespace(c), scope_header: "x-nokey-session", storage: "deno-kv" },
     count: registry.length,
     totals: toolPlaneTotals(now),
@@ -3805,7 +4475,7 @@ honoApp.post("/v1/resurrect", requireAdmin, async (c) => {
 // code it operates on. Allowlisted files only, admin-guarded like /v1/probe.
 honoApp.get("/v1/source", requireAdmin, (c) => {
   const file = c.req.query("file") || "";
-  const ALLOWED = new Set(["main.ts", "math.ts", "trace.ts", "index.html", "openapi.json", "CHANGES.md", "services.json", "deno.json"]);
+  const ALLOWED = new Set(["main.ts", "math.ts", "learning.ts", "trace.ts", "index.html", "openapi.json", "CHANGES.md", "services.json", "deno.json"]);
   if (!ALLOWED.has(file)) {
     return c.json({ error: { message: "File is not in the readable allowlist" } }, 400);
   }
@@ -4031,6 +4701,61 @@ honoApp.post("/v1/chat/completions", async (c) => {
     // Self-execution is opt-in: only when the router supplied the tools does it
     // run the agentic loop. Otherwise tool_calls go straight back to the caller.
     const agentRounds = autoTools ? maxToolRounds(body.nokey_rounds) : 0;
+    // ---- ASCK-L: task context, strategy arm, lesson injection -------------
+    // The class is computed from the caller's messages before any router
+    // system text is added, so the classifier sees the request as sent.
+    const tenant = toolNamespace(c);
+    const taskCtx = classifyTask({
+      messages,
+      hasTools,
+      toolChoice: body.tool_choice,
+      responseFormat: body.response_format,
+      reasoningEffort: typeof body.reasoning_effort === "string" ? body.reasoning_effort : undefined,
+    });
+    const originalUserText = (() => {
+      const m = [...messages].reverse().find((x) => x.role === "user");
+      return typeof m?.content === "string" ? m.content : "";
+    })();
+    const hasTests = Array.isArray(body.nokey_tests) && body.nokey_tests.length > 0;
+    const hasVerifier = taskCtx.taskClass === "math" || taskCtx.taskClass === "json" ||
+      taskCtx.taskClass === "tool" || (taskCtx.taskClass === "code" && hasTests);
+    await hydrateLearning().catch(logErr);
+    const armDefs = await loadStrategyArms().catch(() => DEFAULT_STRATEGY_ARMS);
+    const armCands: BanditCandidate[] = armsForClass(armDefs, taskCtx.taskClass, hasVerifier).map((a) => {
+      const cell = ARM_CELLS.get(armCellKey(a.id, taskCtx.taskClass)) ?? emptyCell();
+      const eff = effectivePosterior(cell, armGlobalPosterior(a.id), learningKappa());
+      return { id: a.id, alpha: eff.alpha, beta: eff.beta, pulls: cell.pulls };
+    });
+    const armChoice = chooseThompson(armCands, Math.random, { epsilon: 0.05, resamples: 120 });
+    const arm = armDefs.find((a) => a.id === armChoice?.id) ?? DEFAULT_STRATEGY_ARMS[0];
+    // Pure-passthrough modes (tool plane off: NOKEY_TOOLS=0,
+    // NOKEY_TOOL_ROUNDS=0, or no auto tools on this request) must not mutate
+    // the request — no prompt variant, no lessons, no temperature shift, no
+    // verify-retry. The strategy in effect is then the baseline, and the
+    // baseline is what the decision log records.
+    const planeActive = Boolean(autoTools && agentRounds > 0);
+    const effArm = planeActive ? arm : (armDefs.find((a) => a.id === "baseline") ?? DEFAULT_STRATEGY_ARMS[0]);
+    const variantText = planeActive ? PROMPT_VARIANTS[effArm.promptVariant] : null;
+    if (variantText) messages.unshift({ role: "system", content: variantText });
+    const injectedLessons = planeActive ? rankLessons([...LESSONS.values()], taskCtx.taskClass, 2, Math.random) : [];
+    if (injectedLessons.length > 0) {
+      messages.unshift({
+        role: "system",
+        content: "Lessons learned from verified failures on similar tasks:\n" +
+          injectedLessons.map((l) => `- ${l.correction}`).join("\n"),
+      });
+    }
+    const learnCtx: LearnCtx = {
+      traceId: root.traceId,
+      taskCtx,
+      arm: effArm,
+      armPropensity: planeActive ? (armChoice?.propensity ?? 1) : 1,
+      tenant,
+      lessons: injectedLessons,
+      hasVerifier,
+      planeActive,
+      compute: { mode: "single", n: 1, variance: 0, reason: "not yet decided" },
+    };
     const toolAware = hasTools || reqModel.toLowerCase().includes("tools");
     // One line of instruction materially raises tool-use rates on small free
     // models, which otherwise answer from memory. Only added when the router
@@ -4061,6 +4786,11 @@ honoApp.post("/v1/chat/completions", async (c) => {
       reasoning: body.reasoning,
       response_format: body.response_format,
     };
+    if (learnCtx.arm.temperatureDelta !== 0) {
+      completionOptions.temperature = Number(
+        clampNum((completionOptions.temperature ?? 0.7) + learnCtx.arm.temperatureDelta, 0, 2).toFixed(2),
+      );
+    }
 
     // free:tools ranks the smart lane by learned tool-call competence.
     const mode: RoutingMode = reqModelLower.includes("auto")
@@ -4084,6 +4814,10 @@ honoApp.post("/v1/chat/completions", async (c) => {
       parallel_tool_calls: completionOptions.parallel_tool_calls,
       vision: hasVisionPayload,
       endpoints: endpointsAvailable,
+      task_class: taskCtx.taskClass,
+      strategy_arm: learnCtx.arm.id,
+      arm_propensity: learnCtx.armPropensity,
+      lessons_injected: injectedLessons.length,
     });
 
     const safeRanked = async (m: RoutingMode, o: RankOptions = {}): Promise<ScoredCandidate[]> => {
@@ -4096,7 +4830,7 @@ honoApp.post("/v1/chat/completions", async (c) => {
     };
 
     const rankSpan = root.child("rank", { mode });
-    let ranked = await safeRanked(mode, {});
+    let ranked = await safeRanked(mode, { taskClass: taskCtx.taskClass, tenant });
     // Vision lanes must not filter themselves into an empty pool.
     if (ranked.length === 0 && hasVisionPayload) ranked = await getRankedCandidates(mode, false, hasVisionPayload, { toolAware }).catch(() => []);
     if (ranked.length === 0) ranked = await safeRanked(mode, { unrestricted: true });
@@ -4133,6 +4867,23 @@ honoApp.post("/v1/chat/completions", async (c) => {
       ranked = [...exact, ...near, ...rest];
     }
     rankSpan.end("ok", { candidates: ranked.length, near_matches: nearMatches, head: ranked[0]?.tupleId });
+
+    // ---- ASCK-L: compute allocation by value of information ---------------
+    {
+      const headRec = ranked[0] ? L1_CACHE.get(ranked[0].tupleId) : undefined;
+      const headPost = headRec
+        ? contextualPosterior(headRec, taskCtx.taskClass, tenant, Date.now())
+        : { alpha: 2, beta: 1 };
+      learnCtx.compute = decideCompute({
+        taskClass: taskCtx.taskClass,
+        alpha: headPost.alpha,
+        beta: headPost.beta,
+        hasVerifier,
+        armCompute: learnCtx.arm.compute,
+        stream: wantsStream,
+      });
+      root.set({ compute_mode: learnCtx.compute.mode, compute_reason: learnCtx.compute.reason });
+    }
 
     // Total budget covers full generations; first-token latency is governed by the hedge policy.
     const timeoutMs = mode === "reasoning" ? 1800000 : mode === "fast" ? 450000 : 1200000;
@@ -4270,6 +5021,10 @@ honoApp.post("/v1/chat/completions", async (c) => {
         // generation that dies after its first token re-dispatches once over the
         // untried pool.
         let toolRound = 0;
+        let verifyRetries = 0;
+        let extraTokens = 0;
+        let a2aTaskDone = false;
+        let lastToolVerdict: ToolCallVerdict | null = null;
         const toolLog: Array<{ round: number; tool: string; ok: boolean; ms: number; repaired: boolean; code?: string; error?: string }> = [];
         for (;;) {
           let produced: { cand: ScoredCandidate; res: CompletionResult & { finish?: string } } | null = null;
@@ -4293,6 +5048,7 @@ honoApp.post("/v1/chat/completions", async (c) => {
           // ---- Tool Plane: grade what the model emitted, then learn --------
           if (declaredTools.length > 0) {
             const verdict = gradeToolCalls(res.toolCalls ?? [], declaredTools, completionOptions.tool_choice);
+            lastToolVerdict = verdict;
             if (!verdict.neutral) {
               learnToolVerdict(cand.tupleId, verdict).catch(logErr);
               root.event("tool_verdict", {
@@ -4327,6 +5083,7 @@ honoApp.post("/v1/chat/completions", async (c) => {
                 failures: outcome.executed.filter((e) => !e.ok).length,
                 tools: outcome.executed.map((e) => e.name).join(",").slice(0, 200),
               });
+              if (outcome.messages.some((m) => m.name === "task" && /"status"\s*:\s*"done"/.test(String(m.content)))) a2aTaskDone = true;
               // The conversation continues: assistant call, then one tool
               // message per call, in order, exactly as the protocol requires.
               messages.push({
@@ -4343,6 +5100,55 @@ honoApp.post("/v1/chat/completions", async (c) => {
               continue;
             }
             roundSpan.end("ok", { executed: 0, reason: "tool calls belong to the client" });
+          }
+
+          // ---- ASCK-L: independent verification + graded reward ----------
+          {
+            const signals: RewardSignal[] = [{
+              kind: "completion",
+              value: res.content || res.toolCalls ? 1 : 0.4,
+              source: "router",
+              weight: 1,
+            }];
+            if (lastToolVerdict && !lastToolVerdict.neutral) {
+              signals.push({ kind: "verifier_tool", value: lastToolVerdict.valid ? 1 : 0, source: "verifier:tool_schema", weight: 1.2 });
+            }
+            if (a2aTaskDone) {
+              signals.push({ kind: "verifier_a2a", value: 1, source: "verifier:a2a_task", weight: 0.8 });
+            }
+            let verifierFailed: { signature: string } | null = null;
+            if (taskCtx.taskClass === "math") {
+              const v = verifyMathAnswer(originalUserText, res.content ?? "");
+              if (v) {
+                signals.push({ kind: "verifier_math", value: v.pass ? 1 : 0, source: "verifier:calculate", weight: 1.5 });
+                if (!v.pass) verifierFailed = { signature: failureSignature("verifier_math", "mismatch") };
+              }
+            }
+            if (taskCtx.taskClass === "json" || body.response_format) {
+              const v = verifyJsonAnswer(res.content ?? "", body.response_format);
+              if (v) {
+                signals.push({ kind: "verifier_json", value: v.pass ? 1 : 0, source: "verifier:json_schema", weight: 1.5 });
+                if (!v.pass) verifierFailed = { signature: failureSignature("verifier_json", v.signature || "invalid") };
+              }
+            }
+            if (verifierFailed && learnCtx.planeActive && (learnCtx.compute.mode === "verify_retry" || learnCtx.compute.mode === "best_of_n") && verifyRetries < 1 && !(res.toolCalls?.length)) {
+              verifyRetries++;
+              extraTokens += res.estTokens;
+              writeLesson(taskCtx.taskClass, verifierFailed.signature).catch(logErr);
+              messages.push({ role: "assistant", content: res.content });
+              messages.push({
+                role: "user",
+                content: `Independent verification failed (${verifierFailed.signature}). Recompute carefully, verify the result, and answer again.`,
+              });
+              tried.delete(cand.tupleId);
+              root.event("verify_retry", { tuple: cand.tupleId, signature: verifierFailed.signature });
+              continue;
+            }
+            if (verifierFailed) writeLesson(taskCtx.taskClass, verifierFailed.signature).catch(logErr);
+            finalizeLearning({
+              ctx: learnCtx, cand, ranked, signals,
+              tokens: res.estTokens, extraTokens, now: Date.now(),
+            }).catch(logErr);
           }
 
           root.end("ok", {
@@ -4418,6 +5224,7 @@ honoApp.post("/v1/chat/completions", async (c) => {
       let ok = false;
       let toolRound = 0;
       let quietFails = 0;
+      let streamToolVerdict: ToolCallVerdict | null = null;
       try {
         yield `: trace ${root.traceId}\n\n`;
         for (;;) {
@@ -4487,6 +5294,7 @@ honoApp.post("/v1/chat/completions", async (c) => {
 
             if (declaredTools.length > 0) {
               const verdict = gradeToolCalls(quiet.toolCalls ?? [], declaredTools, completionOptions.tool_choice);
+              streamToolVerdict = verdict;
               if (!verdict.neutral) {
                 learnToolVerdict(cand.tupleId, verdict).catch(logErr);
                 root.event("tool_verdict", {
@@ -4594,6 +5402,7 @@ honoApp.post("/v1/chat/completions", async (c) => {
               // calls exactly as the buffered path does.
               const calls = [...streamedCalls.values()].sort((a, b) => a.index - b.index);
               const verdict = gradeToolCalls(calls, declaredTools, completionOptions.tool_choice);
+              streamToolVerdict = verdict;
               if (!verdict.neutral) {
                 learnToolVerdict(cand.tupleId, verdict).catch(logErr);
                 root.event("tool_verdict", {
@@ -4604,6 +5413,22 @@ honoApp.post("/v1/chat/completions", async (c) => {
                   problems: verdict.problems.slice(0, 2).join(" | ").slice(0, 200),
                 });
               }
+            }
+            {
+              const signals: RewardSignal[] = [{
+                kind: "completion",
+                value: contentChars > 0 || toolCalls.size > 0 ? 1 : 0.4,
+                source: "router",
+                weight: 1,
+              }];
+              if (streamToolVerdict && !streamToolVerdict.neutral) {
+                signals.push({ kind: "verifier_tool", value: streamToolVerdict.valid ? 1 : 0, source: "verifier:tool_schema", weight: 1.2 });
+              }
+              finalizeLearning({
+                ctx: learnCtx, cand, ranked, signals,
+                tokens: Math.max(1, Math.ceil((contentChars + reasoning.length) / 4)),
+                extraTokens: 0, now: Date.now(),
+              }).catch(logErr);
             }
             root.end("ok", {
               tuple: cand.tupleId,

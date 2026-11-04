@@ -1854,7 +1854,6 @@ export const DEFAULT_AUTO_TOOLS = [
   "fs_patch",
   "fs_read",
   "fs_write",
-  "forge_tool",
   "http_request",
   "memory_forget",
   "memory_graph",

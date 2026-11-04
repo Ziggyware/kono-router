@@ -1,3 +1,113 @@
+# Learning loop (ASCK-L) — 2026-11-04
+
+The router already learned "did this tuple answer, and how fast". ASCK-L
+extends the same mechanisms — the discounted Beta posterior, Thompson
+sampling, the Wilson floor, the tool-skill records — so it also learns
+"which choice produces the best verified result for this kind of task".
+New pure core in `learning.ts`; `main.ts` wires it into dispatch. No
+parallel learning system was built.
+
+## What shipped
+
+- **Task context.** Every chat request is classified deterministically
+  into one of 12 classes (chat, qa, code, math, tool, vision, json,
+  reasoning, multilingual, longform, summarize, creative) from tool
+  presence, code fences, math/code tokens, image parts, length, language
+  and an embed feature-hash nearest centroid. The class is on the trace.
+- **Contextual posterior.** A Beta cell per (tuple, task class), shrunk
+  toward the tuple's global posterior with empirical-Bayes pseudo-counts
+  (method of moments over the pooled cells, clamped 2..64), discounted at
+  the same 6 h half-life as the existing posteriors. Ranking adds a
+  bounded contextual term (±0.05) from the Thompson draw, or from the
+  Wilson lower bound in deterministic mode. Cells are capped (4,000) and
+  compacted by evidence × recency.
+- **Graded reward r ∈ [0,1] with provenance.** Signals: completion,
+  schema-valid tool verdicts, independent verifiers (the calculate
+  evaluator for math, JSON/JSON-schema validation, A2A task completion),
+  explicit thumbs, and implicit negatives (regenerate). Delayed rewards
+  join through the trace id (`POST /v1/feedback`, 24 h window, applied
+  exactly once per decision). The grader rejects self-evaluations,
+  signals sourced from the tuple/arm being graded, and verifier-kind
+  signals without verifier provenance — the generator never grades
+  itself.
+- **Strategy arms.** System-prompt variant, temperature delta and compute
+  mode are chosen per task class by the same Thompson bandit with a 5%
+  exploration floor. Arms are data in KV: `POST /v1/learning/arms`
+  (admin) adds one with no deploy. Five ship built in (baseline, verify,
+  concise, explore_temp, best_of).
+- **Compute by value of information.** Escalation to verify-and-retry
+  (or a verifier-selected second sample for best-of-n arms) fires only
+  when the head candidate's contextual posterior variance is high AND an
+  independent verifier exists for the class. Streams and pure-passthrough
+  modes (tool plane off) never escalate and are never mutated — no
+  variant, lesson, temperature shift or retry is applied to them.
+- **Lesson memory.** A verified failure writes a structured lesson
+  {task class, failure signature, correction} to the ledger and to
+  `memory_write` under the `router_lessons` namespace. Top-2 lessons per
+  class are injected into the prompt. Each lesson is itself an arm:
+  injections are scored by the rewards of the decisions they touched,
+  and a lesson is pruned after ≥10 injections when its decisions still
+  score below the midpoint (Wilson floor < 0.45).
+- **Off-policy logging.** Every decision logs the chosen arm and tuple
+  with Thompson propensities estimated by resampling (7-day TTL in KV).
+  `GET /v1/learning` (admin) reports per-class posteriors, arm shares,
+  the regret curve with its fitted exponent, calibration buckets,
+  reward per extra token, IPS and doubly-robust estimates for "always
+  pick arm X" policies, and the lesson ledger — as data.
+- **Dashboard.** Assistant messages carry 👍/👎 buttons that post to
+  `/v1/feedback`; retrying an answer posts the implicit `regenerate`
+  signal for the decision behind it.
+
+## Measured results (tests/learning_test.ts, seeded, deterministic)
+
+- Thompson choice over two arms (true means 0.8 / 0.5), 3,000 pulls:
+  expected regret 60.0, fitted regret exponent **0.842** (< 1,
+  sublinear). A non-learning alternating policy fits 1.0 on the same
+  fitter. Most of the 60 is the 5% exploration floor's known cost.
+- Shrinkage on sparse cells (10 cells, 4 trials each, 400 replications,
+  known truth): MSE **0.0171** shrunk vs **0.0278** unpooled.
+- Abrupt drift (arm means swap 0.85↔0.15 at pull 1,000 of 1,600, 6 h
+  half-life discounting): the new best arm takes **0.97** of pulls
+  1,450–1,600.
+- Off-policy estimators on a known logging policy (20,000 decisions,
+  0.7/0.3 propensities, true value 0.6): IPS **0.605** (ESS 14,022),
+  doubly-robust **0.604**.
+- Lesson pruning: a zero-effect lesson (30 injections, decision rewards
+  ~0.3) reaches mean 0.31 and is pruned; an effective one (~0.85)
+  reaches 0.88 and is kept.
+- Integration: a mocked math chat logs a decision with class, arm and
+  tuple propensities and an immediate graded reward; a thumbs-up joins
+  it exactly once (reward 1.0) and moves the (tuple, math) posterior.
+- Gates: `deno task check` passes; `deno task test` is **103 passed,
+  0 failed** (baseline before this work: 86 passed, 4 failed).
+
+## Also fixed on the way through
+
+- `openapi.json` now documents `/pricing`, `/forge-docs`,
+  `/v1/tools/forge`, `/v1/tools/forge/{name}` (shipped earlier without
+  spec entries; the route/spec lockstep test failed on them).
+- Two stale tool-round expectations (clamp is 32, default is 8 since the
+  ultra-agentic change) and the health check's `agent_rounds` (now 8).
+- `forge_tool` left `DEFAULT_AUTO_TOOLS` in tools.ts (it is registered
+  by main.ts and joins the auto set as a dynamic tool), which failed
+  the registry coherence test.
+- tool_plane_test.ts authenticates with the key it configures. Since
+  the free tier shipped, its unauthenticated requests rode the 50/day
+  anonymous quota in shared KV plus the edge rate bucket, and the
+  file's tail failed with 429s depending on run order and history (the
+  pristine tree fails the same way run standalone). Production behavior
+  is unchanged.
+
+## Stated limits
+
+- Best-of-n escalation currently spends one verifier-selected second
+  sample (n=2), not parallel samples.
+- Calibration and reward-per-extra-token are computed from live
+  decisions; both are empty/null until real traffic accrues.
+- Learning is pooled globally; a tenant's own cells override the pooled
+  posterior only after 30 tenant pulls for that tuple and class.
+
+
 # Workspace quality of life — 2026-11-04
 
 - The chat model picker accepts arbitrary IDs and offers searchable, keyboard-navigable catalog suggestions, with capability and minimum-context filters. Catalog capabilities and context sizes are estimates, not guarantees of upstream support.
