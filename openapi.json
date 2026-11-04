@@ -25,6 +25,9 @@
     },
     {
       "name": "system"
+    },
+    {
+      "name": "community"
     }
   ],
   "paths": {
@@ -964,6 +967,149 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/community/messages": {
+      "get": {
+        "tags": [
+          "community"
+        ],
+        "operationId": "getCommunityMessages",
+        "summary": "Get recent messages for a community room",
+        "security": [],
+        "parameters": [
+          {
+            "name": "room",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "general"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 50
+            }
+          },
+          {
+            "name": "since",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": { "type": "boolean" },
+                    "room": { "type": "string" },
+                    "messages": {
+                      "type": "array",
+                      "items": { "type": "object" }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "community"
+        ],
+        "operationId": "postCommunityMessage",
+        "summary": "Send a message to a community room",
+        "security": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["content"],
+                "properties": {
+                  "room": { "type": "string" },
+                  "user": { "type": "string" },
+                  "content": { "type": "string" },
+                  "avatar": { "type": "string" },
+                  "replyTo": { "type": "object" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Message posted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": { "type": "boolean" },
+                    "message": { "type": "object" }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Missing content or invalid body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/community/stream": {
+      "get": {
+        "tags": [
+          "community"
+        ],
+        "operationId": "communityStream",
+        "summary": "Real-time SSE event stream for community room messages",
+        "security": [],
+        "parameters": [
+          {
+            "name": "room",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "general"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Real-time SSE event stream",
+            "content": {
+              "text/event-stream": {
+                "schema": {
+                  "type": "string"
                 }
               }
             }

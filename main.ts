@@ -3361,6 +3361,151 @@ honoApp.get("/v1/source", requireAdmin, (c) => {
   return c.json({ file, bytes: content.length, lines: content.split("\n").length, content });
 });
 
+// =====================================================================
+// COMMUNITY / PEOPLE CHAT — real-time peer messaging
+// =====================================================================
+interface CommunityMessage {
+  id: string;
+  room: string;
+  user: string;
+  avatar?: string;
+  content: string;
+  createdAt: string;
+  reactions?: Record<string, number>;
+  replyTo?: { id: string; user: string; text: string };
+}
+
+const communityRooms = new Map<string, CommunityMessage[]>();
+const communitySubscribers = new Map<string, Set<(msg: CommunityMessage) => void>>();
+
+function getRoomMessages(room: string): CommunityMessage[] {
+  let list = communityRooms.get(room);
+  if (!list) {
+    list = [
+      {
+        id: "sys-init",
+        room,
+        user: "System",
+        avatar: "⚡",
+        content: `Welcome to #${room}! Connect and chat with other developers and users in real time. Share tool calls, code, prompts, and apps.`,
+        createdAt: new Date().toISOString(),
+        reactions: { "👋": 3, "🚀": 2 },
+      },
+    ];
+    communityRooms.set(room, list);
+  }
+  return list;
+}
+
+function broadcastCommunityMessage(msg: CommunityMessage): void {
+  const subs = communitySubscribers.get(msg.room);
+  if (subs) {
+    for (const sub of subs) {
+      try { sub(msg); } catch { /* client disconnected */ }
+    }
+  }
+}
+
+honoApp.get("/v1/community/messages", (c) => {
+  const room = c.req.query("room") || "general";
+  const limit = Math.min(200, Math.max(1, parseInt(c.req.query("limit") || "50", 10)));
+  const since = c.req.query("since");
+  let messages = getRoomMessages(room);
+  if (since) {
+    messages = messages.filter((m) => m.createdAt > since);
+  }
+  return c.json({
+    ok: true,
+    room,
+    messages: messages.slice(-limit),
+  });
+});
+
+honoApp.post("/v1/community/messages", async (c) => {
+  const body = await c.req.json().catch(() => null) as Record<string, unknown> | null;
+  if (!body || typeof body.content !== "string" || !body.content.trim()) {
+    return c.json({ error: { message: "Message content is required" } }, 400);
+  }
+  const user = typeof body.user === "string" && body.user.trim() ? body.user.trim().slice(0, 32) : "Anonymous";
+  const room = typeof body.room === "string" && body.room.trim() ? body.room.trim().toLowerCase().slice(0, 32) : "general";
+  const avatar = typeof body.avatar === "string" ? body.avatar.slice(0, 32) : undefined;
+  const replyTo = body.replyTo && typeof body.replyTo === "object" ? body.replyTo as { id: string; user: string; text: string } : undefined;
+
+  const msg: CommunityMessage = {
+    id: "msg-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 7),
+    room,
+    user,
+    avatar,
+    content: body.content.slice(0, 20000),
+    createdAt: new Date().toISOString(),
+    reactions: {},
+    replyTo,
+  };
+
+  const list = getRoomMessages(room);
+  list.push(msg);
+  if (list.length > 300) list.shift();
+
+  try {
+    kv.set(["community_messages", room, msg.id], msg).catch(() => {});
+  } catch { /* KV optional */ }
+
+  broadcastCommunityMessage(msg);
+  return c.json({ ok: true, message: msg });
+});
+
+honoApp.get("/v1/community/stream", (c) => {
+  const room = c.req.query("room") || "general";
+  let subscriber: ((msg: CommunityMessage) => void) | null = null;
+  let keepAliveTimer: ReturnType<typeof setInterval> | undefined;
+
+  const stream = new ReadableStream({
+    start(controller) {
+      const encoder = new TextEncoder();
+      controller.enqueue(encoder.encode(": connected\n\n"));
+
+      subscriber = (msg: CommunityMessage) => {
+        try {
+          controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: "message", message: msg })}\n\n`));
+        } catch { /* disconnected */ }
+      };
+
+      let subs = communitySubscribers.get(room);
+      if (!subs) {
+        subs = new Set();
+        communitySubscribers.set(room, subs);
+      }
+      subs.add(subscriber);
+
+      keepAliveTimer = setInterval(() => {
+        try {
+          controller.enqueue(encoder.encode(": keepalive\n\n"));
+        } catch {
+          clearInterval(keepAliveTimer);
+        }
+      }, 20_000);
+    },
+    cancel() {
+      if (subscriber) {
+        const subs = communitySubscribers.get(room);
+        if (subs) {
+          subs.delete(subscriber);
+          if (subs.size === 0) communitySubscribers.delete(room);
+        }
+      }
+      if (keepAliveTimer) clearInterval(keepAliveTimer);
+    },
+  });
+
+  return new Response(stream, {
+    headers: {
+      "Content-Type": "text/event-stream; charset=utf-8",
+      "Cache-Control": "no-cache, no-transform",
+      "Connection": "keep-alive",
+    },
+  });
+});
+
 // Comment frames keep proxies and clients alive while the race is still routing.
 const HEARTBEAT_MS = 5_000;
 
