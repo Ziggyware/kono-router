@@ -1,5 +1,5 @@
 import { Hono, type Context, type MiddlewareHandler } from "hono";
-import { currentSpan, getTrace, listTraces, type Span, startTrace, subscribe } from "./trace.ts";
+import { type Attrs, currentSpan, getTrace, listTraces, type Span, startTrace, subscribe } from "./trace.ts";
 import { cors } from "hono/cors";
 import { bodyLimit } from "hono/body-limit";
 import {
@@ -15,6 +15,31 @@ import {
   ucbBonus,
   wilsonLowerBound,
 } from "./math.ts";
+import {
+  DEFAULT_AUTO_TOOLS,
+  emptyToolSkill,
+  executeTool,
+  executeToolCalls,
+  listTools,
+  mergeToolDeclarations,
+  normalizeToolCalls,
+  observeToolSkill,
+  observeTupleToolStats,
+  parseToolArguments,
+  partitionToolCalls,
+  registerTool,
+  resolveAutoToolNames,
+  skillSummary,
+  toolPreamble,
+  toolResultContent,
+  toolRoutingBonus,
+  toToolSpecs,
+  tupleToolCompetence,
+  type ToolExecution,
+  type ToolFlavor,
+  type ToolSkillRecord,
+  type ToolSkillSummary,
+} from "./tools.ts";
 
 // ============================================================================
 // 1. DENO KV + L1 ISOLATE CACHE + CAS ATOMIC STATE ENGINE
@@ -49,6 +74,16 @@ export interface MeshModelRecord {
   cooldown_until: number;
   last_probed: number;
   last_error: string | null;
+  // --- Tool Plane competence (ASCK-T) -------------------------------------
+  // Beta-Bernoulli posterior over "this tuple emitted a well-formed,
+  // schema-valid tool call". Optional so pre-tool-plane KV records keep
+  // loading unchanged: absent simply means "no evidence yet", which scores 0
+  // and leaves exploration to the existing UCB term.
+  tool_alpha?: number;
+  tool_beta?: number;
+  tool_pulls?: number;
+  tool_repairs?: number;
+  tool_last_at?: number;
 }
 
 const L1_CACHE = new Map<string, MeshModelRecord>();
@@ -102,6 +137,103 @@ async function atomicUpdateModel(
     }
     await new Promise((r) => setTimeout(r, 10 * (attempt + 1) + Math.random() * 15));
   }
+}
+
+// ---------------------------------------------------------------------------
+// TOOL SKILL MEMORY (ASCK-T). One record per registered tool, holding the
+// Beta-Bernoulli success posterior and the Kalman posterior over ln(latency).
+// Every execution — from a model's tool call, the agent loop or a direct
+// POST /v1/tools/execute — updates it, so knowledge of which tools are fast
+// and reliable compounds across requests instead of being rebuilt per call.
+// Same CAS + stale-while-revalidate discipline as the model catalog above.
+// ---------------------------------------------------------------------------
+
+const TOOL_SKILL_PREFIX = "mesh_tool_skills_v1";
+const TOOL_SKILLS = new Map<string, ToolSkillRecord>();
+let toolSkillsHydratedAt = 0;
+let toolSkillRefresh: Promise<Map<string, ToolSkillRecord>> | null = null;
+const TOOL_SKILL_TTL_MS = 30_000;
+
+async function refreshToolSkills(force: boolean): Promise<Map<string, ToolSkillRecord>> {
+  const now = Date.now();
+  const fresh = new Map<string, ToolSkillRecord>();
+  for await (const entry of kv.list<ToolSkillRecord>({ prefix: [TOOL_SKILL_PREFIX] })) {
+    if (entry.value?.tool) fresh.set(entry.value.tool, entry.value);
+  }
+  if (fresh.size > 0 || force) {
+    TOOL_SKILLS.clear();
+    for (const [k, v] of fresh) TOOL_SKILLS.set(k, v);
+    toolSkillsHydratedAt = now;
+  }
+  return TOOL_SKILLS;
+}
+
+/** Warm isolate never blocks a request on kv.list; a cold one hydrates once. */
+function hydrateToolSkills(force = false): Promise<Map<string, ToolSkillRecord>> {
+  const refresh = () => (toolSkillRefresh ??= refreshToolSkills(force).finally(() => (toolSkillRefresh = null)));
+  if (force || TOOL_SKILLS.size === 0) return refresh();
+  if (Date.now() - toolSkillsHydratedAt >= TOOL_SKILL_TTL_MS) refresh().catch((e) => console.error("tool skill refresh:", e));
+  return Promise.resolve(TOOL_SKILLS);
+}
+
+/** CAS-update one tool's skill record, with the same optimistic L1 write. */
+async function atomicUpdateToolSkill(
+  tool: string,
+  mutator: (current: ToolSkillRecord) => ToolSkillRecord,
+  maxRetries = 3,
+): Promise<void> {
+  const key = [TOOL_SKILL_PREFIX, tool];
+  const now = Date.now();
+  const cached = TOOL_SKILLS.get(tool);
+  const seeded = cached ?? emptyToolSkill(tool, now);
+  const optimistic = mutator(seeded);
+  TOOL_SKILLS.set(tool, optimistic);
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
+    const entry = await kv.get<ToolSkillRecord>(key);
+    const updated = mutator(entry.value ?? emptyToolSkill(tool, now));
+    const res = await kv.atomic().set(key, updated).commit();
+    if (res.ok) {
+      TOOL_SKILLS.set(tool, updated);
+      return;
+    }
+    await new Promise((r) => setTimeout(r, 10 * (attempt + 1) + Math.random() * 15));
+  }
+  console.warn(`[tools] skill CAS gave up for ${tool} after ${maxRetries} attempts`);
+}
+
+async function recordToolExecution(tool: string, exec: ToolExecution): Promise<void> {
+  try {
+    await atomicUpdateToolSkill(tool, (rec) =>
+      observeToolSkill(rec, {
+        ok: exec.ok,
+        ms: exec.ms,
+        repaired: exec.repaired ?? false,
+        error: exec.ok ? null : exec.error,
+        code: exec.ok ? null : exec.code,
+      }, Date.now()));
+  } catch (err) {
+    console.error("[tools] skill update failed:", err);
+  }
+}
+
+/** Learned telemetry for every registered tool, exposed on /v1/tools + /health. */
+function toolSkillsSnapshot(now = Date.now(), deterministic = true): Record<string, ToolSkillSummary> {
+  const out: Record<string, ToolSkillSummary> = {};
+  for (const [tool, record] of TOOL_SKILLS) out[tool] = skillSummary(record, now, deterministic);
+  return out;
+}
+
+function toolPlaneTotals(now = Date.now()): { tools: number; instrumented: number; calls: number; errors: number; repairs: number } {
+  let calls = 0;
+  let errors = 0;
+  let repairs = 0;
+  for (const record of TOOL_SKILLS.values()) {
+    calls += record.calls;
+    errors += record.errors;
+    repairs += record.repairs;
+  }
+  void now;
+  return { tools: listTools().length, instrumented: TOOL_SKILLS.size, calls, errors, repairs };
 }
 
 // ============================================================================
@@ -1522,6 +1654,10 @@ export interface ScoredCandidate {
   logTtftSigma: number;
   expectedFastMs: number;
   smartScore: number;
+  /** Wilson floor on this tuple's learned ability to emit valid tool calls.
+   *  0 while unproven — no evidence is not evidence of incompetence. */
+  toolCompetence: number;
+  toolPulls: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -1572,6 +1708,10 @@ interface RankOptions {
   verifiedOnly?: boolean;
   /** Exhaustive mode: ignore breaker, tuple cooldown, vision and IQ gates. */
   unrestricted?: boolean;
+  /** Tool-bearing request: fold each tuple's learned tool competence into the
+   *  score and rank on it even in the latency-ordered `fast` lane, because a
+   *  malformed tool call costs a whole extra round-trip. */
+  toolAware?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -1585,6 +1725,7 @@ function scoreRecord(
   deterministic: boolean,
   totalPulls: number,
   now: number,
+  toolAware = false,
 ): ScoredCandidate {
   const iqPrior = Number(r.iq_prior);
   // Rank-time trust clamp: a tuple that has never completed a request cannot
@@ -1629,8 +1770,11 @@ function scoreRecord(
     : 0;
   const reasoningBonus = mode === "reasoning" && r.supports_reasoning ? 0.095 : 0;
   const thompsonBonus = (reliabilityDraw - 0.5) * 0.12;
+  // Compounding tool intelligence: a Thompson draw over this tuple's own
+  // tool-call posterior (0 with no evidence, so exploration still wins there).
+  const toolBonus = toolAware ? toolRoutingBonus(r, { deterministic, now }) : 0;
   const smartScore = Number(
-    (iqEffective + codeBonus + reasoningBonus + thompsonBonus + exploration + plackettLuce - latencyPenalty)
+    (iqEffective + codeBonus + reasoningBonus + thompsonBonus + toolBonus + exploration + plackettLuce - latencyPenalty)
       .toFixed(4),
   );
 
@@ -1650,6 +1794,8 @@ function scoreRecord(
     logTtftSigma,
     expectedFastMs,
     smartScore,
+    toolCompetence: toolAware || (r.tool_pulls ?? 0) > 0 ? tupleToolCompetence(r, now) : 0,
+    toolPulls: r.tool_pulls ?? 0,
   };
 }
 
@@ -1685,10 +1831,10 @@ async function getRankedCandidates(
     if (!opts.includeCoolingDown && !opts.unrestricted && r.cooldown_until > now) continue;
     if (opts.verifiedOnly && !opts.unrestricted && r.success_count <= 0) continue;
     if (requireVision && !opts.unrestricted && !r.supports_vision) continue;
-    candidates.push(scoreRecord(r, mode, deterministic, totalPulls, now));
+    candidates.push(scoreRecord(r, mode, deterministic, totalPulls, now, opts.toolAware ?? false));
   }
 
-  if (mode === "fast" && !opts.unrestricted) {
+  if (mode === "fast" && !opts.unrestricted && !opts.toolAware) {
     return interleaveByProvider(
       candidates
         .filter((c) => c.iqEffective >= 0.50)
@@ -2252,6 +2398,375 @@ async function hedgedDispatch(
 }
 
 // ============================================================================
+// 7b. TOOL PLANE (ASCK-T) — MESH TOOLS, AGENT LOOP & LEARNED TOOL ROUTING
+// ============================================================================
+// Three pieces turn `tools` from an opaque passthrough into router capability:
+//
+//  MESH TOOLS. Implementations from ./tools.ts are registered with closures
+//  over live router state, so a model can interrogate the mesh itself
+//  (catalog, health, coverage, lane choice, traces) and compute exactly
+//  instead of hallucinating arithmetic, dates or digests.
+//
+//  AGENT LOOP. When a completion's tool calls all resolve to plane built-ins,
+//  the router executes them, appends the `role:"tool"` results and re-dispatches
+//  — bounded by NOKEY_TOOL_ROUNDS. Calls the router does not own are returned to
+//  the client untouched, because the OpenAI contract requires the client to
+//  answer every call it is handed. Streaming requests keep standard semantics:
+//  tool_calls are piped through, never buffered into a second assistant turn.
+//
+//  LEARNED ROUTING. Every tool-bearing completion grades the tuple that
+//  produced it — did the call name a declared tool, did the arguments parse,
+//  did they validate? The verdict feeds a discounted Beta posterior stored on
+//  the tuple record, which scoreRecord() then samples for tool-aware requests.
+//  That is the compounding part: the mesh gets better at *tools* over time.
+// ---------------------------------------------------------------------------
+
+/** The plane is on unless an operator explicitly turns it off. */
+function toolPlaneEnabled(): boolean {
+  return Deno.env.get("NOKEY_TOOLS") !== "0";
+}
+
+/** Server-side tool rounds per request. 0 = pure OpenAI passthrough. */
+function maxToolRounds(): number {
+  const raw = Deno.env.get("NOKEY_TOOL_ROUNDS");
+  if (raw === undefined || raw.trim() === "") return 3;
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) ? Math.round(clampNum(parsed, 0, 8)) : 3;
+}
+
+/** Admin context for tool routes: same semantics as the requireAdmin guard
+ *  (an unset ADMIN_SECRET means the deployment has no admin tier at all). */
+function isAdminContext(c: Context): boolean {
+  const secret = Deno.env.get("ADMIN_SECRET");
+  if (!secret) return true;
+  const provided = c.req.header("x-admin-secret") || "";
+  return Boolean(provided) && timingSafeCompare(provided, secret);
+}
+
+/** Spans accept scalar attributes only; everything else is stringified. */
+function traceAttrs(attrs: Json): Attrs {
+  const out: Attrs = {};
+  for (const [key, value] of Object.entries(attrs)) {
+    if (value === undefined) continue;
+    out[key] = typeof value === "object" && value !== null ? JSON.stringify(value).slice(0, 200) : value as string | number | boolean;
+  }
+  return out;
+}
+
+/** Look up a client-declared tool's schema so its arguments can be graded. */
+function declaredToolSchema(declared: unknown[], name: string): unknown {
+  for (const entry of declared ?? []) {
+    if (!entry || typeof entry !== "object") continue;
+    const holder = entry as Json;
+    const fn = (holder.function ?? holder) as Json;
+    if (typeof fn.name !== "string") continue;
+    if (fn.name === name || fn.name.toLowerCase() === name.toLowerCase()) {
+      return fn.parameters ?? fn.input_schema ?? true;
+    }
+  }
+  return undefined;
+}
+
+// ---------------------------------------------------------------------------
+// MESH TOOLS — the router's own capabilities, exposed to every model
+// ---------------------------------------------------------------------------
+
+function registerMeshTools(): void {
+  registerTool({
+    name: "router_catalog",
+    aliases: ["router.catalog", "catalog", "mesh_catalog"],
+    kind: "mesh",
+    description:
+      "Rank the nokey-router mesh right now: the live (provider, model) tuples the dispatcher would actually try, with their learned telemetry — effective IQ, reliability draw, EWMA TTFT, expected completion time, and tool-call competence. Use it to answer \"which model should I use?\" with evidence instead of guessing.",
+    parameters: {
+      type: "object",
+      properties: {
+        mode: { type: "string", enum: ["fast", "smart", "code", "reasoning", "tools"], default: "smart", description: "Which lane to rank. `tools` ranks by learned tool-call competence." },
+        limit: { type: "integer", minimum: 1, maximum: 50, default: 10 },
+        provider: { type: "string", description: "Only tuples from this provider id." },
+        min_iq: { type: "number", minimum: 0, maximum: 1, description: "Drop tuples below this effective IQ." },
+      },
+      additionalProperties: false,
+    },
+    run: async (args) => {
+      const modeRaw = String(args.mode ?? "smart").toLowerCase();
+      const mode: RoutingMode = (["fast", "smart", "code", "reasoning"].includes(modeRaw) ? modeRaw : "smart") as RoutingMode;
+      const toolAware = modeRaw === "tools";
+      const limit = Math.round(clampNum(Number(args.limit ?? 10), 1, 50));
+      const minIq = Number(args.min_iq ?? 0);
+      const provider = typeof args.provider === "string" ? args.provider.toLowerCase() : undefined;
+      const ranked = await getRankedCandidates(mode, true, false, { toolAware });
+      const rows = ranked
+        .filter((c) => (!provider || c.providerId.toLowerCase().includes(provider)) && c.iqEffective >= minIq)
+        .slice(0, limit)
+        .map((c, i) => ({
+          rank: i + 1,
+          tuple_id: c.tupleId,
+          provider: c.providerId,
+          model: c.modelId,
+          iq_effective: c.iqEffective,
+          reliability_draw: c.reliabilityDraw,
+          ewma_ttft_ms: c.ewmaTtftMs,
+          ewma_tps: c.ewmaTps,
+          expected_ms: c.expectedFastMs,
+          smart_score: c.smartScore,
+          supports_reasoning: c.supportsReasoning,
+          supports_vision: c.supportsVision,
+          is_coding_specialist: c.isCodingSpecialist,
+          context_window: c.contextWindow,
+          tool_competence: c.toolCompetence,
+          tool_pulls: c.toolPulls,
+        }));
+      return { mode: toolAware ? "tools" : mode, lane: toolAware ? "free:tools" : `free:${mode}`, count: rows.length, ranked_from: ranked.length, candidates: rows };
+    },
+  });
+
+  registerTool({
+    name: "router_health",
+    aliases: ["router.health", "health"],
+    kind: "mesh",
+    description:
+      "Live health of this router deployment: control-kernel configuration, endpoint coverage, auth posture, tool-plane telemetry and the current best tuple per lane. Cheaper and more accurate than asking an operator.",
+    parameters: { type: "object", properties: { section: { type: "string", enum: ["all", "coverage", "control_kernel", "tool_plane", "security", "best"], default: "all" } }, additionalProperties: false },
+    run: async (args) => {
+      const health = await buildHealthPayload();
+      const section = String(args.section ?? "all");
+      if (section === "all") return health;
+      if (section === "best") {
+        return Object.fromEntries(Object.entries(health).filter(([k]) => k.startsWith("current_best_")));
+      }
+      return { [section]: health[section] ?? null };
+    },
+  });
+
+  registerTool({
+    name: "router_models",
+    aliases: ["router.models", "models", "list_models"],
+    kind: "mesh",
+    description:
+      "Every model id this router will accept, including the virtual lanes (free:auto, free:fast, free:smart, free:code, free:reasoning, free:tools) and the image models. Optionally filter by substring.",
+    parameters: {
+      type: "object",
+      properties: { filter: { type: "string", description: "Case-insensitive substring, e.g. \"claude\" or \"free:\"." }, limit: { type: "integer", minimum: 1, maximum: 500, default: 200 } },
+      additionalProperties: false,
+    },
+    run: async (args) => {
+      const list = await buildModelList();
+      const data = Array.isArray(list.data) ? (list.data as Json[]) : [];
+      const filter = typeof args.filter === "string" ? args.filter.toLowerCase() : "";
+      const limit = Math.round(clampNum(Number(args.limit ?? 200), 1, 500));
+      const rows = data.filter((m) => !filter || String(m.id ?? "").toLowerCase().includes(filter)).slice(0, limit);
+      return { total: data.length, returned: rows.length, filter: filter || null, accepts_any_model: list.accepts_any_model === true, data: rows };
+    },
+  });
+
+  registerTool({
+    name: "router_endpoints",
+    aliases: ["router.endpoints", "endpoints", "coverage"],
+    kind: "mesh",
+    description:
+      "Upstream endpoint coverage: how many keyless endpoints are configured, how many catalog tuples each contributes, and which model hints the exhaustive sweep will try per endpoint.",
+    parameters: { type: "object", properties: { limit: { type: "integer", minimum: 1, maximum: 500, default: 100 } }, additionalProperties: false },
+    run: async (args) => {
+      const coverage = await endpointCoverage();
+      const limit = Math.round(clampNum(Number(args.limit ?? 100), 1, 500));
+      return {
+        configured_endpoints: coverage.configured_endpoints,
+        registry_endpoints: coverage.registry_endpoints,
+        catalog_tuples: coverage.catalog_tuples,
+        sweep_candidates: coverage.sweep_candidates,
+        endpoints: coverage.endpoints.slice(0, limit),
+      };
+    },
+  });
+
+  registerTool({
+    name: "router_lane",
+    aliases: ["router.lane", "recommend_lane", "route"],
+    kind: "mesh",
+    description:
+      "Ask the router how IT would route a prompt: the intent classifier's lane (fast/smart/code/reasoning), whether tool competence should drive the choice, and the top tuples it would race. Use this before delegating a sub-task to another model.",
+    parameters: {
+      type: "object",
+      properties: {
+        prompt: { type: "string", description: "The user prompt to route." },
+        messages: { type: "array", items: { type: "object" }, description: "Full message list, if you have one." },
+        with_tools: { type: "boolean", default: false, description: "Rank by learned tool-call competence too." },
+        reasoning_effort: { type: "string", description: "Pass through a requested effort level." },
+        limit: { type: "integer", minimum: 1, maximum: 20, default: 3 },
+      },
+      additionalProperties: false,
+    },
+    run: async (args) => {
+      const messages = Array.isArray(args.messages) && args.messages.length > 0
+        ? normalizeMessages(args.messages)
+        : [{ role: "user", content: String(args.prompt ?? "") }];
+      const withTools = args.with_tools === true;
+      const effort = typeof args.reasoning_effort === "string" ? args.reasoning_effort : undefined;
+      const mode = classifyPromptIntent(messages, withTools, effort);
+      const limit = Math.round(clampNum(Number(args.limit ?? 3), 1, 20));
+      const ranked = await getRankedCandidates(mode, true, false, { toolAware: withTools });
+      return {
+        lane: `free:${mode}`,
+        mode,
+        tool_aware: withTools,
+        classifier: { prompt_chars: extractMessageText(messages).combinedText.length, vision: extractMessageText(messages).hasVisionPayload, reasoning_effort: effort ?? null },
+        candidates: ranked.slice(0, limit).map((c) => ({
+          tuple_id: c.tupleId, provider: c.providerId, model: c.modelId,
+          iq_effective: c.iqEffective, expected_ms: c.expectedFastMs, smart_score: c.smartScore, tool_competence: c.toolCompetence,
+        })),
+      };
+    },
+  });
+
+  registerTool({
+    name: "router_trace",
+    aliases: ["router.trace", "traces", "inspect_trace"],
+    kind: "mesh",
+    admin: true,
+    description:
+      "ADMIN ONLY. Read this isolate's trace ring: recent request traces, or one trace by id with its full span waterfall (rank, tier, negotiation, tool rounds). Requires the admin secret.",
+    parameters: {
+      type: "object",
+      properties: { trace_id: { type: "string" }, limit: { type: "integer", minimum: 1, maximum: 64, default: 10 } },
+      additionalProperties: false,
+    },
+    run: (args) => {
+      const id = typeof args.trace_id === "string" ? args.trace_id.trim() : "";
+      if (id) {
+        const trace = getTrace(id);
+        return trace ? { found: true, trace } : { found: false, error: `trace ${id.slice(0, 64)} is not in this isolate's ring` };
+      }
+      const limit = Math.round(clampNum(Number(args.limit ?? 10), 1, 64));
+      return { found: true, count: limit, traces: listTraces(limit) };
+    },
+  });
+}
+
+registerMeshTools();
+
+// ---------------------------------------------------------------------------
+// AGENT LOOP PLUMBING
+// ---------------------------------------------------------------------------
+
+export interface ToolRoundOutcome {
+  /** True when the router owned every call and executed them itself. */
+  loop: boolean;
+  /** `role:"tool"` messages to append, one per executed call, in call order. */
+  messages: Array<{ role: string; content: unknown } & Json>;
+  executed: Array<{ id: string; name: string; ok: boolean; ms: number; repaired: boolean; error?: string; code?: string }>;
+}
+
+/** Execute a completion's tool calls when — and only when — the plane owns all
+ *  of them. Client-declared tools are handed straight back to the caller. */
+async function executeOwnedToolCalls(
+  calls: unknown[],
+  opts: { span?: Span; admin?: boolean; signal?: AbortSignal; now?: number; clientNames?: string[] } = {},
+): Promise<ToolRoundOutcome> {
+  const { mine } = partitionToolCalls(calls, { clientNames: opts.clientNames });
+  if (mine.length === 0) return { loop: false, messages: [], executed: [] };
+
+  const skills = await hydrateToolSkills().catch(() => TOOL_SKILLS);
+  const locals: Json = { tool_skills: Object.fromEntries([...skills.entries()]) as Json };
+  const results = await executeToolCalls(
+    mine.map((call) => ({ id: call.id, name: call.resolved ?? call.name, arguments: call.arguments })),
+    {
+      admin: opts.admin ?? false,
+      locals,
+      signal: opts.signal,
+      now: opts.now,
+      event: (name, attrs) => opts.span?.event(name, traceAttrs(attrs ?? {})),
+    },
+  );
+
+  const byId = new Map(results.map((r) => [r.id, r]));
+  const messages: Array<{ role: string; content: unknown } & Json> = [];
+  const executed: ToolRoundOutcome["executed"] = [];
+  for (const call of mine) {
+    const result = byId.get(call.id);
+    const execution: ToolExecution | undefined = result?.execution;
+    const content = execution ? toolResultContent(execution) : JSON.stringify({ error: "tool execution was skipped" });
+    messages.push({ role: "tool", tool_call_id: call.id, name: call.name, content });
+    if (execution) {
+      executed.push({
+        id: call.id,
+        name: execution.tool ?? call.name,
+        ok: execution.ok,
+        ms: execution.ms,
+        repaired: execution.repaired ?? false,
+        ...(execution.ok ? {} : { error: execution.error.slice(0, 200), code: execution.code }),
+      });
+      // Skill memory compounds in the background; a KV hiccup never fails a request.
+      recordToolExecution(execution.tool ?? call.name, execution).catch(logErr);
+    }
+  }
+  return { loop: true, messages, executed };
+}
+
+export interface ToolCallVerdict {
+  /** Nothing to learn: no tool calls and no forced tool choice. */
+  neutral: boolean;
+  valid: boolean;
+  repaired: boolean;
+  calls: number;
+  problems: string[];
+}
+
+/**
+ * Grade a completion's tool calls against the tools that were declared for it.
+ * A call is valid when it names a declared tool and its arguments survive the
+ * repair ladder and validate against that tool's schema. This verdict is what
+ * the tuple's tool posterior learns from, so it is deliberately strict about
+ * hallucinated names and lenient about wire-format damage.
+ */
+function gradeToolCalls(
+  calls: unknown[],
+  declared: unknown[],
+  toolChoice: unknown,
+): ToolCallVerdict {
+  const forced = toolChoice === "required" || toolChoice === "any" ||
+    (toolChoice && typeof toolChoice === "object" && typeof (toolChoice as Json).type === "string");
+  const normalized = normalizeToolCalls(calls);
+  if (normalized.length === 0) {
+    return forced
+      ? { neutral: false, valid: false, repaired: false, calls: 0, problems: ["tool_choice required a call but none was produced"] }
+      : { neutral: true, valid: false, repaired: false, calls: 0, problems: [] };
+  }
+  const problems: string[] = [];
+  let repaired = false;
+  for (const call of normalized) {
+    // The caller's own declaration wins: a client tool that shadows a built-in
+    // is graded against the client's schema, never the registry's.
+    const declaredSchema = declaredToolSchema(declared, call.name) ??
+      (call.resolved ? declaredToolSchema(declared, call.resolved) : undefined);
+    const builtin = call.builtin ? listTools().find((t) => t.name === call.resolved) : undefined;
+    const schema = declaredSchema ?? builtin?.parameters;
+    if (schema === undefined) {
+      problems.push(`${call.name}: not a declared tool`);
+      continue;
+    }
+    const parsed = parseToolArguments(call.arguments, schema, { coerce: true });
+    if (parsed.repaired) repaired = true;
+    if (!parsed.ok) problems.push(`${call.name}: ${parsed.error ?? "invalid arguments"}`.slice(0, 200));
+  }
+  return { neutral: false, valid: problems.length === 0, repaired, calls: normalized.length, problems };
+}
+
+/** Fold a verdict into the tuple's stored tool posterior (CAS, best effort). */
+async function learnToolVerdict(tupleId: string, verdict: ToolCallVerdict): Promise<void> {
+  if (verdict.neutral) return;
+  const now = Date.now();
+  try {
+    await atomicUpdateModel(tupleId, (r) => ({
+      ...r,
+      ...observeTupleToolStats(r, { valid: verdict.valid, repaired: verdict.repaired }, now),
+    }));
+  } catch (err) {
+    console.error("[tools] tuple competence update failed:", err);
+  }
+}
+
+// ============================================================================
 // 8. HONO HTTP APPLICATION & FRESH 2.0 COMPATIBILITY SHIM
 // ============================================================================
 
@@ -2472,7 +2987,8 @@ for (const [route, file, type] of [
     return new Response(body, { headers: { "Content-Type": type, "Cache-Control": "no-cache" } });
   });
 }
-honoApp.get("/health", async (c) => {
+/** The whole /health document, also served to models through `router_health`. */
+async function buildHealthPayload(): Promise<Json> {
   const safeRank = async (m: RoutingMode) => {
     try {
       return (await getRankedCandidates(m, true)).slice(0, 5);
@@ -2487,12 +3003,19 @@ honoApp.get("/health", async (c) => {
   const smartRank = await safeRank("smart");
   const codeRank = await safeRank("code");
   const reasoningRank = await safeRank("reasoning");
+  // The tools lane is the smart lane ranked by learned tool-call competence.
+  const toolsRank = await getRankedCandidates("smart", true, false, { toolAware: true })
+    .then((r) => r.slice(0, 5))
+    .catch((err) => {
+      console.error("health rank tools:", err);
+      return [] as ScoredCandidate[];
+    });
   const coverage = await endpointCoverage().catch((err) => {
     console.error("health coverage:", err);
     return { configured_endpoints: 0, registry_endpoints: 0, catalog_tuples: L1_CACHE.size, sweep_candidates: 0 };
   });
-  return c.json({
-    engine: "nokey-sovereign-v6-asck1-exhaustive",
+  return {
+    engine: "nokey-sovereign-v6-asck1-toolplane",
     runtime: "deno-deploy-kv-cas-l1",
     control_kernel: {
       name: "ASCK v1",
@@ -2503,6 +3026,17 @@ honoApp.get("/health", async (c) => {
       dispatch_tiers: ["mode-ranked", "cross-lane-proven", "full-catalog", "exhaustive-endpoint-sweep"],
       request_guarantee: "always 200; graceful degraded completion after full sweep",
       strict_errors: Deno.env.get("NOKEY_STRICT_ERRORS") === "1",
+    },
+    tool_plane: {
+      name: "ASCK-T v1",
+      builtin_tools: toolPlaneTotals().tools,
+      instrumented_tools: toolPlaneTotals().instrumented,
+      executions: toolPlaneTotals().calls,
+      errors: toolPlaneTotals().errors,
+      repaired_calls: toolPlaneTotals().repairs,
+      auto_tools: DEFAULT_AUTO_TOOLS.length,
+      agent_rounds: maxToolRounds(),
+      learning: "per-tool Beta posterior + Kalman latency, per-tuple tool-call competence",
     },
     security: {
       auth_enabled: Boolean(Deno.env.get("ROUTER_API_KEY")),
@@ -2521,8 +3055,11 @@ honoApp.get("/health", async (c) => {
     current_best_smart: smartRank,
     current_best_code: codeRank,
     current_best_reasoning: reasoningRank,
-  });
-});
+    current_best_tools: toolsRank,
+  };
+}
+
+honoApp.get("/health", async (c) => c.json(await buildHealthPayload()));
 
 // Live, dependency-free view of exactly what the exhaustive sweep will try.
 honoApp.get("/v1/endpoints", async (c) => {
@@ -2542,7 +3079,8 @@ honoApp.get("/v1/endpoints", async (c) => {
   }
 });
 
-honoApp.get("/v1/models", async (c) => {
+/** The advertised model list, shared with the `router_models` mesh tool. */
+async function buildModelList(): Promise<Json> {
   const ranked = await getRankedCandidates("smart", true).catch((err) => {
     console.error("models ranking:", err);
     return [];
@@ -2554,6 +3092,7 @@ honoApp.get("/v1/models", async (c) => {
     "free:smart",
     "free:code",
     "free:reasoning",
+    "free:tools",
   ].map((id) => ({
     id,
     object: "model",
@@ -2581,12 +3120,129 @@ honoApp.get("/v1/models", async (c) => {
     owned_by: "nokey-image",
   }));
 
-  return c.json({
+  return {
     object: "list",
     accepts_any_model: true,
     model_policy: "unknown model ids are routed by trigram/Jaccard similarity and fall back to the exhaustive endpoint sweep",
     data: [...virtualAliases, ...imageModels, ...discoveredModels],
+  };
+}
+
+honoApp.get("/v1/models", async (c) => c.json(await buildModelList()));
+
+// ---------------------------------------------------------------------------
+// TOOL PLANE HTTP SURFACE
+// GET  /v1/tools          the registry, its learned skill memory, and a
+//                         ready-to-paste projection for any vendor wire format
+// POST /v1/tools/execute  run tool calls directly (client-side agent loops,
+//                         the workspace console, or a model with no tools)
+// ---------------------------------------------------------------------------
+
+const TOOL_FLAVORS = ["openai", "openai-strict", "anthropic", "gemini"] as const;
+
+honoApp.get("/v1/tools", async (c) => {
+  const now = Date.now();
+  await hydrateToolSkills().catch((err) => console.error("tool skill hydrate:", err));
+  const admin = isAdminContext(c);
+  const flavorRaw = (c.req.query("flavor") ?? "openai").toLowerCase();
+  const flavor = (TOOL_FLAVORS.includes(flavorRaw as typeof TOOL_FLAVORS[number]) ? flavorRaw : "openai") as ToolFlavor;
+  const withSchemas = c.req.query("schemas") !== "0";
+  const skills = toolSkillsSnapshot(now);
+  const registry = listTools()
+    .filter((t) => admin || !t.admin)
+    .map((t) => ({
+      name: t.name,
+      kind: t.kind,
+      description: t.description,
+      aliases: t.aliases ?? [],
+      deterministic: t.deterministic ?? false,
+      admin: t.admin ?? false,
+      ...(withSchemas ? { parameters: t.parameters } : {}),
+      skill: skills[t.name] ?? null,
+    }));
+  return c.json({
+    object: "list",
+    plane: "asck-t-v1",
+    enabled: toolPlaneEnabled(),
+    agent: { max_rounds: maxToolRounds(), auto_tools: DEFAULT_AUTO_TOOLS },
+    count: registry.length,
+    totals: toolPlaneTotals(now),
+    data: registry,
+    skills,
+    wire: { flavor, tools: toToolSpecs({ flavor, includeAdmin: admin }) },
   });
+});
+
+honoApp.post("/v1/tools/execute", async (c) => {
+  const root = startTrace("tools.execute", {}, c.req.header("traceparent"));
+  const traceHeaders = { traceparent: root.traceparent };
+  try {
+    const body = await c.req.json().catch(() => ({} as Json)) as Json;
+    const admin = isAdminContext(c);
+    const rawCalls = Array.isArray(body.calls) ? body.calls : [body];
+    const calls = rawCalls
+      .filter((entry) => entry && typeof entry === "object")
+      .slice(0, 16)
+      .map((entry, i) => {
+        const e = entry as Json;
+        const fn = (e.function ?? e) as Json;
+        const args = fn.arguments ?? e.arguments ?? e.args ?? {};
+        return {
+          id: typeof e.id === "string" && e.id ? e.id : `call_${i}`,
+          // OpenAI nests name/arguments under `function`; Anthropic and direct
+          // callers put them at the top level. Accept both.
+          name: String(fn.name ?? e.name ?? e.tool ?? ""),
+          arguments: args,
+        };
+      });
+
+    await hydrateToolSkills().catch(logErr);
+    const locals: Json = { tool_skills: Object.fromEntries([...TOOL_SKILLS.entries()]) as Json };
+    const timeoutMs = Math.round(clampNum(Number(body.timeout_ms) || 4000, 50, 30_000));
+
+    const results = await Promise.all(calls.map(async (call) => {
+      const span = root.child("tool", { name: call.name, id: call.id });
+      const execution = await executeTool(call.name, call.arguments, {
+        admin,
+        locals,
+        timeoutMs,
+        now: Date.now(),
+        event: (name, attrs) => span.event(name, traceAttrs(attrs ?? {})),
+      });
+      span.end(execution.ok ? "ok" : "error", {
+        ms: execution.ms,
+        strategy: execution.strategy ?? "",
+        repairs: (execution.repairs ?? []).join(",").slice(0, 160),
+        ...(execution.ok ? { bytes: execution.bytes, truncated: execution.truncated } : { code: execution.code }),
+      });
+      // Every direct execution teaches the plane too, and it is awaited so the
+      // response's own `totals` already include this request.
+      await recordToolExecution(execution.tool ?? call.name, execution).catch(logErr);
+      return {
+        id: call.id,
+        name: execution.tool ?? call.name,
+        ok: execution.ok,
+        ms: execution.ms,
+        ...(execution.ok
+          ? { result: execution.result, strategy: execution.strategy, repairs: execution.repairs, truncated: execution.truncated, bytes: execution.bytes }
+          : { error: execution.error, code: execution.code, suggestions: execution.suggestions ?? [], issues: execution.issues ?? [] }),
+      };
+    }));
+
+    const ok = results.every((r) => r.ok);
+    root.end(ok ? "ok" : "error", { calls: results.length, failures: results.filter((r) => !r.ok).length });
+    return c.json({
+      object: "list",
+      count: results.length,
+      ok,
+      results,
+      totals: toolPlaneTotals(),
+      trace_id: root.traceId,
+    }, 200, traceHeaders);
+  } catch (err) {
+    root.end("error", { error: errText(err).slice(0, 200) });
+    return c.json({ object: "list", count: 0, ok: false, error: errText(err), results: [] }, 200, traceHeaders);
+  }
 });
 
 honoApp.post("/v1/probe", requireAdmin, async (c) => {
@@ -2681,7 +3337,38 @@ honoApp.post("/v1/chat/completions", async (c) => {
     reqModel = String(body.model || "free:auto");
     const reqModelLower = reqModel.toLowerCase();
     wantsStream = Boolean(body.stream);
-    const hasTools = Array.isArray(body.tools) && body.tools.length > 0;
+
+    // ---- Tool Plane: what this request may call ---------------------------
+    // A client can bring its own tools, ask the router for its built-ins
+    // ("tools": "auto" | "nokey_tools" | header x-nokey-tools), or both. Built-ins
+    // are appended, never substituted: a client tool that shadows a built-in name
+    // always wins, so the plane cannot hijack a caller's own API.
+    const clientTools = Array.isArray(body.tools) ? (body.tools as unknown[]) : [];
+    const autoRequest = body.tools === "auto" || body.tools === true
+      ? "auto"
+      : body.nokey_tools ?? c.req.header("x-nokey-tools") ?? undefined;
+    const autoTools = toolPlaneEnabled() ? resolveAutoToolNames(autoRequest) : null;
+    const declaredTools = autoTools ? mergeToolDeclarations(clientTools, { names: autoTools }) : clientTools;
+    const hasTools = declaredTools.length > 0;
+    // Names the caller declared itself. A client tool that shadows a built-in
+    // stays the client's, so the plane never hijacks the caller's own API.
+    const clientToolNames = clientTools
+      .map((t) => {
+        const entry = (t ?? {}) as Json;
+        const fn = (entry.function && typeof entry.function === "object" ? entry.function : entry) as Json;
+        return typeof fn.name === "string" ? fn.name : "";
+      })
+      .filter(Boolean);
+    // Self-execution is opt-in: only when the router supplied the tools does it
+    // run the agentic loop. Otherwise tool_calls go straight back to the caller.
+    const agentRounds = autoTools ? maxToolRounds() : 0;
+    const toolAware = hasTools || reqModel.toLowerCase().includes("tools");
+    // One line of instruction materially raises tool-use rates on small free
+    // models, which otherwise answer from memory. Only added when the router
+    // will actually execute the calls; opt out with nokey_preamble: false.
+    if (autoTools && agentRounds > 0 && body.nokey_preamble !== false) {
+      messages.unshift({ role: "system", content: toolPreamble(autoTools) });
+    }
     const { hasVisionPayload } = extractMessageText(messages);
 
     try {
@@ -2699,13 +3386,14 @@ honoApp.post("/v1/chat/completions", async (c) => {
         : undefined,
       top_p: typeof body.top_p === "number" ? body.top_p : undefined,
       reasoning_effort: typeof body.reasoning_effort === "string" ? body.reasoning_effort : undefined,
-      tools: hasTools ? (body.tools as unknown[]) : undefined,
+      tools: hasTools ? declaredTools : undefined,
       tool_choice: body.tool_choice,
       parallel_tool_calls: typeof body.parallel_tool_calls === "boolean" ? body.parallel_tool_calls : undefined,
       reasoning: body.reasoning,
       response_format: body.response_format,
     };
 
+    // free:tools ranks the smart lane by learned tool-call competence.
     const mode: RoutingMode = reqModelLower.includes("auto")
       ? classifyPromptIntent(messages, hasTools, completionOptions.reasoning_effort)
       : reqModelLower.includes("fast")
@@ -2721,7 +3409,9 @@ honoApp.post("/v1/chat/completions", async (c) => {
       mode,
       stream: wantsStream,
       messages: messages.length,
-      tools: hasTools ? (body.tools as unknown[]).length : 0,
+      tools: declaredTools.length,
+      auto_tools: autoTools?.length ?? 0,
+      agent_rounds: agentRounds,
       parallel_tool_calls: completionOptions.parallel_tool_calls,
       vision: hasVisionPayload,
       endpoints: endpointsAvailable,
@@ -2729,7 +3419,7 @@ honoApp.post("/v1/chat/completions", async (c) => {
 
     const safeRanked = async (m: RoutingMode, o: RankOptions = {}): Promise<ScoredCandidate[]> => {
       try {
-        return await getRankedCandidates(m, false, false, o);
+        return await getRankedCandidates(m, false, false, { ...o, toolAware });
       } catch (err) {
         console.error(`[rank] ${m} ranking failed:`, err);
         return [];
@@ -2739,7 +3429,7 @@ honoApp.post("/v1/chat/completions", async (c) => {
     const rankSpan = root.child("rank", { mode });
     let ranked = await safeRanked(mode, {});
     // Vision lanes must not filter themselves into an empty pool.
-    if (ranked.length === 0 && hasVisionPayload) ranked = await getRankedCandidates(mode, false, hasVisionPayload).catch(() => []);
+    if (ranked.length === 0 && hasVisionPayload) ranked = await getRankedCandidates(mode, false, hasVisionPayload, { toolAware }).catch(() => []);
     if (ranked.length === 0) ranked = await safeRanked(mode, { unrestricted: true });
     if (ranked.length === 0) ranked = await allSweepCandidates(mode).catch(() => []);
 
@@ -2906,67 +3596,142 @@ honoApp.post("/v1/chat/completions", async (c) => {
 
     if (!wantsStream) {
       try {
-        // A generation that dies after its first token re-dispatches once over the untried pool.
-        for (let round = 0; round < 2; round++) {
-          const { cand, up } = await dispatch();
-          try {
-            const res = await collectUpstream(up);
-            recordTupleSuccess(cand.tupleId, res.ttftMs, res.totalMs, res.estTokens).catch(logErr);
-            root.end("ok", {
-              tuple: cand.tupleId,
-              provider: cand.providerId,
-              ttft_ms: res.ttftMs,
-              total_ms: res.totalMs,
-              attempts: tried.size,
-              finish: res.finish ?? (res.toolCalls ? "tool_calls" : "stop"),
-              tool_calls: res.toolCalls?.length ?? 0,
-              content_chars: res.content.length,
-              reasoning_chars: res.reasoningContent?.length ?? 0,
-            });
-            return c.json({
-              id: completionId,
-              object: "chat.completion",
-              created,
-              model: cand.modelId,
-              provider: cand.providerId,
-              nokey: meta(cand),
-              telemetry: {
-                mode_selected: mode,
-                iq_effective: cand.iqEffective,
-                supports_reasoning: cand.supportsReasoning,
-                is_coding_specialist: cand.isCodingSpecialist,
-                reliability_draw: cand.reliabilityDraw,
-                observed_ttft_ms: res.ttftMs,
-                observed_total_ms: res.totalMs,
-                ewma_tps: cand.ewmaTps,
-                attempts: tried.size,
-              },
-              choices: [
-                {
-                  index: 0,
-                  message: {
-                    role: "assistant",
-                    content: res.toolCalls && !res.content ? null : res.content,
-                    ...(res.reasoningContent ? { reasoning_content: res.reasoningContent } : {}),
-                    ...(res.toolCalls ? { tool_calls: res.toolCalls } : {}),
-                  },
-                  finish_reason: res.finish ?? (res.toolCalls ? "tool_calls" : "stop"),
-                },
-              ],
-            }, 200, {
-              ...traceHeaders,
-              "Server-Timing": `ttft;dur=${res.ttftMs}, total;dur=${Math.round(root.ms)}`,
-              "X-Nokey-Attempts": String(tried.size),
-              "X-Nokey-Endpoints": String(endpointsAvailable),
-            });
-          } catch (e) {
-            if (master.signal.aborted) break;
-            lastErr = e;
-            root.event("generation_failed", { tuple: cand.tupleId, error: errText(e).slice(0, 200) });
-            recordTupleFailure(cand.tupleId, errText(e)).catch(logErr);
+        // Outer loop = server-side agent rounds (only when the plane supplied the
+        // tools). Inner loop = the existing post-first-token failover: a
+        // generation that dies after its first token re-dispatches once over the
+        // untried pool.
+        let toolRound = 0;
+        const toolLog: Array<{ round: number; tool: string; ok: boolean; ms: number; repaired: boolean; code?: string; error?: string }> = [];
+        for (;;) {
+          let produced: { cand: ScoredCandidate; res: CompletionResult & { finish?: string } } | null = null;
+          for (let round = 0; round < 2; round++) {
+            const { cand, up } = await dispatch();
+            try {
+              const res = await collectUpstream(up);
+              recordTupleSuccess(cand.tupleId, res.ttftMs, res.totalMs, res.estTokens).catch(logErr);
+              produced = { cand, res };
+              break;
+            } catch (e) {
+              if (master.signal.aborted) break;
+              lastErr = e;
+              root.event("generation_failed", { tuple: cand.tupleId, error: errText(e).slice(0, 200) });
+              recordTupleFailure(cand.tupleId, errText(e)).catch(logErr);
+            }
           }
+          if (!produced) throw lastErr ?? new Error("No endpoint completed a full generation");
+          const { cand, res } = produced;
+
+          // ---- Tool Plane: grade what the model emitted, then learn --------
+          if (declaredTools.length > 0) {
+            const verdict = gradeToolCalls(res.toolCalls ?? [], declaredTools, completionOptions.tool_choice);
+            if (!verdict.neutral) {
+              learnToolVerdict(cand.tupleId, verdict).catch(logErr);
+              root.event("tool_verdict", {
+                tuple: cand.tupleId,
+                valid: verdict.valid,
+                repaired: verdict.repaired,
+                calls: verdict.calls,
+                problems: verdict.problems.slice(0, 2).join(" | ").slice(0, 200),
+              });
+            }
+          }
+
+          // ---- Agent loop: execute the plane's own calls and continue ------
+          const wantLoop = agentRounds > 0 && toolRound < agentRounds &&
+            (res.toolCalls?.length ?? 0) > 0 && !master.signal.aborted;
+          if (wantLoop) {
+            const roundSpan = root.child("tool_round", { round: toolRound + 1, calls: res.toolCalls!.length, tuple: cand.tupleId });
+            const outcome = await executeOwnedToolCalls(res.toolCalls!, { span: roundSpan, signal: master.signal, clientNames: clientToolNames });
+            if (outcome.loop) {
+              for (const e of outcome.executed) {
+                toolLog.push({
+                  round: toolRound + 1,
+                  tool: e.name,
+                  ok: e.ok,
+                  ms: e.ms,
+                  repaired: e.repaired,
+                  ...(e.code ? { code: e.code, error: e.error } : {}),
+                });
+              }
+              roundSpan.end("ok", {
+                executed: outcome.executed.length,
+                failures: outcome.executed.filter((e) => !e.ok).length,
+                tools: outcome.executed.map((e) => e.name).join(",").slice(0, 200),
+              });
+              // The conversation continues: assistant call, then one tool
+              // message per call, in order, exactly as the protocol requires.
+              messages.push({
+                role: "assistant",
+                content: res.content ? res.content : null,
+                tool_calls: res.toolCalls,
+              } as unknown as { role: string; content: unknown });
+              for (const m of outcome.messages) messages.push(m);
+              toolRound += 1;
+              // Keep the winner available for its own continuation; tuples that
+              // already failed this request stay excluded.
+              tried.delete(cand.tupleId);
+              root.event("tool_round_done", { round: toolRound, messages: messages.length });
+              continue;
+            }
+            roundSpan.end("ok", { executed: 0, reason: "tool calls belong to the client" });
+          }
+
+          root.end("ok", {
+            tuple: cand.tupleId,
+            provider: cand.providerId,
+            ttft_ms: res.ttftMs,
+            total_ms: res.totalMs,
+            attempts: tried.size,
+            finish: res.finish ?? (res.toolCalls ? "tool_calls" : "stop"),
+            tool_calls: res.toolCalls?.length ?? 0,
+            tool_rounds: toolRound,
+            content_chars: res.content.length,
+            reasoning_chars: res.reasoningContent?.length ?? 0,
+          });
+          return c.json({
+            id: completionId,
+            object: "chat.completion",
+            created,
+            model: cand.modelId,
+            provider: cand.providerId,
+            nokey: {
+              ...meta(cand),
+              ...(toolRound > 0 ? { tool_rounds: toolRound, tools_executed: toolLog } : {}),
+            },
+            telemetry: {
+              mode_selected: mode,
+              iq_effective: cand.iqEffective,
+              supports_reasoning: cand.supportsReasoning,
+              is_coding_specialist: cand.isCodingSpecialist,
+              reliability_draw: cand.reliabilityDraw,
+              tool_competence: cand.toolCompetence,
+              tool_pulls: cand.toolPulls,
+              tool_rounds: toolRound,
+              observed_ttft_ms: res.ttftMs,
+              observed_total_ms: res.totalMs,
+              ewma_tps: cand.ewmaTps,
+              attempts: tried.size,
+            },
+            choices: [
+              {
+                index: 0,
+                message: {
+                  role: "assistant",
+                  content: res.toolCalls && !res.content ? null : res.content,
+                  ...(res.reasoningContent ? { reasoning_content: res.reasoningContent } : {}),
+                  ...(res.toolCalls ? { tool_calls: res.toolCalls } : {}),
+                },
+                finish_reason: res.finish ?? (res.toolCalls ? "tool_calls" : "stop"),
+              },
+            ],
+          }, 200, {
+            ...traceHeaders,
+            "Server-Timing": `ttft;dur=${res.ttftMs}, total;dur=${Math.round(root.ms)}`,
+            "X-Nokey-Attempts": String(tried.size),
+            "X-Nokey-Endpoints": String(endpointsAvailable),
+            ...(toolRound > 0 ? { "X-Nokey-Tool-Rounds": String(toolRound) } : {}),
+          });
         }
-        throw lastErr ?? new Error("No endpoint completed a full generation");
       } finally {
         clearTimeout(globalTimeout);
       }
@@ -2974,95 +3739,223 @@ honoApp.post("/v1/chat/completions", async (c) => {
 
     // Headers leave immediately; routing proceeds behind heartbeat comments and the
     // committed winner is piped token-by-token (post-commit failover is impossible).
+    // Headers leave immediately; routing proceeds behind heartbeat comments and the
+    // committed winner is piped token-by-token (post-commit failover is impossible).
+    // When the plane supplied the tools, a round that only produces tool calls is
+    // drained quietly, executed server-side and re-dispatched: the client sees
+    // `nokey` status frames instead of intermediate assistant chatter, then the
+    // final answer streams normally.
     const sse = async function* (): AsyncGenerator<string> {
       let ok = false;
+      let toolRound = 0;
+      let quietFails = 0;
       try {
         yield `: trace ${root.traceId}\n\n`;
-        const settled = dispatch().then((v) => ({ v }), (e: unknown) => ({ e }));
-        let r: { v: Dispatched } | { e: unknown } | undefined;
-        while (true) {
-          let hb: ReturnType<typeof setTimeout> | undefined;
-          r = await Promise.race([settled, new Promise<undefined>((res) => hb = setTimeout(() => res(undefined), HEARTBEAT_MS))]);
-          clearTimeout(hb);
-          if (r) break;
-          yield `: routing attempts=${tried.size}\n\n`;
+        for (;;) {
+          const settled = dispatch().then((v) => ({ v }), (e: unknown) => ({ e }));
+          let r: { v: Dispatched } | { e: unknown } | undefined;
+          while (true) {
+            let hb: ReturnType<typeof setTimeout> | undefined;
+            r = await Promise.race([settled, new Promise<undefined>((res) => hb = setTimeout(() => res(undefined), HEARTBEAT_MS))]);
+            clearTimeout(hb);
+            if (r) break;
+            yield `: routing attempts=${tried.size} round=${toolRound}\n\n`;
+          }
+          if ("e" in r) {
+            endDegraded(r.e);
+            ok = true;
+            if (Deno.env.get("NOKEY_STRICT_ERRORS") === "1") {
+              yield `data: ${JSON.stringify({ error: { message: errText(r.e) } })}\n\ndata: [DONE]\n\n`;
+            } else {
+              yield degradedSse(degradedOpts(r.e));
+            }
+            return;
+          }
+          const { cand, up } = r.v;
+          root.event("first_token", { tuple: cand.tupleId, ttft_ms: up.ttftMs, round: toolRound });
+          const chunk = (delta: Record<string, unknown>, finish: string | null, extra: Json = {}) =>
+            `data: ${JSON.stringify({
+              id: completionId,
+              object: "chat.completion.chunk",
+              created,
+              model: cand.modelId,
+              provider: cand.providerId,
+              ...extra,
+              choices: [{ index: 0, delta, finish_reason: finish }],
+            })}\n\n`;
+          // Router bookkeeping travels with an empty `choices` array, so strict
+          // OpenAI clients never mistake it for assistant output.
+          const status = (payload: Json) =>
+            `data: ${JSON.stringify({
+              id: completionId,
+              object: "chat.completion.chunk",
+              created,
+              model: cand.modelId,
+              provider: "nokey-router",
+              nokey: payload,
+              choices: [],
+            })}\n\n`;
+
+          const headHasTools = up.head.some((d) => d.toolCalls);
+          if (agentRounds > 0 && headHasTools && toolRound < agentRounds && !master.signal.aborted) {
+            let quiet: CompletionResult & { finish?: string };
+            try {
+              quiet = await collectUpstream(up);
+            } catch (e) {
+              if (!master.signal.aborted) recordTupleFailure(cand.tupleId, errText(e)).catch(logErr);
+              root.event("tool_round_failed", { tuple: cand.tupleId, error: errText(e).slice(0, 200) });
+              if (++quietFails >= 2) {
+                root.end("error", { tuple: cand.tupleId, error: errText(e).slice(0, 300) });
+                yield `data: ${JSON.stringify({ error: { message: errText(e) } })}\n\n`;
+                yield "data: [DONE]\n\n";
+                ok = true;
+                return;
+              }
+              continue;
+            }
+            const quietTotalMs = Math.max(quiet.ttftMs + 1, Math.round(performance.now() - up.t0));
+            recordTupleSuccess(cand.tupleId, quiet.ttftMs, quietTotalMs, quiet.estTokens).catch(logErr);
+
+            if (declaredTools.length > 0) {
+              const verdict = gradeToolCalls(quiet.toolCalls ?? [], declaredTools, completionOptions.tool_choice);
+              if (!verdict.neutral) {
+                learnToolVerdict(cand.tupleId, verdict).catch(logErr);
+                root.event("tool_verdict", {
+                  tuple: cand.tupleId,
+                  valid: verdict.valid,
+                  repaired: verdict.repaired,
+                  calls: verdict.calls,
+                  problems: verdict.problems.slice(0, 2).join(" | ").slice(0, 200),
+                });
+              }
+            }
+
+            const roundSpan = root.child("tool_round", { round: toolRound + 1, calls: quiet.toolCalls?.length ?? 0, tuple: cand.tupleId });
+            const outcome = await executeOwnedToolCalls(quiet.toolCalls ?? [], { span: roundSpan, signal: master.signal, clientNames: clientToolNames });
+            if (outcome.loop) {
+              roundSpan.end("ok", {
+                executed: outcome.executed.length,
+                failures: outcome.executed.filter((e) => !e.ok).length,
+                tools: outcome.executed.map((e) => e.name).join(",").slice(0, 200),
+              });
+              messages.push({
+                role: "assistant",
+                content: quiet.content ? quiet.content : null,
+                tool_calls: quiet.toolCalls,
+              } as unknown as { role: string; content: unknown });
+              for (const m of outcome.messages) messages.push(m);
+              toolRound += 1;
+              tried.delete(cand.tupleId);
+              yield status({
+                type: "tool_round",
+                round: toolRound,
+                tuple: cand.tupleId,
+                trace_id: root.traceId,
+                ...(quiet.content ? { interim_content: quiet.content.slice(0, 500) } : {}),
+                tools: outcome.executed.map((e) => ({ name: e.name, ok: e.ok, ms: e.ms, repaired: e.repaired, ...(e.error ? { error: e.error } : {}) })),
+              });
+              continue;
+            }
+            // The calls belong to the client: hand them over in one buffered delta,
+            // which is a legal SSE shape for tool_calls.
+            roundSpan.end("ok", { executed: 0, reason: "tool calls belong to the client" });
+            const clientDelta: Record<string, unknown> = { role: "assistant", tool_calls: quiet.toolCalls };
+            if (quiet.content) clientDelta.content = quiet.content;
+            if (quiet.reasoningContent) clientDelta.reasoning_content = quiet.reasoningContent;
+            yield chunk(clientDelta, null);
+            ok = true;
+            const clientFinish = quiet.finish ?? "tool_calls";
+            yield chunk({}, clientFinish, { nokey: { ...meta(cand), ...(toolRound > 0 ? { tool_rounds: toolRound } : {}) } });
+            root.end("ok", {
+              tuple: cand.tupleId,
+              provider: cand.providerId,
+              ttft_ms: quiet.ttftMs,
+              total_ms: quietTotalMs,
+              attempts: tried.size,
+              finish: clientFinish,
+              tool_calls: quiet.toolCalls?.length ?? 0,
+              tool_rounds: toolRound,
+              content_chars: quiet.content.length,
+              reasoning_chars: quiet.reasoningContent?.length ?? 0,
+            });
+            break;
+          }
+
+          let first = true;
+          const toolCalls = new Set<number>();
+          const streamedCalls = new Map<number, ToolCallDelta>();
+          let contentChars = 0;
+          let reasoning = "";
+          let finish: string | undefined;
+          const wire = (d: Delta): string | null => {
+            const out: Record<string, unknown> = {};
+            if (d.reasoning) out.reasoning_content = d.reasoning;
+            if (d.content) out.content = d.content;
+            if (d.toolCalls) {
+              out.tool_calls = d.toolCalls;
+              mergeToolCalls(streamedCalls, d.toolCalls);
+              for (const t of d.toolCalls) toolCalls.add(t.index);
+            }
+            contentChars += d.content?.trim() ? d.content.length : 0;
+            reasoning += d.reasoning ?? "";
+            finish = d.finish ?? finish;
+            if (Object.keys(out).length === 0) return null;
+            if (first) out.role = "assistant";
+            first = false;
+            return chunk(out, null);
+          };
+          try {
+            for (const d of up.head) {
+              const f = wire(d);
+              if (f) yield f;
+            }
+            for await (const d of up.tail) {
+              const f = wire(d);
+              if (f) yield f;
+            }
+            // Salvage parity with the buffered path: a reasoning-only stream also surfaces as content.
+            if (!contentChars && !toolCalls.size && reasoning.trim()) yield chunk({ content: reasoning.trim() }, null);
+            ok = true;
+            const fin = finish ?? (toolCalls.size ? "tool_calls" : "stop");
+            yield chunk({}, fin, { nokey: { ...meta(cand), ...(toolRound > 0 ? { tool_rounds: toolRound } : {}) } });
+            const totalMs = Math.max(up.ttftMs + 1, Math.round(performance.now() - up.t0));
+            recordTupleSuccess(cand.tupleId, up.ttftMs, totalMs, Math.max(1, Math.ceil((contentChars + reasoning.length) / 4))).catch(logErr);
+            if (declaredTools.length > 0 && streamedCalls.size > 0) {
+              // Streaming traffic teaches the mesh too: grade the reassembled
+              // calls exactly as the buffered path does.
+              const calls = [...streamedCalls.values()].sort((a, b) => a.index - b.index);
+              const verdict = gradeToolCalls(calls, declaredTools, completionOptions.tool_choice);
+              if (!verdict.neutral) {
+                learnToolVerdict(cand.tupleId, verdict).catch(logErr);
+                root.event("tool_verdict", {
+                  tuple: cand.tupleId,
+                  valid: verdict.valid,
+                  repaired: verdict.repaired,
+                  calls: verdict.calls,
+                  problems: verdict.problems.slice(0, 2).join(" | ").slice(0, 200),
+                });
+              }
+            }
+            root.end("ok", {
+              tuple: cand.tupleId,
+              provider: cand.providerId,
+              ttft_ms: up.ttftMs,
+              total_ms: totalMs,
+              attempts: tried.size,
+              finish: fin,
+              tool_calls: toolCalls.size,
+              tool_rounds: toolRound,
+              content_chars: contentChars,
+              reasoning_chars: reasoning.length,
+            });
+          } catch (e) {
+            if (!master.signal.aborted) recordTupleFailure(cand.tupleId, errText(e)).catch(logErr);
+            root.end("error", { tuple: cand.tupleId, error: errText(e).slice(0, 300), content_chars: contentChars });
+            yield `data: ${JSON.stringify({ error: { message: errText(e) } })}\n\n`;
         }
-        if ("e" in r) {
-          endDegraded(r.e);
-          ok = true;
-          if (Deno.env.get("NOKEY_STRICT_ERRORS") === "1") {
-            yield `data: ${JSON.stringify({ error: { message: errText(r.e) } })}\n\ndata: [DONE]\n\n`;
-          } else {
-            yield degradedSse(degradedOpts(r.e));
-          }
-          return;
+          break;
         }
-        const { cand, up } = r.v;
-        root.event("first_token", { tuple: cand.tupleId, ttft_ms: up.ttftMs });
-        const chunk = (delta: Record<string, unknown>, finish: string | null, extra: Json = {}) =>
-          `data: ${JSON.stringify({
-            id: completionId,
-            object: "chat.completion.chunk",
-            created,
-            model: cand.modelId,
-            provider: cand.providerId,
-            ...extra,
-            choices: [{ index: 0, delta, finish_reason: finish }],
-          })}\n\n`;
-        let first = true;
-        const toolCalls = new Set<number>();
-        let contentChars = 0;
-        let reasoning = "";
-        let finish: string | undefined;
-        const wire = (d: Delta): string | null => {
-          const out: Record<string, unknown> = {};
-          if (d.reasoning) out.reasoning_content = d.reasoning;
-          if (d.content) out.content = d.content;
-          if (d.toolCalls) {
-            out.tool_calls = d.toolCalls;
-            for (const t of d.toolCalls) toolCalls.add(t.index);
-          }
-          contentChars += d.content?.trim() ? d.content.length : 0;
-          reasoning += d.reasoning ?? "";
-          finish = d.finish ?? finish;
-          if (Object.keys(out).length === 0) return null;
-          if (first) out.role = "assistant";
-          first = false;
-          return chunk(out, null);
-        };
-        try {
-          for (const d of up.head) {
-            const f = wire(d);
-            if (f) yield f;
-          }
-          for await (const d of up.tail) {
-            const f = wire(d);
-            if (f) yield f;
-          }
-          // Salvage parity with the buffered path: a reasoning-only stream also surfaces as content.
-          if (!contentChars && !toolCalls.size && reasoning.trim()) yield chunk({ content: reasoning.trim() }, null);
-          ok = true;
-          const fin = finish ?? (toolCalls.size ? "tool_calls" : "stop");
-          yield chunk({}, fin, { nokey: meta(cand) });
-          const totalMs = Math.max(up.ttftMs + 1, Math.round(performance.now() - up.t0));
-          recordTupleSuccess(cand.tupleId, up.ttftMs, totalMs, Math.max(1, Math.ceil((contentChars + reasoning.length) / 4))).catch(logErr);
-          root.end("ok", {
-            tuple: cand.tupleId,
-            provider: cand.providerId,
-            ttft_ms: up.ttftMs,
-            total_ms: totalMs,
-            attempts: tried.size,
-            finish: fin,
-            tool_calls: toolCalls.size,
-            content_chars: contentChars,
-            reasoning_chars: reasoning.length,
-          });
-        } catch (e) {
-          if (!master.signal.aborted) recordTupleFailure(cand.tupleId, errText(e)).catch(logErr);
-          root.end("error", { tuple: cand.tupleId, error: errText(e).slice(0, 300), content_chars: contentChars });
-          yield `data: ${JSON.stringify({ error: { message: errText(e) } })}\n\n`;
-        }
-        yield "data: [DONE]\n\n";
+          yield "data: [DONE]\n\n";
       } finally {
         clearTimeout(globalTimeout);
         if (!ok) {
