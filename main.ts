@@ -2600,12 +2600,16 @@ function toolPlaneEnabled(): boolean {
   return Deno.env.get("NOKEY_TOOLS") !== "0";
 }
 
-/** Server-side tool rounds per request. 0 = pure OpenAI passthrough. */
-function maxToolRounds(): number {
+/** Server-side tool rounds per request. 0 = pure OpenAI passthrough.
+ *  Default 8; a request may ask for more via `nokey_rounds`, up to 32 —
+ *  deep agency is per-request, and the loop still ends the moment the
+ *  model stops calling tools. NOKEY_TOOL_ROUNDS sets the default. */
+function maxToolRounds(requested?: unknown): number {
   const raw = Deno.env.get("NOKEY_TOOL_ROUNDS");
-  if (raw === undefined || raw.trim() === "") return 3;
-  const parsed = Number(raw);
-  return Number.isFinite(parsed) ? Math.round(clampNum(parsed, 0, 8)) : 3;
+  const env = raw === undefined || raw.trim() === "" ? 8 : Number(raw);
+  const base = Number.isFinite(env) ? env : 8;
+  const want = typeof requested === "number" && Number.isFinite(requested) ? requested : base;
+  return Math.round(clampNum(want, 0, 32));
 }
 
 /** Admin context for tool routes: same semantics as the requireAdmin guard
@@ -3918,7 +3922,7 @@ honoApp.post("/v1/chat/completions", async (c) => {
       .filter(Boolean);
     // Self-execution is opt-in: only when the router supplied the tools does it
     // run the agentic loop. Otherwise tool_calls go straight back to the caller.
-    const agentRounds = autoTools ? maxToolRounds() : 0;
+    const agentRounds = autoTools ? maxToolRounds(body.nokey_rounds) : 0;
     const toolAware = hasTools || reqModel.toLowerCase().includes("tools");
     // One line of instruction materially raises tool-use rates on small free
     // models, which otherwise answer from memory. Only added when the router

@@ -1766,8 +1766,8 @@ return { words: t.split(/\s+/).filter(Boolean).length, chars: t.length };</texta
             <div class="toggle"><input type="checkbox" id="pparallel" checked><div class="thumb"></div></div>
           </div>
           <div class="setrow">
-            <div><div class="lbl">Router tools</div><div class="dim">Let the router execute its own built-in tools</div></div>
-            <div class="toggle"><input type="checkbox" id="pauto"><div class="thumb"></div></div>
+            <div><div class="lbl">Router tools</div><div class="dim">On by default: the router's full tool plane — web, files, vector memory + RAG, forge — run in a deep agent loop</div></div>
+            <div class="toggle"><input type="checkbox" id="pauto" checked><div class="thumb"></div></div>
           </div>
           <div class="setrow">
             <div><div class="lbl">Tools (JSON)</div><div class="dim">Tool definitions forwarded with each message</div></div>
@@ -2100,11 +2100,22 @@ const store = {
 })();
 const ORIGIN = /^https?:/.test(location.protocol) ? location.origin : "https://nokey-router.ziggyware.deno.net";
 const creds = () => { const c = store.get("creds", {}); return { url: (c.url || ORIGIN).replace(/\/+$/, ""), key: c.key || "", admin: c.admin || "" }; };
+// A stable per-browser session scopes the tool plane's namespace, so
+// memory, RAG and files compound across chats instead of resetting.
+function sessionId() {
+  let id = store.get("session_id", "");
+  if (!id) {
+    id = "dash-" + Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
+    store.set("session_id", id);
+  }
+  return id;
+}
 function headers(admin = false, json = true) {
   const c = creds(), h = {};
   if (json) h["Content-Type"] = "application/json";
   if (c.key) h.Authorization = "Bearer " + c.key;
   if (admin && c.admin) h["x-admin-secret"] = c.admin;
+  h["x-nokey-session"] = sessionId();
   return h;
 }
 
@@ -2554,6 +2565,20 @@ function openChangelog() {
   $("#ptempv").textContent = $("#ptemp").value;
   if (innerWidth <= 860 || store.get("side") === false) $("#side").hidden = true;
 })();
+// One-time cleanup: the demo tools preset (get_weather / get_time) is a
+// client-tools example, but once saved into params it followed every chat
+// and made models believe those were their only tools — while nothing
+// executes client tools at all. Clear it if the saved value is exactly
+// the preset; anything the user wrote, or deliberately re-adds, stays.
+(function clearDemoPreset() {
+  if (store.get("preset_cleared_v1")) return;
+  store.set("preset_cleared_v1", true);
+  try {
+    const t = JSON.parse($("#ptools").value || "[]");
+    const names = Array.isArray(t) ? t.map((x) => x?.function?.name ?? x?.name).filter(Boolean).sort() : [];
+    if (names.join(",") === "get_time,get_weather") { $("#ptools").value = ""; saveParams(); }
+  } catch { /* not JSON: the user's own content — leave it alone */ }
+})();
 function saveParams() {
   const p = {};
   for (const id of PARAMS) { const el = $("#" + id); p[id] = el.type === "checkbox" ? el.checked : el.value; }
@@ -2731,7 +2756,7 @@ async function complete() {
     ...(toolList ? { tools: toolList, parallel_tool_calls: $("#pparallel").checked } : {}),
     // "Router tools" attaches the plane's own built-ins and lets the router run
     // the agent loop; with client tools present it adds to them instead.
-    ...($("#pauto").checked ? (toolList ? { nokey_tools: true } : { tools: "auto" }) : {}),
+    ...($("#pauto").checked ? { nokey_rounds: 16, ...(toolList ? { nokey_tools: true } : { tools: "auto" }) } : {}),
   };
   const k = m._m, t0 = performance.now();
   let frame = 0;
