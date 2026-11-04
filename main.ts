@@ -4473,9 +4473,11 @@ honoApp.post("/v1/resurrect", requireAdmin, async (c) => {
 
 // System source reader: lets the dashboard's Architect agent read the
 // code it operates on. Allowlisted files only, admin-guarded like /v1/probe.
+const SOURCE_FILES = ["main.ts", "math.ts", "learning.ts", "trace.ts", "index.html", "openapi.json", "CHANGES.md", "services.json", "deno.json"];
+const SOURCE_FILE_SET = new Set(SOURCE_FILES);
 honoApp.get("/v1/source", requireAdmin, (c) => {
   const file = c.req.query("file") || "";
-  const ALLOWED = new Set(["main.ts", "math.ts", "learning.ts", "trace.ts", "index.html", "openapi.json", "CHANGES.md", "services.json", "deno.json"]);
+  const ALLOWED = SOURCE_FILE_SET;
   if (!ALLOWED.has(file)) {
     return c.json({ error: { message: "File is not in the readable allowlist" } }, 400);
   }
@@ -4484,6 +4486,30 @@ honoApp.get("/v1/source", requireAdmin, (c) => {
     return c.json({ error: { message: `File not readable in this deployment: ${file}` } }, 404);
   }
   return c.json({ file, bytes: content.length, lines: content.split("\n").length, content });
+});
+
+// Full-text search across every allowlisted source file at once — one
+// query, line-anchored matches the dashboard can jump straight to.
+honoApp.get("/v1/source/search", requireAdmin, (c) => {
+  const q = (c.req.query("q") || "").trim();
+  if (q.length < 2) {
+    return c.json({ error: { message: "Query must be at least 2 characters" } }, 400);
+  }
+  const needle = q.toLowerCase();
+  const MAX = 200;
+  const results: { file: string; line: number; text: string }[] = [];
+  for (const file of SOURCE_FILES) {
+    if (results.length >= MAX) break;
+    const content = loadTextFile(file);
+    if (content === null) continue;
+    const lines = content.split("\n");
+    for (let i = 0; i < lines.length && results.length < MAX; i++) {
+      if (lines[i].toLowerCase().includes(needle)) {
+        results.push({ file, line: i + 1, text: lines[i].trim().slice(0, 240) });
+      }
+    }
+  }
+  return c.json({ q, count: results.length, truncated: results.length >= MAX, results });
 });
 
 // =====================================================================

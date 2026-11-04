@@ -1,3 +1,24 @@
+# Dashboard views: source search, visual inspector, harvester hints, plain-English lanes — 2026-11-04
+
+- **Source** can now search every readable file at once: new admin route
+  `GET /v1/source/search?q=` scans the same allowlist as `/v1/source`
+  (which now shares one `SOURCE_FILES` set) and returns line-anchored
+  matches; the view gained a "search every file's contents…" box whose
+  results jump straight to the file + line filter. The per-file line
+  filter is case-insensitive now, and `learning.ts` joined the file menu.
+- **Inspector** details render as a visual, collapsible JSON tree —
+  typed, coloured values with object/array summaries — instead of a raw
+  text dump. The raw JSON is still there, collapsed, when you need it.
+- **Harvester** inputs say what they expect: example base URLs in the
+  URLs box, an "optional — keyless is fine" placeholder on the <redacted>, and
+  a one-line explanation of the probe flow.
+- **Lanes** rewritten in plain English: what a lane is, what each lane is
+  for, who's winning right now, reliability as a percentage, typical vs
+  slow-case first-token times, strengths in words ("reasoning, vision").
+  The log-normal density chart is gone; the first-token history chart
+  stays. The raw Bayesian statistics (iq, σ, ewma, score) live on in each
+  row's hover tooltip.
+
 # Dashboard: builder freeze fix, workspace, tools behind the scenes — 2026-11-04
 
 - **Freeze fix.** The New Technique / New Technology / New Channel modals

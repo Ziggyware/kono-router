@@ -347,6 +347,23 @@ td.t { max-width: 44ch; overflow: hidden; text-overflow: ellipsis; }
   background: var(--surface);
 }
 .plots { display: grid; grid-template-columns: 1fr 1fr; border-top: 1px solid var(--line); }
+.plots.one { grid-template-columns: 1fr; }
+.lane-desc { margin: 2px 0 4px; font-size: 12.5px; color: var(--mid); }
+.lane-stat { font-size: 11.5px; margin-bottom: 8px; }
+.lane-cap { font-size: 11px; margin-top: 8px; }
+.jt-wrap { font: 11.5px/1.65 var(--mono); padding: 6px 4px; }
+.jt-sec { font: 600 10.5px var(--sans); text-transform: uppercase; letter-spacing: .07em; color: var(--dim); margin: 8px 0 3px; }
+.jt-kids { margin-left: 13px; border-left: 1px solid var(--line); padding-left: 10px; }
+.jt-row { display: flex; gap: 7px; align-items: flex-start; }
+.jt-key { color: var(--acc); flex-shrink: 0; }
+.jt-key::after { content: ":"; color: var(--dim); }
+.jt-str { color: #98c379; word-break: break-word; }
+.jt-num { color: #61afef; }
+.jt-bool { color: #c678dd; }
+.jt-null, .jt-dim { color: var(--dim); }
+.jt-type { color: var(--dim); font-size: 10.5px; }
+.jt-node > summary, .jt-raw > summary { cursor: pointer; }
+.jt-raw > summary { color: var(--dim); font-size: 11px; margin-top: 8px; }
 .plots canvas { width: 100%; height: 150px; display: block; }
 .plots canvas + canvas { border-left: 1px solid var(--line); }
 .sw { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 7px; vertical-align: 1px; }
@@ -1475,6 +1492,7 @@ select.tool-form-in { background: var(--bg-3); color: var(--fg); }
 
   <section class="view" id="v-lanes" hidden>
     <div class="row" style="margin-bottom:10px"><select id="every" aria-label="Poll interval"><option value="5000">5s</option><option value="15000" selected>15s</option><option value="60000">60s</option><option value="0">off</option></select><span class="dim" id="lstat"></span></div>
+    <p class="dim" style="font-size:12.5px;line-height:1.55;max-width:74ch;margin:0 0 12px">A <b style="color:var(--fg)">lane</b> is a pool of free model endpoints grouped by job. Ask for <span style="font-family:var(--mono)">free:smart</span> and the router races that lane's best endpoints, learns from every request, and keeps the winners ranked here. <b style="color:var(--fg)">Reliability</b> is the learned chance an endpoint answers well; the first-token times come from its live latency model. Hover any row for the raw statistics.</p>
     <div class="kpis" id="kpis"></div><div id="lanes"></div>
   </section>
 
@@ -1688,13 +1706,14 @@ return { words: t.split(/\s+/).filter(Boolean).length, chars: t.length };</texta
 
   <section class="view" id="v-harvester" hidden>
     <div class="row" style="margin-bottom:12px;align-items:stretch">
-      <textarea id="hurls" data-notch data-notch-label="Harvester — endpoint URLs" data-notch-context="One endpoint base URL per line. The harvester probes each candidate — health endpoint, models list, then a tiny chat request — and turns the reachable ones into services.json registry entries for the router catalog. Include the scheme, e.g. https://api.example.com/v1 on its own line." class="grow" rows="4" spellcheck="false" aria-label="Endpoint URLs, one per line"></textarea>
+      <textarea id="hurls" data-notch data-notch-label="Harvester — endpoint URLs" data-notch-context="One endpoint base URL per line. The harvester probes each candidate — health endpoint, models list, then a tiny chat request — and turns the reachable ones into services.json registry entries for the router catalog. Include the scheme, e.g. https://api.example.com/v1 on its own line." class="grow" rows="4" spellcheck="false" aria-label="Endpoint URLs, one per line" placeholder="One endpoint base URL per line, e.g.&#10;https://api.example.com/v1&#10;https://api.another-llm.dev/v1"></textarea>
       <div style="display:grid;gap:6px;align-content:start">
-        <input id="hkey" data-notch data-notch-label="Harvester — bearer key" data-notch-context="An optional bearer or API key sent to the harvested endpoints while verifying them. Leave it empty for keyless endpoints. It is used only for the harvest probe requests and is not stored." type="password" autocomplete="off" aria-label="Bearer key for these endpoints">
+        <input id="hkey" data-notch data-notch-label="Harvester — bearer key" data-notch-context="An optional bearer or API key sent to the harvested endpoints while verifying them. Leave it empty for keyless endpoints. It is used only for the harvest probe requests and is not stored." type="password" autocomplete="off" aria-label="Bearer key for these endpoints" placeholder="Bearer key — optional; leave empty for keyless endpoints">
         <button class="btn" id="hgo">verify</button>
         <button class="btn q" id="hcopy" disabled>copy entries</button>
       </div>
     </div>
+    <div class="dim" style="font-size:12px;margin-bottom:10px">Paste candidate endpoint base URLs above — one per line, with the scheme (https://…). The harvester probes each one (health check, models list, then a tiny chat request) and turns the reachable endpoints into registry entries you can copy into the catalog.</div>
     <div id="hout"></div>
   </section>
 
@@ -1720,9 +1739,13 @@ return { words: t.split(/\s+/).filter(Boolean).length, chars: t.length };</texta
 
   <section class="view" id="v-source" hidden>
     <div class="row" style="margin-bottom:10px">
-      <select id="sfile" aria-label="File"><option>main.ts</option><option>math.ts</option><option>trace.ts</option><option>index.html</option><option>openapi.json</option><option>CHANGES.md</option><option>services.json</option><option>deno.json</option></select>
-      <button class="btn" id="sload">read</button><input id="sgrep" size="28" aria-label="Filter lines"><span class="dim" id="smeta"></span>
+      <select id="sfile" aria-label="File"><option>main.ts</option><option>math.ts</option><option>learning.ts</option><option>trace.ts</option><option>index.html</option><option>openapi.json</option><option>CHANGES.md</option><option>services.json</option><option>deno.json</option></select>
+      <button class="btn" id="sload">read</button><input id="sgrep" size="28" aria-label="Filter lines" placeholder="filter lines in this file"><span class="dim" id="smeta"></span>
     </div>
+    <div class="row" style="margin-bottom:8px">
+      <input id="sall" size="32" aria-label="Search all files" placeholder="search every file's contents…"><span class="dim" id="sallstat"></span>
+    </div>
+    <div id="sallout" style="display:flex;flex-direction:column;gap:4px;max-height:300px;overflow:auto;margin-bottom:10px"></div>
     <pre class="src" id="sout"></pre>
   </section>
 
@@ -2551,6 +2574,27 @@ cmd("open api reference", () => window.open("/docs", "_blank", "noopener"));
 
 // ---------- inspector ----------
 let iopen = null;
+// Visual JSON: a collapsible tree with typed, coloured values instead of a
+// raw dump. Strings/keys/values are capped so a huge payload stays light.
+function jsonTree(v, depth = 0) {
+  if (v === null || v === undefined) return `<span class="jt-null">null</span>`;
+  if (typeof v === "string") return `<span class="jt-str">"${esc(v.length > 300 ? v.slice(0, 300) + "…" : v)}"</span>`;
+  if (typeof v === "number" || typeof v === "bigint") return `<span class="jt-num">${v}</span>`;
+  if (typeof v === "boolean") return `<span class="jt-bool">${v}</span>`;
+  if (Array.isArray(v)) {
+    if (!v.length) return `<span class="jt-dim">[ ]</span>`;
+    const items = v.slice(0, 50).map((x, i) => `<div class="jt-row"><span class="jt-key">${i}</span>${jsonTree(x, depth + 1)}</div>`).join("");
+    return `<details class="jt-node"${depth < 1 ? " open" : ""}><summary><span class="jt-type">array · ${v.length} item${v.length === 1 ? "" : "s"}</span></summary><div class="jt-kids">${items}${v.length > 50 ? `<div class="jt-dim">… ${v.length - 50} more</div>` : ""}</div></details>`;
+  }
+  if (typeof v === "object") {
+    const keys = Object.keys(v);
+    if (!keys.length) return `<span class="jt-dim">{ }</span>`;
+    const rows = keys.slice(0, 60).map((key) => `<div class="jt-row"><span class="jt-key">${esc(key)}</span>${jsonTree(v[key], depth + 1)}</div>`).join("");
+    return `<details class="jt-node"${depth < 1 ? " open" : ""}><summary><span class="jt-type">object · ${keys.length} key${keys.length === 1 ? "" : "s"}</span></summary><div class="jt-kids">${rows}${keys.length > 60 ? `<div class="jt-dim">… ${keys.length - 60} more</div>` : ""}</div></details>`;
+  }
+  return `<span>${esc(String(v))}</span>`;
+}
+
 function renderInspector() {
   const q = $("#ifilter").value.trim().toLowerCase();
   const rows = ilog.filter((e) => !q || `${e.method} ${e.path} ${e.status} ${e.trace}`.toLowerCase().includes(q));
@@ -2559,7 +2603,7 @@ function renderInspector() {
     const k = `${e.t}-${e.path}`;
     const head = `<tr class="click" data-k="${esc(k)}"><td class="l">${new Date(e.t).toLocaleTimeString()}</td><td class="l">${e.method}</td><td class="l t" title="${esc(e.url)}">${esc(e.path)}</td>
       <td class="${e.status >= 200 && e.status < 300 ? "ok" : e.status ? "no" : "dim"}">${e.status || "…"}</td><td>${ms(e.ms)}</td><td class="l">${e.trace ? `<a href="#" data-tr="${e.trace}">${e.trace.slice(0, 12)}</a>` : ""}</td></tr>`;
-    return iopen === k ? head + `<tr class="x"><td colspan="6"><pre class="wrap">${esc(JSON.stringify({ request: e.req, response: e.res }, null, 2).slice(0, 20000))}</pre></td></tr>` : head;
+    return iopen === k ? head + `<tr class="x"><td colspan="6"><div class="jt-wrap"><div class="jt-sec">request</div>${jsonTree(e.req)}<div class="jt-sec">response</div>${jsonTree(e.res)}<details class="jt-raw"><summary>raw JSON</summary><pre class="wrap">${esc(JSON.stringify({ request: e.req, response: e.res }, null, 2).slice(0, 20000))}</pre></details></div></td></tr>` : head;
   }).join("");
 }
 $("#ifilter").oninput = renderInspector;
@@ -3708,7 +3752,7 @@ function record(h) {
 }
 function kpis(h) {
   const cv = h.coverage ?? {}, sec = h.security ?? {};
-  const items = [["endpoints", cv.configured_endpoints], ["registry", cv.registry_endpoints], ["tuples", cv.catalog_tuples], ["sweep", cv.sweep_candidates], ["l1 cache", sec.l1_cache_entries]];
+  const items = [["endpoints configured", cv.configured_endpoints], ["in registry", cv.registry_endpoints], ["model endpoints", cv.catalog_tuples], ["sweep pool", cv.sweep_candidates], ["cache entries", sec.l1_cache_entries]];
   const flags = [["auth", sec.auth_enabled], ["admin guard", sec.admin_guard_enabled], ["openrouter", sec.openrouter_free_enabled], ["strict", h.control_kernel?.strict_errors]];
   $("#kpis").innerHTML = items.map(([k, v]) => {
     const d = Number.isFinite(kpiPrev[k]) && v !== kpiPrev[k] ? `<i>${v > kpiPrev[k] ? "+" : ""}${v - kpiPrev[k]}</i>` : "";
@@ -3717,20 +3761,33 @@ function kpis(h) {
   }).join("") + flags.map(([k, v]) => `<div class="kpi"><b class="${v ? "ok" : "no"}">${v ? "on" : "off"}</b><span>${k}</span></div>`).join("")
     + (sec.service_json_load_error ? `<div class="kpi"><b class="no">err</b><span>${esc(sec.service_json_load_error)}</span></div>` : "");
 }
+const LANE_INFO = {
+  fast: { title: "Fast", desc: "Quick answers and chat. The lowest-latency endpoints win this lane." },
+  smart: { title: "Smart", desc: "Everyday quality — the default balance of speed and capability." },
+  code: { title: "Code", desc: "Programming tasks. Code-specialist endpoints are preferred." },
+  reasoning: { title: "Reasoning", desc: "Hard, multi-step problems. Deep-thinking models — slower is acceptable." },
+};
 function lanes(h) {
   const root = $("#lanes");
-  if (!root.children.length) root.innerHTML = MODES.map((m) => `<div class="lane" id="l-${m}"><h3>${m}</h3>
-    <table><thead><tr><th>tuple</th><th>iq</th><th>rel θ</th><th>p50</th><th>p95</th><th>σ ln</th><th>ewma ttft</th><th>tps</th><th>E[fast]</th><th>score</th><th>ctx</th><th>caps</th></tr></thead><tbody></tbody></table>
-    <div class="plots"><canvas class="pdf" aria-label="${m} TTFT log-normal densities"></canvas><canvas class="trk" aria-label="${m} EWMA TTFT history"></canvas></div></div>`).join("");
+  if (!root.children.length) root.innerHTML = MODES.map((m) => `<div class="lane" id="l-${m}"><h3>${LANE_INFO[m].title} <span class="dim" style="font:400 11px var(--mono)">free:${m}</span></h3>
+    <p class="lane-desc">${LANE_INFO[m].desc}</p>
+    <div class="lane-stat dim"></div>
+    <table><thead><tr><th class="l">endpoint</th><th>reliability</th><th>first token · typical</th><th>first token · slow case</th><th>speed</th><th>context</th><th class="l">strengths</th></tr></thead><tbody></tbody></table>
+    <div class="lane-cap dim">first-token time across recent polls — lower is better</div>
+    <div class="plots one"><canvas class="trk" aria-label="${m} first-token history"></canvas></div></div>`).join("");
   for (const m of MODES) {
     const cs = h["current_best_" + m] ?? [], el = $("#l-" + m);
-    $("tbody", el).innerHTML = cs.length ? cs.map((c, i) => `<tr>
+    const best = cs[0];
+    $(".lane-stat", el).textContent = cs.length
+      ? `${cs.length} endpoint${cs.length === 1 ? "" : "s"} in the current best set · best right now: ${best.tupleId} (typical first token ${ms(lnQ(best, 0))})`
+      : "no endpoints in the current best set — the router is still probing this lane";
+    $("tbody", el).innerHTML = cs.length ? cs.map((c, i) => `<tr title="iq ${f(c.iqEffective, 3)} · σ ln ${f(c.logTtftSigma, 3)} · ewma ttft ${ms(c.ewmaTtftMs)} · expected-fast ${ms(c.expectedFastMs)} · score ${f(c.smartScore, 3)}">
       <td class="t" title="${esc(c.tupleId)}"><span class="sw" style="background:${PAL[i % PAL.length]}"></span>${esc(c.tupleId)}</td>
-      <td>${f(c.iqEffective, 3)}</td><td>${f(c.reliabilityDraw, 3)}</td><td>${ms(lnQ(c, 0))}</td><td>${ms(lnQ(c, Z95))}</td><td>${f(c.logTtftSigma, 3)}</td>
-      <td>${ms(c.ewmaTtftMs)}</td><td>${f(c.ewmaTps, 1)}</td><td>${ms(c.expectedFastMs)}</td><td>${f(c.smartScore, 3)}</td>
-      <td>${c.contextWindow ? kfmt(c.contextWindow) : "—"}</td><td>${[c.supportsReasoning && "R", c.supportsVision && "V", c.isCodingSpecialist && "C"].filter(Boolean).join("")}</td></tr>`).join("")
-      : `<tr><td colspan="12">—</td></tr>`;
-    drawPdf($(".pdf", el), cs); drawTrack($(".trk", el), cs);
+      <td>${Math.round((c.reliabilityDraw ?? 0) * 100)}%</td><td>${ms(lnQ(c, 0))}</td><td>${ms(lnQ(c, Z95))}</td>
+      <td>${f(c.ewmaTps, 1)} tok/s</td>
+      <td>${c.contextWindow ? kfmt(c.contextWindow) : "—"}</td><td class="l">${[c.supportsReasoning && "reasoning", c.supportsVision && "vision", c.isCodingSpecialist && "code"].filter(Boolean).join(", ") || "—"}</td></tr>`).join("")
+      : `<tr><td colspan="7">—</td></tr>`;
+    drawTrack($(".trk", el), cs);
   }
 }
 function canvas2d(cv) {
@@ -5317,12 +5374,35 @@ async function loadSource() {
   } catch (e) { toast(e.message, true); }
 }
 function renderSource() {
-  const q = $("#sgrep").value;
-  $("#sout").innerHTML = srcLines.map((l, i) => (!q || l.includes(q)) ? `<span style="counter-set:l ${i}">${esc(l) || " "}</span>` : "").join("");
+  const q = $("#sgrep").value.toLowerCase();
+  $("#sout").innerHTML = srcLines.map((l, i) => (!q || l.toLowerCase().includes(q)) ? `<span style="counter-set:l ${i}">${esc(l) || " "}</span>` : "").join("");
 }
 $("#sload").onclick = loadSource;
 $("#sfile").onchange = loadSource;
 $("#sgrep").oninput = renderSource;
+
+// Search across ALL source files at once; a click jumps to the match by
+// loading that file with the line filter set to the same query.
+let sallTimer = 0;
+async function searchAllFiles() {
+  const q = $("#sall").value.trim();
+  const out = $("#sallout");
+  if (q.length < 2) { out.innerHTML = ""; $("#sallstat").textContent = ""; return; }
+  $("#sallstat").textContent = "searching…";
+  try {
+    const j = await req("/v1/source/search?q=" + encodeURIComponent(q), { admin: true });
+    $("#sallstat").textContent = `${j.count} match${j.count === 1 ? "" : "es"}${j.truncated ? " (capped at 200)" : ""} across all files`;
+    out.innerHTML = (j.results ?? []).map((r) => `<button class="btn q" data-sall-file="${esc(r.file)}" style="justify-content:flex-start;font-size:11.5px;text-align:left"><span style="font-family:var(--mono);flex-shrink:0">${esc(r.file)}:${r.line}</span><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(r.text)}</span></button>`).join("");
+  } catch (e) { $("#sallstat").textContent = "search failed: " + e.message; out.innerHTML = ""; }
+}
+$("#sall").addEventListener("input", () => { clearTimeout(sallTimer); sallTimer = setTimeout(searchAllFiles, 250); });
+$("#sallout").addEventListener("click", (e) => {
+  const b = e.target.closest("[data-sall-file]");
+  if (!b) return;
+  $("#sfile").value = b.dataset.sallFile;
+  $("#sgrep").value = $("#sall").value.trim();
+  loadSource();
+});
 
 // =====================================================================
 // UI v2 — theme, mobile shell, responsive tables, request progress
