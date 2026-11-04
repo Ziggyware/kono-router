@@ -1117,12 +1117,17 @@ select.tool-form-in { background: var(--bg-3); color: var(--fg); }
 .sandbox-modal {
   position: fixed; inset: 24px; z-index: 60; border: 1px solid var(--line-2);
   border-radius: var(--r); background: var(--bg-2); box-shadow: 0 30px 90px rgba(0,0,0,.9);
-  display: flex; flex-direction: column; overflow: hidden;
+  overflow: hidden; margin: 0; padding: 0; width: auto; height: auto; max-width: none; max-height: none;
 }
-.sandbox-modal.fullscreen { inset: 0; border-radius: 0; border: 0; }
-.sandbox-header { display: flex; align-items: center; justify-content: space-between; padding: 10px 16px; border-bottom: 1px solid var(--line); background: var(--surface); }
-.sandbox-frame { flex: 1; border: 0; background: #fff; width: 100%; height: 100%; }
-.sandbox-console { height: 140px; border-top: 1px solid var(--line); background: var(--bg); overflow-y: auto; padding: 8px 12px; font-family: var(--mono); font-size: 11.5px; }
+.sandbox-modal[open] { display: flex; flex-direction: column; }
+.sandbox-modal.fullscreen { inset: 0 !important; left: 0 !important; top: 0 !important; right: 0 !important; bottom: 0 !important; width: auto !important; height: auto !important; border-radius: 0; border: 0; }
+.sandbox-header { display: flex; align-items: center; justify-content: space-between; padding: 10px 16px; border-bottom: 1px solid var(--line); background: var(--surface); cursor: move; touch-action: none; user-select: none; -webkit-user-select: none; flex: none; }
+.sandbox-frame { flex: 1; border: 0; background: #fff; width: 100%; min-height: 0; }
+.sandbox-modal.sbx-live .sandbox-frame { pointer-events: none; }
+.sandbox-resize { position: absolute; right: 0; bottom: 0; width: 22px; height: 22px; cursor: nwse-resize; touch-action: none; z-index: 6; }
+.sandbox-resize::after { content: ""; position: absolute; right: 4px; bottom: 4px; width: 10px; height: 10px; border-right: 2px solid var(--dim); border-bottom: 2px solid var(--dim); opacity: .65; }
+.sandbox-modal.fullscreen .sandbox-resize { display: none; }
+.sandbox-console { height: 140px; flex: none; border-top: 1px solid var(--line); background: var(--bg); overflow-y: auto; padding: 8px 12px; font-family: var(--mono); font-size: 11.5px; }
 
 /* Community / People Chat */
 .community-layout { display: grid; grid-template-columns: 240px 1fr; height: calc(100vh - var(--hdr)); overflow: hidden; width: 100%; }
@@ -1922,6 +1927,7 @@ select.tool-form-in { background: var(--bg-3); color: var(--fg); }
     </div>
     <div id="sandbox-logs" style="display:flex;flex-direction:column;gap:3px;color:var(--mid)"></div>
   </div>
+  <div id="sb-resize" class="sandbox-resize" title="Drag to resize preview"></div>
 </dialog>
 <dialog id="custom-technique-modal" class="sheet" style="max-width:480px" aria-label="New Build Technique">
   <div class="sheet-h">
@@ -2213,10 +2219,11 @@ function postProcessCode(el, final) {
     block.innerHTML = `<div class="code-bar"><span class="lang">${esc(lang || "code")}</span><div class="actions">${isApp ? `<button class="btn q btn-run-app">▶ Run in Sandbox</button>` : ""}<button class="btn q cp">copy</button></div></div>`;
     pre.parentNode.insertBefore(block, pre);
     block.appendChild(pre);
+    block._sbxRaw = rawText; block._sbxLang = lang;
     const cp = $(".cp", block);
     if (cp) cp.onclick = () => navigator.clipboard.writeText(rawText).then(() => toast("copied"));
     const runBtn = $(".btn-run-app", block);
-    if (runBtn) runBtn.onclick = () => launchAppSandbox(rawText, "Interactive App");
+    if (runBtn) runBtn.onclick = () => launchAppSandbox(sbxAssemble(block), "Interactive App");
   }
 }
 
@@ -2243,11 +2250,7 @@ function renderMd(el, text, final = true) {
       };
     }
     for (const runBtn of $$(".btn-run-app", el)) {
-      runBtn.onclick = () => {
-        const pre = runBtn.closest(".code-block")?.querySelector("pre");
-        const code = runBtn.dataset.appCode || pre?.innerText || "";
-        launchAppSandbox(code, "Interactive App");
-      };
+      runBtn.onclick = () => launchAppSandbox(sbxAssemble(runBtn.closest(".code-block")), "Interactive App");
     }
     if (final) el.dataset.src = text;
     return;
@@ -4511,25 +4514,179 @@ $("#techpack-file-in")?.addEventListener("change", (e) => {
 });
 
 // Live App Sandbox Runner
-let currentSandboxCode = "";
+let currentSandboxCode = "";   // app source as assembled from the message
+let currentSandboxDoc = "";    // full document actually loaded (wrapped + console bridge)
+
+// Injected into every preview document: forwards console output and page
+// errors to the parent, where they land in the Sandbox Console panel. The
+// iframe is sandboxed without allow-same-origin, so postMessage is the
+// only channel; the parent checks e.source against the frame.
+const SBX_BRIDGE = `<script>(function(){
+  function fmt(a){ if (typeof a === "string") return a; if (a instanceof Error) return a.message; try { return JSON.stringify(a); } catch { try { return String(a); } catch { return "[object]"; } } }
+  function send(level, args){ try { parent.postMessage({ __sbx: 1, level, text: [...args].map(fmt).join(" ") }, "*"); } catch {} }
+  for (const k of ["log","info","warn","error","debug"]) { const orig = console[k] ? console[k].bind(console) : () => {}; console[k] = (...a) => { send(k === "debug" ? "log" : k, a); orig(...a); }; }
+  addEventListener("error", (e) => send("error", [e.message + (e.lineno ? " (line " + e.lineno + ")" : "")]));
+  addEventListener("unhandledrejection", (e) => send("error", ["Unhandled rejection: " + fmt(e.reason)]));
+})();<\/script>`;
+
+function sbxWrap(code) {
+  let doc = (code.includes("<!DOCTYPE") || /<html[\s>]/i.test(code))
+    ? code
+    : `<!DOCTYPE html><html><head><meta charset="utf-8"><style>body{margin:0;font-family:system-ui,sans-serif}</style></head><body>${code}</body></html>`;
+  if (/<head[^>]*>/i.test(doc)) doc = doc.replace(/<head[^>]*>/i, (h) => h + SBX_BRIDGE);
+  else if (/<html[^>]*>/i.test(doc)) doc = doc.replace(/<html[^>]*>/i, (h) => h + "<head>" + SBX_BRIDGE + "</head>");
+  else doc = SBX_BRIDGE + doc;
+  return doc;
+}
+
+// ---- multi-file assembly: a generated app often arrives as several code
+// blocks in one chat message (index.html + style.css + app.js). Running
+// only the clicked block leaves its <link>/<script src> pointing nowhere,
+// so the other files never load. Assemble all of the message's blocks
+// into a single document, inlining the CSS/JS.
+function sbxBlockInfo(block) {
+  if (!block) return null;
+  const btn = block.querySelector(".btn-run-app");
+  const pre = block.querySelector("pre");
+  const code = block._sbxRaw ?? btn?.dataset.appCode ?? pre?.innerText ?? "";
+  const lang = (block._sbxLang ?? block.querySelector(".lang")?.textContent ?? "").toLowerCase();
+  if (!code.trim()) return null;
+  let kind = "other";
+  if (lang === "css") kind = "css";
+  else if (lang === "js" || lang === "javascript" || lang === "mjs") kind = "js";
+  else if (lang === "html" || /<!doctype html|<html[\s>]/i.test(code) || (/<(div|section|main|canvas|button|input|form|svg)[\s>]/i.test(code) && lang !== "css")) kind = "html";
+  const fm = code.split("\n", 3).join("\n").match(/(?:\/\/|<!--|\/\*)\s*([A-Za-z0-9._-]+\.(?:html?|css|m?js))\b/i);
+  return { code, lang, kind, name: fm ? fm[1].toLowerCase() : null, el: block };
+}
+
+function sbxAssemble(clicked) {
+  const clickedInfo = sbxBlockInfo(clicked);
+  if (!clickedInfo) return "";
+  const root = clicked?.closest(".md") || clicked?.parentElement;
+  const infos = root ? $$(".code-block", root).map(sbxBlockInfo).filter(Boolean) : [];
+  if (infos.length <= 1) return clickedInfo.code;
+  const base = clickedInfo.kind === "html" ? clickedInfo : infos.find((i) => i.kind === "html");
+  if (!base) return clickedInfo.code;
+  const css = infos.filter((i) => i.kind === "css");
+  const js = infos.filter((i) => i.kind === "js");
+  if (!css.length && !js.length) return base.code;
+  const styleTag = (c) => `<style data-sbx="${c.name || "style.css"}">\n${c.code}\n</style>`;
+  const scriptTag = (j) => `<script data-sbx="${j.name || "app.js"}">\n${j.code.replace(/<\/script/gi, "<\\/script")}\n<\/script>`;
+  let doc = base.code;
+  if (!/<!doctype html|<html[\s>]/i.test(doc)) {
+    return `<!DOCTYPE html><html><head><meta charset="utf-8">${css.map(styleTag).join("\n")}</head><body>${doc}\n${js.map(scriptTag).join("\n")}</body></html>`;
+  }
+  const usedCss = new Set(), usedJs = new Set();
+  doc = doc.replace(/<link[^>]*href=["']([^"']+)["'][^>]*>/gi, (tag, href) => {
+    const f = css.find((c) => c.name && href.toLowerCase().endsWith(c.name));
+    if (!f) return tag;
+    usedCss.add(f);
+    return styleTag(f);
+  });
+  doc = doc.replace(/<script[^>]*src=["']([^"']+)["'][^>]*>\s*<\/script>/gi, (tag, srcAttr) => {
+    const f = js.find((j) => j.name && srcAttr.toLowerCase().endsWith(j.name));
+    if (!f) return tag;
+    usedJs.add(f);
+    return scriptTag(f);
+  });
+  const extraCss = css.filter((c) => !usedCss.has(c)).map(styleTag).join("\n");
+  if (extraCss) doc = /<\/head>/i.test(doc) ? doc.replace(/<\/head>/i, extraCss + "\n</head>") : extraCss + doc;
+  const extraJs = js.filter((j) => !usedJs.has(j)).map(scriptTag).join("\n");
+  if (extraJs) doc = /<\/body>/i.test(doc) ? doc.replace(/<\/body>/i, extraJs + "\n</body>") : doc + extraJs;
+  return doc;
+}
+
+function sbxResetPlacement(modal) {
+  modal.classList.remove("fullscreen");
+  for (const p of ["left", "top", "right", "bottom", "width", "height"]) modal.style.removeProperty(p);
+  delete modal.dataset.pinned;
+}
+
 function launchAppSandbox(code, title = "Application Preview") {
   currentSandboxCode = code;
   const modal = $("#app-sandbox-modal");
   $("#sandbox-app-title").textContent = title;
-  const frame = $("#sandbox-iframe");
-  
-  // Inject console interceptor script
-  const wrappedCode = code.includes("<!DOCTYPE") ? code : `<!DOCTYPE html><html><head><meta charset="utf-8"><style>body{margin:0;font-family:system-ui,sans-serif}</style></head><body>${code}</body></html>`;
-  frame.srcdoc = wrappedCode;
-  
+  currentSandboxDoc = sbxWrap(code);
+  $("#sandbox-iframe").srcdoc = currentSandboxDoc;
   $("#sandbox-logs").innerHTML = `<div class="dim">App mounted in sandbox. Console output will stream here.</div>`;
-  modal.showModal();
+  sbxResetPlacement(modal);
+  if (!modal.open) modal.showModal();
 }
+
+// Console stream from the preview frame
+window.addEventListener("message", (e) => {
+  const frame = $("#sandbox-iframe");
+  if (!frame || e.source !== frame.contentWindow) return;
+  const d = e.data;
+  if (!d || d.__sbx !== 1) return;
+  const logs = $("#sandbox-logs");
+  if (!logs) return;
+  const line = document.createElement("div");
+  if (d.level === "warn") line.style.color = "#d29922";
+  if (d.level === "error") line.style.color = "#f47067";
+  line.textContent = (d.level === "log" || d.level === "info" ? "" : d.level.toUpperCase() + "  ") + d.text;
+  logs.appendChild(line);
+  const panel = $("#sandbox-console");
+  if (panel) panel.scrollTop = panel.scrollHeight;
+});
+
+// ---- move & resize ------------------------------------------------------
+const sbxModal = $("#app-sandbox-modal");
+function sbxPin(modal) {
+  if (modal.dataset.pinned) return;
+  const r = modal.getBoundingClientRect();
+  modal.style.left = r.left + "px";
+  modal.style.top = r.top + "px";
+  modal.style.width = r.width + "px";
+  modal.style.height = r.height + "px";
+  modal.style.right = "auto";
+  modal.style.bottom = "auto";
+  modal.dataset.pinned = "1";
+}
+function sbxDrag(handle, onMove) {
+  handle.addEventListener("pointerdown", (e) => {
+    if (sbxModal.classList.contains("fullscreen")) return;
+    if (e.target.closest("button")) return;
+    e.preventDefault();
+    sbxPin(sbxModal);
+    const sx = e.clientX, sy = e.clientY;
+    const r = sbxModal.getBoundingClientRect();
+    handle.setPointerCapture(e.pointerId);
+    sbxModal.classList.add("sbx-live");
+    const move = (ev) => onMove(ev.clientX - sx, ev.clientY - sy, r);
+    const up = () => {
+      handle.removeEventListener("pointermove", move);
+      handle.removeEventListener("pointerup", up);
+      sbxModal.classList.remove("sbx-live");
+    };
+    handle.addEventListener("pointermove", move);
+    handle.addEventListener("pointerup", up);
+  });
+}
+if (sbxModal) {
+  const header = $(".sandbox-header", sbxModal);
+  if (header) sbxDrag(header, (dx, dy, r) => {
+    const nx = Math.min(Math.max(r.left + dx, 60 - r.width), innerWidth - 60);
+    const ny = Math.min(Math.max(r.top + dy, 0), innerHeight - 40);
+    sbxModal.style.left = nx + "px";
+    sbxModal.style.top = ny + "px";
+  });
+  const grip = $("#sb-resize", sbxModal);
+  if (grip) sbxDrag(grip, (dx, dy, r) => {
+    const nw = Math.min(Math.max(r.width + dx, 360), innerWidth - r.left);
+    const nh = Math.min(Math.max(r.height + dy, 280), innerHeight - r.top);
+    sbxModal.style.width = nw + "px";
+    sbxModal.style.height = nh + "px";
+  });
+  // Click on the backdrop dismisses, like the other dialogs
+  sbxModal.addEventListener("click", (e) => { if (e.target === sbxModal) sbxModal.close(); });
+}
+
 $("#sb-close")?.addEventListener("click", () => $("#app-sandbox-modal").close());
 $("#sb-fullscreen")?.addEventListener("click", () => $("#app-sandbox-modal").classList.toggle("fullscreen"));
 $("#sb-reload")?.addEventListener("click", () => {
   const frame = $("#sandbox-iframe");
-  frame.srcdoc = currentSandboxCode;
+  frame.srcdoc = currentSandboxDoc || sbxWrap(currentSandboxCode);
   toast("Reloaded sandbox");
 });
 $("#sb-copy-code")?.addEventListener("click", () => {
