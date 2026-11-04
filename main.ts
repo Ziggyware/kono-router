@@ -2458,9 +2458,11 @@ honoApp.get("/", (_c) => {
           },
         });
 });
+// The workspace at / absorbed the standalone admin page; old links land on its Lanes view.
+honoApp.get("/admin", (c) => c.redirect("/#lanes", 301));
+
 // Operator surfaces: static pages; every datum they show stays behind the /v1 guards.
 for (const [route, file, type] of [
-  ["/admin", "admin.html", "text/html; charset=utf-8"],
   ["/docs", "docs.html", "text/html; charset=utf-8"],
   ["/openapi.json", "openapi.json", "application/json"],
 ] as const) {
@@ -2631,7 +2633,7 @@ honoApp.post("/v1/resurrect", requireAdmin, async (c) => {
 // code it operates on. Allowlisted files only, admin-guarded like /v1/probe.
 honoApp.get("/v1/source", requireAdmin, (c) => {
   const file = c.req.query("file") || "";
-  const ALLOWED = new Set(["main.ts", "math.ts", "index.html", "CHANGES.md", "services.json", "deno.json"]);
+  const ALLOWED = new Set(["main.ts", "math.ts", "trace.ts", "index.html", "openapi.json", "CHANGES.md", "services.json", "deno.json"]);
   if (!ALLOWED.has(file)) {
     return c.json({ error: { message: "File is not in the readable allowlist" } }, 400);
   }

@@ -745,7 +745,9 @@
               "enum": [
                 "main.ts",
                 "math.ts",
+                "trace.ts",
                 "index.html",
+                "openapi.json",
                 "CHANGES.md",
                 "services.json",
                 "deno.json"
