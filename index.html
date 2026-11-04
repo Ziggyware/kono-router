@@ -1316,165 +1316,6 @@ select.tool-form-in { background: var(--bg-3); color: var(--fg); }
         </div>
       </div>
     </div>
-    <aside class="side" id="side" aria-label="Settings" hidden>
-      <div class="sheet-h">
-        <h2>Settings</h2>
-        <span class="grow"></span>
-        <button class="icon-btn" data-close aria-label="Close settings"><svg aria-hidden="true"><use href="#i-x"/></svg></button>
-      </div>
-      <div class="sheet-b">
-        <div class="setgroup">
-          <div class="setgroup-h"><svg aria-hidden="true"><use href="#i-moon"/></svg>
-            <div><b>Appearance</b><small>Theme, accent, density, motion</small></div>
-          </div>
-          <div class="setrow">
-            <div><div class="lbl">Theme</div><div class="dim">Color scheme across the app</div></div>
-            <div class="chips-row">
-              <button class="chip theme-chip sel" data-theme="auto" aria-pressed="true">Auto<svg aria-hidden="true"><use href="#i-auto"/></svg></button>
-              <button class="chip theme-chip" data-theme="dark">Dark<svg aria-hidden="true"><use href="#i-moon"/></svg></button>
-              <button class="chip theme-chip" data-theme="light">Light<svg aria-hidden="true"><use href="#i-sun"/></svg></button>
-              <button class="chip theme-chip" data-theme="ocean">Ocean<svg aria-hidden="true"><use href="#i-radar"/></svg></button>
-              <button class="chip theme-chip" data-theme="violet">Violet<svg aria-hidden="true"><use href="#i-wand"/></svg></button>
-            </div>
-          </div>
-          <div class="setrow">
-            <div><div class="lbl">Accent color</div><div class="dim">Highlight color across the app</div></div>
-            <div class="chips-row">
-              <button class="chip accent-chip sel" data-accent="theme">Theme<svg aria-hidden="true"><use href="#i-auto"/></svg></button>
-              <button class="chip accent-chip" data-accent="lime"><span class="accent-well" style="background:#c9ff4a"></span></button>
-              <button class="chip accent-chip" data-accent="blue"><span class="accent-well" style="background:#7fc4ff"></span></button>
-              <button class="chip accent-chip" data-accent="ocean"><span class="accent-well" style="background:#66e4f1"></span></button>
-              <button class="chip accent-chip" data-accent="violet"><span class="accent-well" style="background:#c3a6ff"></span></button>
-              <button class="chip accent-chip" data-accent="rose"><span class="accent-well" style="background:#f472b6"></span></button>
-              <button class="chip accent-chip" data-accent="custom"><input type="color" id="set-accent" value="#c9ff4a" aria-label="Custom accent color"></button>
-            </div>
-          </div>
-          <div class="setrow">
-            <div><div class="lbl">Density</div><div class="dim">Comfortable or compact touch targets</div></div>
-            <button class="chip sel" data-density="comfortable">Comfortable</button>
-            <button class="chip" data-density="compact">Compact</button>
-          </div>
-          <div class="setrow">
-            <div><div class="lbl">Reduce motion</div><div class="dim">Turn off animations and transitions</div></div>
-            <div class="toggle"><input type="checkbox" id="set-reduced"><div class="thumb"></div></div>
-          </div>
-        </div>
-
-        <div class="setgroup">
-          <div class="setgroup-h"><svg aria-hidden="true"><use href="#i-sliders"/></svg>
-            <div><b>Model &amp; generation</b><small>Defaults for new chat messages</small></div>
-          </div>
-          <div class="model-picker">
-            <div class="setrow">
-              <div><div class="lbl">Default model</div><div class="dim">Any router-compatible ID or lane</div></div>
-              <div class="field"><input id="pmodel" value="free:auto" autocomplete="off" list="modellist" role="combobox" aria-autocomplete="list" aria-controls="model-results"></div>
-            </div>
-            <div class="model-filter"><select id="model-cap" aria-label="Filter by capability"><option value="">Any capability</option><option value="reasoning">Reasoning</option><option value="vision">Vision</option><option value="code">Code</option></select><select id="model-context" aria-label="Minimum context window"><option value="0">Any context</option><option value="8192">8k+ context</option><option value="32768">32k+ context</option><option value="65536">64k+ context</option><option value="128000">128k+ context</option></select></div>
-            <div id="model-results" class="model-results" role="listbox" aria-label="Matching models" hidden></div>
-          </div>
-          <datalist id="modellist"><option value="free:auto"><option value="free:fast"><option value="free:smart"><option value="free:code"><option value="free:reasoning"></datalist>
-          <div id="model-hint" class="model-hint">Choose a model or enter any router-compatible ID.</div>
-          <div class="setrow">
-            <div><div class="lbl">Temperature</div><div class="dim acc" id="ptempv">0.7</div></div>
-            <input id="ptemp" type="range" min="0" max="2" step="0.05" value="0.7">
-          </div>
-          <div class="setrow">
-            <div><div class="lbl">Max output tokens</div><div class="dim">Empty = provider decides</div></div>
-            <input id="pmax" type="number" min="1" step="1" placeholder="auto" aria-describedby="token-hint">
-          </div>
-          <div id="token-hint" class="model-hint" aria-live="polite">Auto uses a conservative budget when context is known.</div>
-          <div class="setrow">
-            <div><div class="lbl">Reasoning effort</div><div class="dim">Low / medium / high where supported</div></div>
-            <select id="peffort"><option value="">default</option><option>low</option><option>medium</option><option>high</option></select>
-          </div>
-          <div class="setrow">
-            <div><div class="lbl">System prompt</div><div class="dim">Instructions prepended to every conversation</div></div>
-            <textarea id="psys" rows="3"></textarea>
-          </div>
-          <div class="setrow">
-            <div><div class="lbl">Stream responses</div><div class="dim">Tokens arrive as they're generated</div></div>
-            <div class="toggle"><input type="checkbox" id="pstream" checked><div class="thumb"></div></div>
-          </div>
-          <div class="setrow">
-            <div><div class="lbl">Parallel tools</div><div class="dim">Run independent tool calls together</div></div>
-            <div class="toggle"><input type="checkbox" id="pparallel" checked><div class="thumb"></div></div>
-          </div>
-          <div class="setrow">
-            <div><div class="lbl">Router tools</div><div class="dim">Let the router execute its own built-in tools</div></div>
-            <div class="toggle"><input type="checkbox" id="pauto"><div class="thumb"></div></div>
-          </div>
-          <div class="setrow">
-            <div><div class="lbl">Tools (JSON)</div><div class="dim">Tool definitions forwarded with each message</div></div>
-            <textarea id="ptools" rows="6" spellcheck="false"></textarea>
-          </div>
-          <div class="row" style="gap:8px">
-            <button class="btn q" id="ppreset">tools preset</button>
-            <button class="btn q" id="pclear">clear tools</button>
-            <button class="btn q" id="cnew" style="margin-left:auto">new chat</button>
-            <button class="btn q" id="cexport">export chat</button>
-          </div>
-        </div>
-
-        <div class="setgroup">
-          <div class="setgroup-h"><svg aria-hidden="true"><use href="#i-plug"/></svg>
-            <div><b>Connection</b><small>Router URL, API key and admin secret</small></div>
-          </div>
-          <div class="setrow">
-            <div><div class="lbl">Router URL</div><div class="dim">Public endpoint of your router</div></div>
-            <div class="field"><input id="set-curl" autocomplete="off" placeholder="https://nokey-router.ziggyware.deno.net"></div>
-          </div>
-          <div class="setrow">
-            <div><div class="lbl">Router API key</div><div class="dim">Bearer key sent with every request</div></div>
-            <div class="field"><input id="set-ckey" type="password" autocomplete="off"></div>
-          </div>
-          <div class="setrow">
-            <div><div class="lbl">Admin secret</div><div class="dim">Unlocks traces, ops and the Architect</div></div>
-            <div class="field"><input id="set-cadm" type="password" autocomplete="off"></div>
-          </div>
-          <div class="row" style="gap:8px">
-            <button class="btn q" id="set-csave">Save &amp; test</button>
-            <span id="set-cstat" class="dim grow"></span>
-          </div>
-        </div>
-
-        <div class="setgroup">
-          <div class="setgroup-h"><svg aria-hidden="true"><use href="#i-file"/></svg>
-            <div><b>Data</b><small>Export, import and clear</small></div>
-          </div>
-          <div class="row" style="gap:8px">
-            <button class="btn q" id="set-export">Export chat</button>
-            <button class="btn q" id="set-import-pick">Import chat</button>
-            <input type="file" id="set-import" accept=".json" hidden>
-            <button class="btn q dropc" id="set-clear">Clear conversation</button>
-          </div>
-          <div class="row" style="gap:8px;margin-top:8px">
-            <button class="btn q dropc" id="set-clearall">Clear all data</button>
-          </div>
-        </div>
-
-        <div class="setgroup">
-          <div class="setgroup-h"><svg aria-hidden="true"><use href="#i-book"/></svg>
-            <div><b>About</b><small>Version, docs and shortcuts</small></div>
-          </div>
-          <div class="setrow">
-            <div><div class="lbl">Version</div><div class="dim">nokey-router · v6</div></div>
-            <span class="grow"></span><span class="dim">2026-11-04</span>
-          </div>
-          <div class="setrow">
-            <div><div class="lbl">API reference</div><div class="dim">Open the OpenAPI docs</div></div>
-            <button class="chip" id="set-docs">Open <svg class="chev" aria-hidden="true"><use href="#i-up"/></svg></button>
-          </div>
-          <div class="setrow">
-            <div><div class="lbl">Keyboard shortcuts</div><div class="dim">Press <kbd>?</kbd> to open the shortcut sheet</div></div>
-            <button class="chip" id="set-keys">Open <svg class="chev" aria-hidden="true"><use href="#i-up"/></svg></button>
-          </div>
-          <div class="setrow">
-            <div><div class="lbl">Changelog</div><div class="dim">What's new in this release</div></div>
-            <button class="chip" id="set-changelog">Open <svg class="chev" aria-hidden="true"><use href="#i-up"/></svg></button>
-          </div>
-        </div>
-      </div>
-    </aside>
   </section>
 
   <section class="view full" id="v-community" hidden>
@@ -1775,6 +1616,165 @@ select.tool-form-in { background: var(--bg-3); color: var(--fg); }
     <table><thead><tr><th class="l">time</th><th class="l">method</th><th class="l">path</th><th>status</th><th>ms</th><th class="l">trace</th></tr></thead><tbody id="itb"></tbody></table>
   </section>
 </main>
+    <aside class="side" id="side" aria-label="Settings" hidden>
+      <div class="sheet-h">
+        <h2>Settings</h2>
+        <span class="grow"></span>
+        <button class="icon-btn" data-close aria-label="Close settings"><svg aria-hidden="true"><use href="#i-x"/></svg></button>
+      </div>
+      <div class="sheet-b">
+        <div class="setgroup">
+          <div class="setgroup-h"><svg aria-hidden="true"><use href="#i-moon"/></svg>
+            <div><b>Appearance</b><small>Theme, accent, density, motion</small></div>
+          </div>
+          <div class="setrow">
+            <div><div class="lbl">Theme</div><div class="dim">Color scheme across the app</div></div>
+            <div class="chips-row">
+              <button class="chip theme-chip sel" data-theme="auto" aria-pressed="true">Auto<svg aria-hidden="true"><use href="#i-auto"/></svg></button>
+              <button class="chip theme-chip" data-theme="dark">Dark<svg aria-hidden="true"><use href="#i-moon"/></svg></button>
+              <button class="chip theme-chip" data-theme="light">Light<svg aria-hidden="true"><use href="#i-sun"/></svg></button>
+              <button class="chip theme-chip" data-theme="ocean">Ocean<svg aria-hidden="true"><use href="#i-radar"/></svg></button>
+              <button class="chip theme-chip" data-theme="violet">Violet<svg aria-hidden="true"><use href="#i-wand"/></svg></button>
+            </div>
+          </div>
+          <div class="setrow">
+            <div><div class="lbl">Accent color</div><div class="dim">Highlight color across the app</div></div>
+            <div class="chips-row">
+              <button class="chip accent-chip sel" data-accent="theme">Theme<svg aria-hidden="true"><use href="#i-auto"/></svg></button>
+              <button class="chip accent-chip" data-accent="lime"><span class="accent-well" style="background:#c9ff4a"></span></button>
+              <button class="chip accent-chip" data-accent="blue"><span class="accent-well" style="background:#7fc4ff"></span></button>
+              <button class="chip accent-chip" data-accent="ocean"><span class="accent-well" style="background:#66e4f1"></span></button>
+              <button class="chip accent-chip" data-accent="violet"><span class="accent-well" style="background:#c3a6ff"></span></button>
+              <button class="chip accent-chip" data-accent="rose"><span class="accent-well" style="background:#f472b6"></span></button>
+              <button class="chip accent-chip" data-accent="custom"><input type="color" id="set-accent" value="#c9ff4a" aria-label="Custom accent color"></button>
+            </div>
+          </div>
+          <div class="setrow">
+            <div><div class="lbl">Density</div><div class="dim">Comfortable or compact touch targets</div></div>
+            <button class="chip sel" data-density="comfortable">Comfortable</button>
+            <button class="chip" data-density="compact">Compact</button>
+          </div>
+          <div class="setrow">
+            <div><div class="lbl">Reduce motion</div><div class="dim">Turn off animations and transitions</div></div>
+            <div class="toggle"><input type="checkbox" id="set-reduced"><div class="thumb"></div></div>
+          </div>
+        </div>
+
+        <div class="setgroup">
+          <div class="setgroup-h"><svg aria-hidden="true"><use href="#i-sliders"/></svg>
+            <div><b>Model &amp; generation</b><small>Defaults for new chat messages</small></div>
+          </div>
+          <div class="model-picker">
+            <div class="setrow">
+              <div><div class="lbl">Default model</div><div class="dim">Any router-compatible ID or lane</div></div>
+              <div class="field"><input id="pmodel" value="free:auto" autocomplete="off" list="modellist" role="combobox" aria-autocomplete="list" aria-controls="model-results"></div>
+            </div>
+            <div class="model-filter"><select id="model-cap" aria-label="Filter by capability"><option value="">Any capability</option><option value="reasoning">Reasoning</option><option value="vision">Vision</option><option value="code">Code</option></select><select id="model-context" aria-label="Minimum context window"><option value="0">Any context</option><option value="8192">8k+ context</option><option value="32768">32k+ context</option><option value="65536">64k+ context</option><option value="128000">128k+ context</option></select></div>
+            <div id="model-results" class="model-results" role="listbox" aria-label="Matching models" hidden></div>
+          </div>
+          <datalist id="modellist"><option value="free:auto"><option value="free:fast"><option value="free:smart"><option value="free:code"><option value="free:reasoning"></datalist>
+          <div id="model-hint" class="model-hint">Choose a model or enter any router-compatible ID.</div>
+          <div class="setrow">
+            <div><div class="lbl">Temperature</div><div class="dim acc" id="ptempv">0.7</div></div>
+            <input id="ptemp" type="range" min="0" max="2" step="0.05" value="0.7">
+          </div>
+          <div class="setrow">
+            <div><div class="lbl">Max output tokens</div><div class="dim">Empty = provider decides</div></div>
+            <input id="pmax" type="number" min="1" step="1" placeholder="auto" aria-describedby="token-hint">
+          </div>
+          <div id="token-hint" class="model-hint" aria-live="polite">Auto uses a conservative budget when context is known.</div>
+          <div class="setrow">
+            <div><div class="lbl">Reasoning effort</div><div class="dim">Low / medium / high where supported</div></div>
+            <select id="peffort"><option value="">default</option><option>low</option><option>medium</option><option>high</option></select>
+          </div>
+          <div class="setrow">
+            <div><div class="lbl">System prompt</div><div class="dim">Instructions prepended to every conversation</div></div>
+            <textarea id="psys" rows="3"></textarea>
+          </div>
+          <div class="setrow">
+            <div><div class="lbl">Stream responses</div><div class="dim">Tokens arrive as they're generated</div></div>
+            <div class="toggle"><input type="checkbox" id="pstream" checked><div class="thumb"></div></div>
+          </div>
+          <div class="setrow">
+            <div><div class="lbl">Parallel tools</div><div class="dim">Run independent tool calls together</div></div>
+            <div class="toggle"><input type="checkbox" id="pparallel" checked><div class="thumb"></div></div>
+          </div>
+          <div class="setrow">
+            <div><div class="lbl">Router tools</div><div class="dim">Let the router execute its own built-in tools</div></div>
+            <div class="toggle"><input type="checkbox" id="pauto"><div class="thumb"></div></div>
+          </div>
+          <div class="setrow">
+            <div><div class="lbl">Tools (JSON)</div><div class="dim">Tool definitions forwarded with each message</div></div>
+            <textarea id="ptools" rows="6" spellcheck="false"></textarea>
+          </div>
+          <div class="row" style="gap:8px">
+            <button class="btn q" id="ppreset">tools preset</button>
+            <button class="btn q" id="pclear">clear tools</button>
+            <button class="btn q" id="cnew" style="margin-left:auto">new chat</button>
+            <button class="btn q" id="cexport">export chat</button>
+          </div>
+        </div>
+
+        <div class="setgroup">
+          <div class="setgroup-h"><svg aria-hidden="true"><use href="#i-plug"/></svg>
+            <div><b>Connection</b><small>Router URL, API key and admin secret</small></div>
+          </div>
+          <div class="setrow">
+            <div><div class="lbl">Router URL</div><div class="dim">Public endpoint of your router</div></div>
+            <div class="field"><input id="set-curl" autocomplete="off" placeholder="https://nokey-router.ziggyware.deno.net"></div>
+          </div>
+          <div class="setrow">
+            <div><div class="lbl">Router API key</div><div class="dim">Bearer key sent with every request</div></div>
+            <div class="field"><input id="set-ckey" type="password" autocomplete="off"></div>
+          </div>
+          <div class="setrow">
+            <div><div class="lbl">Admin secret</div><div class="dim">Unlocks traces, ops and the Architect</div></div>
+            <div class="field"><input id="set-cadm" type="password" autocomplete="off"></div>
+          </div>
+          <div class="row" style="gap:8px">
+            <button class="btn q" id="set-csave">Save &amp; test</button>
+            <span id="set-cstat" class="dim grow"></span>
+          </div>
+        </div>
+
+        <div class="setgroup">
+          <div class="setgroup-h"><svg aria-hidden="true"><use href="#i-file"/></svg>
+            <div><b>Data</b><small>Export, import and clear</small></div>
+          </div>
+          <div class="row" style="gap:8px">
+            <button class="btn q" id="set-export">Export chat</button>
+            <button class="btn q" id="set-import-pick">Import chat</button>
+            <input type="file" id="set-import" accept=".json" hidden>
+            <button class="btn q dropc" id="set-clear">Clear conversation</button>
+          </div>
+          <div class="row" style="gap:8px;margin-top:8px">
+            <button class="btn q dropc" id="set-clearall">Clear all data</button>
+          </div>
+        </div>
+
+        <div class="setgroup">
+          <div class="setgroup-h"><svg aria-hidden="true"><use href="#i-book"/></svg>
+            <div><b>About</b><small>Version, docs and shortcuts</small></div>
+          </div>
+          <div class="setrow">
+            <div><div class="lbl">Version</div><div class="dim">nokey-router · v6</div></div>
+            <span class="grow"></span><span class="dim">2026-11-04</span>
+          </div>
+          <div class="setrow">
+            <div><div class="lbl">API reference</div><div class="dim">Open the OpenAPI docs</div></div>
+            <button class="chip" id="set-docs">Open <svg class="chev" aria-hidden="true"><use href="#i-up"/></svg></button>
+          </div>
+          <div class="setrow">
+            <div><div class="lbl">Keyboard shortcuts</div><div class="dim">Press <kbd>?</kbd> to open the shortcut sheet</div></div>
+            <button class="chip" id="set-keys">Open <svg class="chev" aria-hidden="true"><use href="#i-up"/></svg></button>
+          </div>
+          <div class="setrow">
+            <div><div class="lbl">Changelog</div><div class="dim">What's new in this release</div></div>
+            <button class="chip" id="set-changelog">Open <svg class="chev" aria-hidden="true"><use href="#i-up"/></svg></button>
+          </div>
+        </div>
+      </div>
+    </aside>
 <nav id="bnav" aria-label="Primary views">
   <button data-go="chat" aria-label="Chat"><svg aria-hidden="true"><use href="#i-chat"/></svg><span>Chat</span></button>
   <button data-go="architect" aria-label="Architect"><svg aria-hidden="true"><use href="#i-wand"/></svg><span>Arch</span></button>
