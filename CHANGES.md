@@ -1,3 +1,14 @@
+# Backlog knock-off: rename/move and folders in the workspace — 2026-11-04
+
+The file tree was display-only for structure: folders existed only as
+path prefixes and a file could not be renamed. The workspace editor
+now has **Rename / Move** (an inline path row — write-new + delete-old
+through the fs tools, using the editor buffer so unsaved edits move
+with the file; the activity feed reports the create + delete pair),
+and **+ Folder** creates a folder explicitly via the `.gitkeep`
+convention. Verified with the jsdom harness (new run9: rename moves
+content and repoints the editor, folder appears in the tree).
+
 # Backlog knock-offs: /v1/probe honors its mode; workspace Run assembles the project — 2026-11-04
 
 **Probe.** The dashboard has been sending `{ mode }` to POST /v1/probe

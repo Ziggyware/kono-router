@@ -2137,6 +2137,7 @@ return { words: t.split(/\s+/).filter(Boolean).length, chars: t.length };</texta
         <div class="row" style="gap:6px;margin-top:8px">
           <input id="ws-new-name" class="tool-form-in grow" placeholder="new file name — e.g. app/index.html" spellcheck="false" aria-label="New file name">
           <button class="btn q" id="ws-new-btn">+ New file</button>
+          <button class="btn q" id="ws-folder-btn" title="Create a folder (uses the name typed at left)">+ Folder</button>
         </div>
         <div id="ws-editor-wrap" hidden style="margin-top:10px">
           <div class="row" style="gap:6px;margin-bottom:6px">
@@ -2146,6 +2147,12 @@ return { words: t.split(/\s+/).filter(Boolean).length, chars: t.length };</texta
             <button class="btn q" id="ws-transpile" style="font-size:10.5px;padding:2px 8px" hidden>⚙ Transpile → .js</button>
             <button class="btn q" id="ws-dl" style="font-size:10.5px;padding:2px 8px">Download</button>
             <button class="btn q" id="ws-del" style="font-size:10.5px;padding:2px 8px">Delete</button>
+            <button class="btn q" id="ws-rename" style="font-size:10.5px;padding:2px 8px">Rename / Move</button>
+          </div>
+          <div class="row" id="ws-rename-row" hidden style="gap:6px;margin-bottom:6px">
+            <input id="ws-rename-input" class="tool-form-in grow" spellcheck="false" aria-label="New path for this file">
+            <button class="btn q" id="ws-rename-apply" style="font-size:10.5px;padding:2px 8px">Apply</button>
+            <button class="btn q" id="ws-rename-cancel" style="font-size:10.5px;padding:2px 8px">Cancel</button>
           </div>
           <textarea id="ws-editor" class="tool-form-in" rows="12" spellcheck="false" style="width:100%;font-family:var(--mono);line-height:1.5" aria-label="Workspace file editor"></textarea>
           <div class="row" style="gap:8px;margin-top:6px">
@@ -6339,6 +6346,44 @@ $("#builder-files")?.addEventListener("click", (e) => {
   const b = e.target.closest("[data-ws-open]");
   if (b) { openWorkspace(); wsOpen(b.dataset.wsOpen); }
 });
+// ---- rename / move + folders ----------------------------------------------
+// There is no fs_move tool: a rename is write-new + delete-old through
+// the plane, using the editor buffer so unsaved edits move with the
+// file. The activity feed reports it as a create + delete pair.
+$("#ws-rename")?.addEventListener("click", () => {
+  if (!wsCur) return;
+  $("#ws-rename-input").value = wsCur;
+  $("#ws-rename-row").hidden = false;
+  $("#ws-rename-input").focus();
+});
+$("#ws-rename-cancel")?.addEventListener("click", () => { $("#ws-rename-row").hidden = true; });
+$("#ws-rename-apply")?.addEventListener("click", async () => {
+  const from = wsCur;
+  const to = $("#ws-rename-input").value.trim().replace(/^\/+/, "");
+  if (!from || !to || to === from) { $("#ws-rename-row").hidden = true; return; }
+  if (wsFiles.some((f) => f.path === to)) { toast(`"${to}" already exists`, true); return; }
+  try {
+    await wsExec("fs_write", { path: to, content: $("#ws-editor").value });
+    await wsExec("fs_delete", { path: from });
+    wsCur = to;
+    $("#ws-cur-path").textContent = to;
+    $("#ws-rename-row").hidden = true;
+    toast(`Moved ${from} → ${to}`);
+    wsRefresh();
+    renderWsFiles();
+  } catch (e) { toast("Rename failed: " + e.message, true); }
+});
+$("#ws-folder-btn")?.addEventListener("click", async () => {
+  const name = $("#ws-new-name").value.trim().replace(/^\/+|\/+$/g, "");
+  if (!name) { toast("Type a folder name in the new-file box first", true); return; }
+  try {
+    await wsExec("fs_write", { path: name + "/.gitkeep", content: "" });
+    $("#ws-new-name").value = "";
+    toast(`Folder ${name}/ created`);
+    wsRefresh();
+  } catch (e) { toast("Folder create failed: " + e.message, true); }
+});
+
 $("#ws-transpile")?.addEventListener("click", async () => {
   if (!wsCur) return;
   const target = wsCur.replace(/\.(tsx?|jsx|mts)$/i, ".js");
