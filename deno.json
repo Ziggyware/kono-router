@@ -3,7 +3,9 @@
   "tasks": {
     "start": "deno serve --unstable-kv --unstable-cron -A main.ts",
     "dev": "deno run --watch --unstable-kv --unstable-cron -A main.ts",
-    "build": "echo 'Skipping Fresh build - standalone Hono entrypoint'"
+    "build": "echo 'Skipping Fresh build - standalone Hono entrypoint'",
+    "check": "deno check main.ts math.ts tests/math_test.ts tests/dispatch_test.ts",
+    "test": "deno test --unstable-kv -A tests/"
   },
   "unstable": [
     "kv",
