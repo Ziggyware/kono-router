@@ -589,3 +589,56 @@ test("concurrent streamed and buffered requests complete independently with dist
     restoreMock();
   }
 });
+
+test("a silent committed stream emits keepalive comments and still completes", async () => {
+  const good = await pickHealthyUrl();
+  installMock(healthyOnly(good, () => {
+    const lines = [
+      `data: ${JSON.stringify({ choices: [{ index: 0, delta: { content: LONG_ANSWER.slice(0, 80) } }] })}\n\n`,
+      `data: ${JSON.stringify({ choices: [{ index: 0, delta: { content: LONG_ANSWER.slice(80) } }] })}\n\n`,
+      `data: ${JSON.stringify({ choices: [{ index: 0, delta: {}, finish_reason: "stop" }] })}\n\ndata: [DONE]\n\n`,
+    ];
+    return new Response(new ReadableStream<Uint8Array>({
+      async start(ctrl) {
+        ctrl.enqueue(encoder.encode(lines[0]));
+        await new Promise((r) => setTimeout(r, 700)); // upstream thinks silently
+        ctrl.enqueue(encoder.encode(lines[1] + lines[2]));
+        ctrl.close();
+      },
+    }), { headers: { "content-type": "text/event-stream" } });
+  }));
+  Deno.env.set("NOKEY_IDLE_MS", "150");
+  try {
+    const text = await (await app.fetch(chatCompletion({ model: "free:smart", messages: [{ role: "user", content: "hi" }], stream: true }))).text();
+    const firstChunk = text.indexOf('"content"'), keep = text.indexOf(": keepalive"), last = text.lastIndexOf('"content"');
+    if (!(firstChunk >= 0 && keep > firstChunk && last > keep)) throw new Error("keepalive not emitted between committed chunks");
+    if (!text.includes("[DONE]") || !text.includes("relay mesh")) throw new Error("stream incomplete");
+  } finally {
+    Deno.env.delete("NOKEY_IDLE_MS");
+    restoreMock();
+  }
+});
+
+test("a slow buffered completion keeps the connection alive with leading whitespace and stays valid JSON", async () => {
+  const good = await pickHealthyUrl();
+  installMock(healthyOnly(good, () =>
+    new Response(new ReadableStream<Uint8Array>({
+      async start(ctrl) {
+        await new Promise((r) => setTimeout(r, 700)); // whole generation before the first byte
+        ctrl.enqueue(encoder.encode(JSON.stringify({ choices: [{ index: 0, message: { role: "assistant", content: LONG_ANSWER }, finish_reason: "stop" }] })));
+        ctrl.close();
+      },
+    }), { headers: { "content-type": "application/json" } })));
+  Deno.env.set("NOKEY_IDLE_MS", "150");
+  try {
+    const res = await app.fetch(chatCompletion({ model: "free:smart", messages: [{ role: "user", content: "hi" }], stream: false }));
+    if (res.status !== 200 || !res.headers.get("traceparent")) throw new Error("slow path headers");
+    const text = await res.text();
+    if (!/^ {2,}\{/.test(text)) throw new Error(`expected whitespace keepalives before JSON, got ${JSON.stringify(text.slice(0, 20))}`);
+    const data = JSON.parse(text);
+    if (!String(data.choices?.[0]?.message?.content).includes("relay mesh") || data.nokey?.degraded !== false) throw new Error("bad body");
+  } finally {
+    Deno.env.delete("NOKEY_IDLE_MS");
+    restoreMock();
+  }
+});

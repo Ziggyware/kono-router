@@ -2356,9 +2356,8 @@ function degradedSse(o: DegradedOpts): string {
 
 const SSE_HEADERS = { "Content-Type": "text/event-stream; charset=utf-8", "Cache-Control": "no-cache", "Connection": "keep-alive" };
 
-function degradedCompletion(c: Context, o: DegradedOpts, headers: Record<string, string>): Response {
-  if (o.stream) return new Response(degradedSse(o), { status: 200, headers: { ...SSE_HEADERS, ...headers, "X-Nokey-Degraded": "1" } });
-  return c.json({
+function degradedJson(o: DegradedOpts): Json {
+  return {
     id: o.id,
     object: "chat.completion",
     created: o.created,
@@ -2370,7 +2369,12 @@ function degradedCompletion(c: Context, o: DegradedOpts, headers: Record<string,
       message: { role: "assistant", content: degradationMessage(o.attempts, o.endpoints, o.lastErr) },
       finish_reason: "stop",
     }],
-  }, 200, { ...headers, "X-Nokey-Degraded": "1" });
+  };
+}
+
+function degradedCompletion(c: Context, o: DegradedOpts, headers: Record<string, string>): Response {
+  if (o.stream) return new Response(degradedSse(o), { status: 200, headers: { ...SSE_HEADERS, ...headers, "X-Nokey-Degraded": "1" } });
+  return c.json(degradedJson(o), 200, { ...headers, "X-Nokey-Degraded": "1" });
 }
 
 const honoApp = new Hono();
@@ -2646,6 +2650,10 @@ honoApp.get("/v1/source", requireAdmin, (c) => {
 
 // Comment frames keep proxies and clients alive while the race is still routing.
 const HEARTBEAT_MS = 5_000;
+// Longest a response may go without sending a byte. Edge proxies and idle-bounded
+// clients drop silent connections; this keeps slow generations alive end to end.
+const idleMs = () => clampNum(Number(Deno.env.get("NOKEY_IDLE_MS")) || 15_000, 50, 60_000);
+const strictErrors = () => Deno.env.get("NOKEY_STRICT_ERRORS") === "1";
 
 honoApp.post("/v1/chat/completions", async (c) => {
   const completionId = `chatcmpl-${crypto.randomUUID()}`;
@@ -2896,71 +2904,113 @@ honoApp.post("/v1/chat/completions", async (c) => {
     });
 
     if (!wantsStream) {
-      try {
-        // A generation that dies after its first token re-dispatches once over the untried pool.
-        for (let round = 0; round < 2; round++) {
-          const { cand, up } = await dispatch();
-          try {
-            const res = await collectUpstream(up);
-            recordTupleSuccess(cand.tupleId, res.ttftMs, res.totalMs, res.estTokens).catch(logErr);
-            root.end("ok", {
-              tuple: cand.tupleId,
-              provider: cand.providerId,
-              ttft_ms: res.ttftMs,
-              total_ms: res.totalMs,
-              attempts: tried.size,
-              finish: res.finish ?? (res.toolCalls ? "tool_calls" : "stop"),
-              tool_calls: res.toolCalls?.length ?? 0,
-              content_chars: res.content.length,
-              reasoning_chars: res.reasoningContent?.length ?? 0,
-            });
-            return c.json({
-              id: completionId,
-              object: "chat.completion",
-              created,
-              model: cand.modelId,
-              provider: cand.providerId,
-              nokey: meta(cand),
-              telemetry: {
-                mode_selected: mode,
-                iq_effective: cand.iqEffective,
-                supports_reasoning: cand.supportsReasoning,
-                is_coding_specialist: cand.isCodingSpecialist,
-                reliability_draw: cand.reliabilityDraw,
-                observed_ttft_ms: res.ttftMs,
-                observed_total_ms: res.totalMs,
-                ewma_tps: cand.ewmaTps,
+      const buffered = async (): Promise<{ body: Json; headers: Record<string, string> }> => {
+        try {
+          // A generation that dies after its first token re-dispatches once over the untried pool.
+          for (let round = 0; round < 2; round++) {
+            const { cand, up } = await dispatch();
+            try {
+              const res = await collectUpstream(up);
+              recordTupleSuccess(cand.tupleId, res.ttftMs, res.totalMs, res.estTokens).catch(logErr);
+              root.end("ok", {
+                tuple: cand.tupleId,
+                provider: cand.providerId,
+                ttft_ms: res.ttftMs,
+                total_ms: res.totalMs,
                 attempts: tried.size,
-              },
-              choices: [
-                {
-                  index: 0,
-                  message: {
-                    role: "assistant",
-                    content: res.toolCalls && !res.content ? null : res.content,
-                    ...(res.reasoningContent ? { reasoning_content: res.reasoningContent } : {}),
-                    ...(res.toolCalls ? { tool_calls: res.toolCalls } : {}),
-                  },
-                  finish_reason: res.finish ?? (res.toolCalls ? "tool_calls" : "stop"),
+                finish: res.finish ?? (res.toolCalls ? "tool_calls" : "stop"),
+                tool_calls: res.toolCalls?.length ?? 0,
+                content_chars: res.content.length,
+                reasoning_chars: res.reasoningContent?.length ?? 0,
+              });
+              return { body: {
+                id: completionId,
+                object: "chat.completion",
+                created,
+                model: cand.modelId,
+                provider: cand.providerId,
+                nokey: meta(cand),
+                telemetry: {
+                  mode_selected: mode,
+                  iq_effective: cand.iqEffective,
+                  supports_reasoning: cand.supportsReasoning,
+                  is_coding_specialist: cand.isCodingSpecialist,
+                  reliability_draw: cand.reliabilityDraw,
+                  observed_ttft_ms: res.ttftMs,
+                  observed_total_ms: res.totalMs,
+                  ewma_tps: cand.ewmaTps,
+                  attempts: tried.size,
                 },
-              ],
-            }, 200, {
-              ...traceHeaders,
-              "Server-Timing": `ttft;dur=${res.ttftMs}, total;dur=${Math.round(root.ms)}`,
-              "X-Nokey-Attempts": String(tried.size),
-              "X-Nokey-Endpoints": String(endpointsAvailable),
-            });
-          } catch (e) {
-            if (master.signal.aborted) break;
-            lastErr = e;
-            root.event("generation_failed", { tuple: cand.tupleId, error: errText(e).slice(0, 200) });
-            recordTupleFailure(cand.tupleId, errText(e)).catch(logErr);
+                choices: [
+                  {
+                    index: 0,
+                    message: {
+                      role: "assistant",
+                      content: res.toolCalls && !res.content ? null : res.content,
+                      ...(res.reasoningContent ? { reasoning_content: res.reasoningContent } : {}),
+                      ...(res.toolCalls ? { tool_calls: res.toolCalls } : {}),
+                    },
+                    finish_reason: res.finish ?? (res.toolCalls ? "tool_calls" : "stop"),
+                  },
+                ],
+              }, headers: {
+                ...traceHeaders,
+                "Server-Timing": `ttft;dur=${res.ttftMs}, total;dur=${Math.round(root.ms)}`,
+                "X-Nokey-Attempts": String(tried.size),
+                "X-Nokey-Endpoints": String(endpointsAvailable),
+              } };
+            } catch (e) {
+              if (master.signal.aborted) break;
+              lastErr = e;
+              root.event("generation_failed", { tuple: cand.tupleId, error: errText(e).slice(0, 200) });
+              recordTupleFailure(cand.tupleId, errText(e)).catch(logErr);
+            }
           }
+          throw lastErr ?? new Error("No endpoint completed a full generation");
+        } finally {
+          clearTimeout(globalTimeout);
         }
-        throw lastErr ?? new Error("No endpoint completed a full generation");
-      } finally {
-        clearTimeout(globalTimeout);
+      };
+      const settled = buffered().then((v) => ({ v }), (e: unknown) => ({ e }));
+      const failure = (e: unknown): Json => {
+        endDegraded(e);
+        return strictErrors() ? { error: { message: errText(e) } } : degradedJson(degradedOpts(e));
+      };
+      const idle = idleMs();
+      let hold: ReturnType<typeof setTimeout> | undefined;
+      const early = await Promise.race([settled, new Promise<undefined>((res) => hold = setTimeout(() => res(undefined), idle))]);
+      clearTimeout(hold);
+      if (early) {
+        if ("v" in early) return c.json(early.v.body, 200, early.v.headers);
+        const body = failure(early.e);
+        return strictErrors() ? c.json(body, 502, traceHeaders) : c.json(body, 200, { ...traceHeaders, "X-Nokey-Degraded": "1" });
       }
+      // Slow generation: commit the 200 now and stay non-idle with leading
+      // whitespace (valid before any JSON value) until the body is ready.
+      const enc = new TextEncoder();
+      let tick: ReturnType<typeof setInterval> | undefined;
+      const body = new ReadableStream<Uint8Array>({
+        start(ctrl) {
+          const send = (s: string) => {
+            try {
+              ctrl.enqueue(enc.encode(s));
+            } catch { /* client gone */ }
+          };
+          send(" ");
+          tick = setInterval(() => send(" "), idle);
+          settled.then((r) => {
+            clearInterval(tick);
+            send(JSON.stringify("v" in r ? r.v.body : failure(r.e)));
+            try {
+              ctrl.close();
+            } catch { /* client gone */ }
+          });
+        },
+        cancel: () => clearInterval(tick),
+      });
+      return new Response(body, {
+        headers: { "Content-Type": "application/json", "Cache-Control": "no-cache", ...traceHeaders, "X-Nokey-Endpoints": String(endpointsAvailable) },
+      });
     }
 
     // Headers leave immediately; routing proceeds behind heartbeat comments and the
@@ -2981,7 +3031,7 @@ honoApp.post("/v1/chat/completions", async (c) => {
         if ("e" in r) {
           endDegraded(r.e);
           ok = true;
-          if (Deno.env.get("NOKEY_STRICT_ERRORS") === "1") {
+          if (strictErrors()) {
             yield `data: ${JSON.stringify({ error: { message: errText(r.e) } })}\n\ndata: [DONE]\n\n`;
           } else {
             yield degradedSse(degradedOpts(r.e));
@@ -3026,8 +3076,19 @@ honoApp.post("/v1/chat/completions", async (c) => {
             const f = wire(d);
             if (f) yield f;
           }
-          for await (const d of up.tail) {
-            const f = wire(d);
+          const idle = idleMs();
+          let next = up.tail.next();
+          while (true) {
+            let quiet: ReturnType<typeof setTimeout> | undefined;
+            const r = await Promise.race([next, new Promise<null>((res) => quiet = setTimeout(() => res(null), idle))]);
+            clearTimeout(quiet);
+            if (r === null) {
+              yield ": keepalive\n\n";
+              continue;
+            }
+            if (r.done) break;
+            next = up.tail.next();
+            const f = wire(r.value);
             if (f) yield f;
           }
           // Salvage parity with the buffered path: a reasoning-only stream also surfaces as content.
@@ -3070,7 +3131,7 @@ honoApp.post("/v1/chat/completions", async (c) => {
     clearTimeout(globalTimeout);
     endDegraded(err);
     // Opt-out for operators who prefer the legacy hard failure while debugging.
-    if (Deno.env.get("NOKEY_STRICT_ERRORS") === "1") {
+    if (strictErrors()) {
       return c.json({ error: { message: errText(err) } }, 502, traceHeaders);
     }
     return degradedCompletion(c, degradedOpts(err), traceHeaders);
