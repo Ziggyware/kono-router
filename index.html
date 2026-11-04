@@ -1282,7 +1282,20 @@ const caps = (m) => [m.supports_reasoning && "reasoning", m.supports_vision && "
 // dedupe once here; every model datalist on the page renders this shape.
 const LANE_IDS = ["free:auto", "free:fast", "free:smart", "free:code", "free:reasoning"];
 const LANE_GROUP = "lanes", IMAGE_GROUP = "image";
-const leafModelName = (id) => String(id).split("/").filter(Boolean).pop() || String(id);
+// A slug can be qualified by a provider and a subprovider, and pinned to a
+// routing modifier: "provider/subprovider/model:modifier". Its model name is the
+// last "/" segment minus that modifier, so every variant of one model collapses
+// into a single group entry. Virtual lane ids are names, not slugs — their colon
+// ("free:smart") is not a modifier, so they are left intact.
+const leafModelName = (id) => {
+  const raw = String(id);
+  if (LANE_IDS.includes(raw.toLowerCase())) return raw;
+  const leaf = raw.split("/").filter(Boolean).pop() || raw;
+  return leaf.split(":")[0] || leaf;
+};
+// Best routable id for one model name: provider-qualified beats bare, and an
+// unmodified id beats one pinned to a routing modifier.
+const routePreference = (id) => (id.includes("/") ? 2 : 0) + (id.includes(":") ? 0 : 1);
 // registry providers are owned_by "services_json_<endpoint>": same vendor, one group.
 const cleanVendor = (v) => String(v ?? "").trim().toLowerCase().replace(/^services_json_/, "").replace(/[_\s]+/g, " ").trim() || "other";
 const modelVendor = (m) => {
@@ -1302,7 +1315,7 @@ function groupedModels(models) {
     if (!groups.has(vendor)) groups.set(vendor, new Map());
     const bucket = groups.get(vendor), seen = bucket.get(key);
     // A provider-qualified slug routes more precisely than a bare leaf name.
-    if (!seen || (!seen.id.includes("/") && id.includes("/"))) bucket.set(key, { id, name: leafModelName(id) });
+    if (!seen || routePreference(id) > routePreference(seen.id)) bucket.set(key, { id, name: leafModelName(id) });
   }
   const lead = [LANE_GROUP, IMAGE_GROUP];
   const rank = (v) => { const i = lead.indexOf(v); return i < 0 ? lead.length : i; };
