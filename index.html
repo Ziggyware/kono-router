@@ -2157,10 +2157,10 @@ return { words: t.split(/\s+/).filter(Boolean).length, chars: t.length };</texta
   </div>
   <div class="sheet-b">
     <form id="form-custom-technique" method="dialog" style="display:flex;flex-direction:column;gap:10px">
-      <label><span class="lbl">Technique Name</span><input id="tech-name-in" class="tool-form-in" required placeholder="e.g. Event-Sourced Canvas Engine"></label>
-      <label><span class="lbl">Category</span><input id="tech-cat-in" class="tool-form-in" placeholder="Architecture / State / Graphics"></label>
-      <label><span class="lbl">Description</span><input id="tech-desc-in" class="tool-form-in" required placeholder="Short summary of technique"></label>
-      <label><span class="lbl">Architecture Rules (System Prompt Directive)</span><textarea id="tech-rules-in" class="tool-form-in" rows="4" placeholder="Instructions injected to guide the model when generating the app code..."></textarea></label>
+      <label><span class="lbl">Technique Name</span><input id="tech-name-in" data-notch data-notch-label="Technique — name" data-notch-context="The name of a custom build technique in App Builder Studio — a named architectural approach, e.g. Event-Sourced Canvas Engine. When this technique is selected, its name and architecture rules are injected into the prompt that generates the app in chat. Keep the name short and specific." class="tool-form-in" required placeholder="e.g. Event-Sourced Canvas Engine"></label>
+      <label><span class="lbl">Category</span><input id="tech-cat-in" data-notch data-notch-label="Technique — category" data-notch-context="The category of a custom build technique, e.g. Architecture, State, or Graphics. It only organizes the technique cards in App Builder Studio; it is not sent to the model." class="tool-form-in" placeholder="Architecture / State / Graphics"></label>
+      <label><span class="lbl">Description</span><input id="tech-desc-in" data-notch data-notch-label="Technique — description" data-notch-context="A one-line summary of what this build technique does and when to reach for it. Shown on the technique card in App Builder Studio so the right technique can be picked at a glance." class="tool-form-in" required placeholder="Short summary of technique"></label>
+      <label><span class="lbl">Architecture Rules (System Prompt Directive)</span><textarea id="tech-rules-in" data-notch data-notch-label="Technique — architecture rules" data-notch-context="The architecture rules of a custom build technique: a directive injected verbatim into the app-generation prompt whenever this technique is selected. Write concrete, enforceable instructions — patterns to use, patterns to avoid, how state, rendering and structure must work — not vague advice. The model follows these rules for the whole generated app." class="tool-form-in" rows="4" placeholder="Instructions injected to guide the model when generating the app code..."></textarea></label>
       <div class="row" style="justify-content:flex-end;margin-top:6px">
         <button class="btn q" value="cancel">Cancel</button>
         <button class="btn" id="btn-save-technique" value="save">Save Technique Locally</button>
@@ -2176,11 +2176,11 @@ return { words: t.split(/\s+/).filter(Boolean).length, chars: t.length };</texta
   </div>
   <div class="sheet-b">
     <form id="form-custom-tech" method="dialog" style="display:flex;flex-direction:column;gap:10px">
-      <label><span class="lbl">Technology Name</span><input id="t-name-in" class="tool-form-in" required placeholder="e.g. Three.js 3D / Leaflet Maps"></label>
-      <label><span class="lbl">Category</span><input id="t-cat-in" class="tool-form-in" placeholder="UI / 3D / Visualization / Database"></label>
-      <label><span class="lbl">Description</span><input id="t-desc-in" class="tool-form-in" required placeholder="Short summary of tech"></label>
-      <label><span class="lbl">CDN Script / ESM Imports / Tags</span><textarea id="t-tags-in" class="tool-form-in" rows="2" placeholder="&lt;script src='https://...'&gt;&lt;/script&gt; or import ..."></textarea></label>
-      <label><span class="lbl">Boilerplate / Starter Template Code</span><textarea id="t-template-in" class="tool-form-in" rows="4" placeholder="HTML/JS snippet demonstrating initialization..."></textarea></label>
+      <label><span class="lbl">Technology Name</span><input id="t-name-in" data-notch data-notch-label="Technology — name" data-notch-context="The name of a custom technology / stack entry in App Builder Studio, e.g. Three.js 3D or Leaflet Maps. When this technology is selected, its tags and boilerplate are included in the prompt that generates the app in chat." class="tool-form-in" required placeholder="e.g. Three.js 3D / Leaflet Maps"></label>
+      <label><span class="lbl">Category</span><input id="t-cat-in" data-notch data-notch-label="Technology — category" data-notch-context="The category of a custom technology, e.g. UI, 3D, Visualization, or Database. It only organizes the technology cards in App Builder Studio; it is not sent to the model." class="tool-form-in" placeholder="UI / 3D / Visualization / Database"></label>
+      <label><span class="lbl">Description</span><input id="t-desc-in" data-notch data-notch-label="Technology — description" data-notch-context="A one-line summary of the technology and what it is for. Shown on the technology card in App Builder Studio." class="tool-form-in" required placeholder="Short summary of tech"></label>
+      <label><span class="lbl">CDN Script / ESM Imports / Tags</span><textarea id="t-tags-in" data-notch data-notch-label="Technology — CDN tags / imports" data-notch-context="The tags that load this technology in a single-file HTML app: CDN script tags or ESM import statements, exactly as they should appear in the generated page. They are included in the generation prompt so the model builds against the real library instead of inventing an API. Give the canonical CDN URL for the library." class="tool-form-in" rows="2" placeholder="&lt;script src='https://...'&gt;&lt;/script&gt; or import ..."></textarea></label>
+      <label><span class="lbl">Boilerplate / Starter Template Code</span><textarea id="t-template-in" data-notch data-notch-label="Technology — boilerplate template" data-notch-context="Boilerplate starter code demonstrating how to initialize and use this technology — the minimal working snippet the model should pattern the generated app on. A correct, runnable initialization example matters more than a complete app here." class="tool-form-in" rows="4" placeholder="HTML/JS snippet demonstrating initialization..."></textarea></label>
       <div class="row" style="justify-content:flex-end;margin-top:6px">
         <button class="btn q" value="cancel">Cancel</button>
         <button class="btn" id="btn-save-tech" value="save">Save Technology Locally</button>
@@ -5727,6 +5727,14 @@ function notchLabel(field) {
 function openNotch(field) {
   notchField = field;
   notchReplacement = null;
+  // A modal <dialog> renders in the top layer, above everything outside
+  // it — the shared panel included. When the field lives in a dialog,
+  // move the panel inside that dialog so it stays reachable; otherwise
+  // keep it at body level.
+  const panel0 = $("#ai-notch-panel");
+  const hostDlg = field.closest("dialog");
+  if (hostDlg) { if (panel0.parentNode !== hostDlg) hostDlg.appendChild(panel0); }
+  else if (panel0.parentNode !== document.body) document.body.appendChild(panel0);
   $("#anp-title").textContent = "✦ Ask AI — " + notchLabel(field);
   $("#anp-ctx").textContent = field.dataset.notchContext || "";
   const val = field.value ?? "";

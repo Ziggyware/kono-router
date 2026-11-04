@@ -1,3 +1,15 @@
+# AI tabs in the builder modals — 2026-11-04
+
+All nine fields of the New Build Technique and New Technology dialogs
+(name, category, description, rules / tags / template) now carry the ✦
+AI tab, each with context describing what the field feeds — the
+generation prompt, the card list, or the generated page itself.
+
+One subtlety: a modal <dialog> renders in the top layer, above the
+shared AI panel, so a notch inside a dialog could never be answered.
+`openNotch` now moves the panel inside the field's dialog when the
+field lives in one (and back to body level for regular fields).
+
 # Dashboard views: source search, visual inspector, harvester hints, plain-English lanes — 2026-11-04
 
 - **Source** can now search every readable file at once: new admin route
