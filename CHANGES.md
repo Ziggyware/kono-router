@@ -1,3 +1,30 @@
+# Chat tools: real tool calling, no more text insertion — 2026-11-04
+
+The chat Tools drawer was not set up as tool calling at all: **Run &
+Insert** executed the tool and then pasted a code-block of the
+request/response into the composer, and **Insert Directive** pasted a
+prose "Use the X tool with arguments…" line into the composer for the
+model to read. Both are gone.
+
+Now **⚡ Run Tool** executes on the tool plane and appends a real tool
+exchange to the conversation — an assistant `tool_calls` message
+followed by the `tool` result message — so the result is in the
+model's context as a tool result, renders as a completed tool card,
+and the composer is never touched. **⚡ Run & Continue in Chat** does
+the same and then lets the model answer using the result. The result
+also previews inside the drawer, and invalid parameter JSON is
+rejected instead of being sent as a raw string.
+
+Also fixed: the drawer could open with an empty tool list because it
+built its select before the registry finished loading — it now awaits
+the load. (In normal chat, tools still run entirely behind the scenes
+via `tools: "auto"`, as before.)
+
+Verified with the jsdom harness (new run6: drawer opens with the
+composer untouched, execute carries the real args, the exchange lands
+in the thread with no hand-feed textareas, Run & Continue produces an
+answer from the result — 16/16; run4/run5 still pass; deno 103/0).
+
 # Parallel runs with a judge pass — 2026-11-04
 
 Chat can now run one prompt on several models at once (the

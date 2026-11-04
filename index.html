@@ -1405,7 +1405,7 @@ select.tool-form-in { background: var(--bg-3); color: var(--fg); }
           <div class="row" style="flex-wrap:nowrap">
             <input type="file" id="cfile" accept="image/*" multiple hidden>
             <button class="btn q" id="cattach" title="Attach images" aria-label="Attach images"><svg aria-hidden="true"><use href="#i-img"/></svg><span class="btxt">img</span></button>
-            <button class="btn q" id="ctools-btn" title="Use or insert tools in chat" aria-label="Tools"><svg aria-hidden="true"><use href="#i-tool"/></svg><span class="btxt">tools</span></button>
+            <button class="btn q" id="ctools-btn" title="Run a tool in this chat" aria-label="Tools"><svg aria-hidden="true"><use href="#i-tool"/></svg><span class="btxt">tools</span></button>
             <button class="btn q" id="cappbuilder-btn" title="Build Application with Tech Stack" aria-label="Build App"><svg aria-hidden="true"><use href="#i-sparkles"/></svg><span class="btxt">build</span></button>
             <button class="btn q" id="cworkspace-btn" title="Workspace — durable files, conversations, GitHub" aria-label="Workspace"><svg aria-hidden="true"><use href="#i-file"/></svg><span class="btxt">files</span></button>
             <button class="btn q" id="cexpand" title="Expand / contract editor mode" aria-label="Expand editor"><svg aria-hidden="true"><use href="#i-expand"/></svg></button>
@@ -2012,7 +2012,7 @@ return { words: t.split(/\s+/).filter(Boolean).length, chars: t.length };</texta
   </div>
   <div class="sheet-b">
     <div style="display:flex;flex-direction:column;gap:12px">
-      <div class="dim" style="font-size:12px">Select a tool to test, configure parameters, and integrate into chat.</div>
+      <div class="dim" style="font-size:12px">Run a tool on the router's tool plane. The call and its result enter the conversation as a real tool exchange the model can see — nothing is pasted into the composer. In normal chat the model calls tools itself; this drawer is for running one specific tool yourself.</div>
       <div class="row">
         <select id="chat-tool-select" class="tool-form-in grow" aria-label="Select tool"></select>
         <button class="btn q" id="chat-tool-load-ex">Load Example</button>
@@ -2023,8 +2023,8 @@ return { words: t.split(/\s+/).filter(Boolean).length, chars: t.length };</texta
         <textarea id="chat-tool-args" class="tool-form-in" rows="4" style="font-family:var(--mono);font-size:12px">{}</textarea>
       </div>
       <div class="row" style="margin-top:6px;gap:8px">
-        <button class="btn grow" id="chat-tool-run-insert">⚡ Run &amp; Insert in Chat</button>
-        <button class="btn q" id="chat-tool-insert-prompt">📝 Insert Directive</button>
+        <button class="btn grow" id="chat-tool-run-insert">⚡ Run Tool</button>
+        <button class="btn q" id="chat-tool-run-continue">⚡ Run &amp; Continue in Chat</button>
       </div>
       <div id="chat-tool-res-preview" hidden style="margin-top:4px">
         <span class="lbl">Result Preview</span>
@@ -4743,8 +4743,10 @@ enter.tools = () => { if (!toolList.length) loadTools(); else renderTools(); };
 // CHAT TOOLS INTEGRATION & DRAWER
 // =====================================================================
 const chatToolsDrawer = $("#chat-tools-drawer");
-function openChatToolsDrawer(preselectedTool = null) {
-  if (!toolList.length) loadTools();
+async function openChatToolsDrawer(preselectedTool = null) {
+  // Await the registry load: building the select from a still-empty
+  // toolList was why the drawer could open with no tools in it.
+  if (!toolList.length) await loadTools();
   const sel = $("#chat-tool-select");
   sel.innerHTML = toolList.map((t) => `<option value="${esc(t.name)}">${esc(t.name)} (${esc(t.kind)})</option>`).join("");
   if (preselectedTool && toolList.some((t) => t.name === preselectedTool)) {
@@ -4764,36 +4766,41 @@ function updateChatToolDrawerFields() {
 $("#chat-tool-select")?.addEventListener("change", updateChatToolDrawerFields);
 $("#chat-tool-load-ex")?.addEventListener("click", updateChatToolDrawerFields);
 
-$("#chat-tool-run-insert")?.addEventListener("click", async () => {
+// Proper tool calling for the chat drawer: the tool runs on the router's
+// tool plane, and the call + result enter the conversation as a real
+// tool exchange (assistant tool_calls -> tool message) that the model
+// sees in context — never as text pasted into the composer, and never
+// as a prose "please use this tool" directive. In normal chat the model
+// calls tools itself via tools:"auto"; this drawer is for running one
+// specific tool yourself.
+async function runChatTool(continueAfter) {
   const name = $("#chat-tool-select").value;
+  if (!name) { toast("pick a tool first", true); return; }
   let args;
-  try { args = JSON.parse($("#chat-tool-args").value); } catch { args = $("#chat-tool-args").value; }
+  try { args = JSON.parse($("#chat-tool-args").value); }
+  catch { toast("parameters must be valid JSON", true); return; }
   toast(`Running ${name}…`);
   try {
     const d = await req("/v1/tools/execute", { method: "POST", admin: true, body: { name, arguments: args } });
     const r = d.results?.[0] ?? {};
-    const resSnippet = JSON.stringify(r.ok ? r.result : { error: r.error }, null, 2);
-    const snippet = `\`\`\`tool:${name}\nRequest: ${JSON.stringify(args, null, 2)}\nResponse: ${resSnippet}\n\`\`\`\n`;
-    const cur = $("#cinput").value;
-    $("#cinput").value = cur ? cur + "\n\n" + snippet : snippet;
-    autosize($("#cinput"));
+    const payload = r.ok ? r.result : { error: r.error || r.code || "tool failed" };
+    const code = $("#chat-tool-preview-code");
+    code.textContent = JSON.stringify(payload, null, 2);
+    code.style.color = r.ok ? "" : "#e06c5f";
+    $("#chat-tool-res-preview").hidden = false;
+    const callId = "call_" + Date.now().toString(36) + Math.floor(Math.random() * 1e4);
+    conv.messages.push({ role: "assistant", content: "", tool_calls: [{ id: callId, type: "function", function: { name, arguments: JSON.stringify(args) } }] });
+    conv.messages.push({ role: "tool", tool_call_id: callId, name, content: JSON.stringify(payload) });
+    saveConv(); renderThread();
     closeSheets();
-    toast(`Inserted ${name} result into chat message`);
+    toast(r.ok ? `${name} ran — its result is in the conversation` : `${name} failed — the error is in the conversation`, !r.ok);
+    if (continueAfter && !chatCtl) complete();
   } catch (err) {
     toast(`Tool execute error: ${err.message}`, true);
   }
-});
-
-$("#chat-tool-insert-prompt")?.addEventListener("click", () => {
-  const name = $("#chat-tool-select").value;
-  const args = $("#chat-tool-args").value.trim();
-  const directive = `Use the ${name} tool with arguments: ${args}`;
-  const cur = $("#cinput").value;
-  $("#cinput").value = cur ? cur + "\n" + directive : directive;
-  autosize($("#cinput"));
-  closeSheets();
-  toast(`Inserted ${name} directive into prompt`);
-});
+}
+$("#chat-tool-run-insert")?.addEventListener("click", () => runChatTool(false));
+$("#chat-tool-run-continue")?.addEventListener("click", () => runChatTool(true));
 
 // =====================================================================
 // APP BUILDER STUDIO & LIVE SANDBOX RUNNER
