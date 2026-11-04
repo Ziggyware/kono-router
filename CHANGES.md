@@ -1,3 +1,43 @@
+# App Builder: file tree, live updates, transpiling, real debug output — 2026-11-04
+
+The builder could generate, but it couldn't *show* a project. Now it
+can, end to end:
+
+**Files & folders.** The workspace renders as a real tree — folders
+as collapsible groups, files nested under them — in both the
+Workspace drawer and a new **Project Files** section in App Builder
+Studio (clicking a file there opens it in the workspace editor).
+
+**Generate / update visibility.** Every refresh diffs the new file
+snapshot against the previous one and reports **✚ created /
+✎ updated / ✖ deleted** in an activity feed in both panels. While a
+panel is open the tree re-lists itself every few seconds, so files
+the agent writes during a generation appear — and announce
+themselves — without a manual refresh.
+
+**Transpiling.** TypeScript/JSX is now transpiled before it runs:
+code blocks in `ts`/`tsx`/`jsx` and inline blocks typed
+`text/tsx`/`text/typescript`/`text/jsx` are transpiled with Sucrase
+(loaded on demand) during sandbox assembly, and the workspace editor
+gained a **⚙ Transpile → .js** action that writes the compiled
+sibling file. Transpiling is syntax-level (types stripped, JSX
+compiled) — it does not type-check, and a failed transpile is
+reported in the debug panel instead of being hidden.
+
+**Debug output.** The sandbox bridge now forwards structured errors
+(message, stack, line, column). Errors render as debug cards with
+the **parsed call stack**, the **origin file** (from the assembled
+block markers), the **containing function**, and the **source line
+with three lines of context on each side**, resolved against the
+exact document loaded in the frame so line numbers line up. The
+console panel opens itself when an error arrives.
+
+Verified with the jsdom harness (new run7, 19/19: tree in both
+panels, created/updated activity, editor transpile writes a stripped
+.js, sandbox transpiles a tsx block, debug card shows stack +
+containing function + origin + surrounding lines; run4/run5/run6
+still pass; deno 103/0).
+
 # Chat tools: real tool calling, no more text insertion — 2026-11-04
 
 The chat Tools drawer was not set up as tool calling at all: **Run &

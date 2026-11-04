@@ -1100,6 +1100,14 @@ dialog .row { margin-top: 4px; }
 .par-code { max-height: 220px; overflow: auto; font: 11px/1.5 var(--mono); white-space: pre-wrap; margin: 0; }
 .par-text { max-height: 220px; overflow: auto; font-size: 12.5px; white-space: pre-wrap; }
 .par-note { font-size: 12.5px; }
+.ft-dir { margin-left: 10px; }
+.ft-dir > summary { cursor: pointer; font: 600 11.5px var(--mono); padding: 3px 2px; }
+.ft-files { display: flex; flex-direction: column; gap: 4px; margin-left: 12px; }
+.ws-act { font-size: 11px; font-family: var(--mono); }
+.dbg-card { border: 1px solid rgba(244,112,103,.35); border-radius: 8px; padding: 6px 8px; display: grid; gap: 4px; }
+.dbg-ctx { margin: 0; font: 10.5px/1.5 var(--mono); overflow: auto; white-space: pre; }
+.dbg-hot { background: rgba(244,112,103,.22); }
+.dbg-frame { font: 10.5px var(--mono); color: var(--mid); }
 .input-container { position: relative; width: 100%; }
 .input-meta { position: absolute; bottom: 6px; right: 8px; font-size: 10.5px; color: var(--dim); pointer-events: none; font-family: var(--mono); }
 .composer.expanded {
@@ -2087,6 +2095,16 @@ return { words: t.split(/\s+/).filter(Boolean).length, chars: t.length };</texta
         <button class="btn q" id="btn-import-techpack" title="Import custom techniques and technologies">Import Pack</button>
         <input type="file" id="techpack-file-in" accept=".json" hidden>
       </div>
+
+      <div>
+        <div class="row" style="justify-content:space-between;margin-bottom:6px">
+          <span class="lbl">4. Project Files</span>
+          <button class="btn q" id="builder-open-ws" style="font-size:10.5px;padding:2px 8px">Open workspace</button>
+        </div>
+        <div id="builder-files" style="display:flex;flex-direction:column;gap:4px"></div>
+        <div class="dim" style="font-size:11px;margin-top:4px">The durable workspace as a folder tree — workspace-mode generations write here, and while this panel is open the tree refreshes itself and reports created / updated files below.</div>
+        <div id="builder-activity" style="display:grid;gap:2px;margin-top:4px"></div>
+      </div>
     </div>
   </div>
 </dialog>
@@ -2115,6 +2133,7 @@ return { words: t.split(/\s+/).filter(Boolean).length, chars: t.length };</texta
           <button class="btn q" id="ws-refresh" style="font-size:10.5px;padding:2px 8px">↻ Refresh</button>
         </div>
         <div id="ws-files" style="display:flex;flex-direction:column;gap:4px"></div>
+        <div id="ws-activity" style="display:grid;gap:2px;margin-top:6px"></div>
         <div class="row" style="gap:6px;margin-top:8px">
           <input id="ws-new-name" class="tool-form-in grow" placeholder="new file name — e.g. app/index.html" spellcheck="false" aria-label="New file name">
           <button class="btn q" id="ws-new-btn">+ New file</button>
@@ -2124,6 +2143,7 @@ return { words: t.split(/\s+/).filter(Boolean).length, chars: t.length };</texta
             <b id="ws-cur-path" style="font:600 12px var(--mono)"></b>
             <span class="grow"></span>
             <button class="btn q" id="ws-run" style="font-size:10.5px;padding:2px 8px">▶ Run</button>
+            <button class="btn q" id="ws-transpile" style="font-size:10.5px;padding:2px 8px" hidden>⚙ Transpile → .js</button>
             <button class="btn q" id="ws-dl" style="font-size:10.5px;padding:2px 8px">Download</button>
             <button class="btn q" id="ws-del" style="font-size:10.5px;padding:2px 8px">Delete</button>
           </div>
@@ -2186,7 +2206,7 @@ return { words: t.split(/\s+/).filter(Boolean).length, chars: t.length };</texta
   <iframe id="sandbox-iframe" class="sandbox-frame" sandbox="allow-scripts allow-modals"></iframe>
   <div class="sandbox-console" id="sandbox-console" hidden>
     <div class="row" style="justify-content:space-between;margin-bottom:4px">
-      <span class="lbl">Sandbox Console Logs</span>
+      <span class="lbl">Sandbox Console &amp; Debug</span>
       <button class="btn q" id="sb-clear-console" style="font-size:10px;padding:1px 6px">Clear</button>
     </div>
     <div id="sandbox-logs" style="display:flex;flex-direction:column;gap:3px;color:var(--mid)"></div>
@@ -4832,6 +4852,8 @@ const appBuilderDrawer = $("#app-builder-drawer");
 function openAppBuilder() {
   renderAppBuilderLists();
   openSheet(appBuilderDrawer);
+  wsRefresh(true);
+  wsWatch(true);
 }
 
 function getSavedTechniques() {
@@ -5098,11 +5120,63 @@ let currentSandboxDoc = "";    // full document actually loaded (wrapped + conso
 // only channel; the parent checks e.source against the frame.
 const SBX_BRIDGE = `<scr${"ipt"}>(function(){
   function fmt(a){ if (typeof a === "string") return a; if (a instanceof Error) return a.message; try { return JSON.stringify(a); } catch { try { return String(a); } catch { return "[object]"; } } }
-  function send(level, args){ try { parent.postMessage({ __sbx: 1, level, text: [...args].map(fmt).join(" ") }, "*"); } catch {} }
-  for (const k of ["log","info","warn","error","debug"]) { const orig = console[k] ? console[k].bind(console) : () => {}; console[k] = (...a) => { send(k === "debug" ? "log" : k, a); orig(...a); }; }
-  addEventListener("error", (e) => send("error", [e.message + (e.lineno ? " (line " + e.lineno + ")" : "")]));
-  addEventListener("unhandledrejection", (e) => send("error", ["Unhandled rejection: " + fmt(e.reason)]));
+  function send(level, args, extra){ try { parent.postMessage(Object.assign({ __sbx: 1, level, text: [...args].map(fmt).join(" ") }, extra || {}), "*"); } catch {} }
+  function errExtra(e, line, col){ const o = {}; if (e && e.stack) o.stack = String(e.stack); if (line) o.line = line; if (col) o.col = col; return o; }
+  for (const k of ["log","info","warn","error","debug"]) { const orig = console[k] ? console[k].bind(console) : () => {}; console[k] = (...a) => { const bad = a.find((x) => x instanceof Error); send(k === "debug" ? "log" : k, a, bad ? errExtra(bad) : null); orig(...a); }; }
+  addEventListener("error", (e) => send("error", [e.message || "Script error"], errExtra(e.error, e.lineno, e.colno)));
+  addEventListener("unhandledrejection", (e) => send("error", ["Unhandled rejection: " + fmt(e.reason)], e.reason instanceof Error ? errExtra(e.reason) : null));
 })();<\/script>`;
+
+// ---- transpiling -------------------------------------------------------------
+// Generated apps increasingly arrive as TypeScript / JSX. Sucrase (loaded
+// on demand from esm.sh) transpiles them in the browser — syntax-level
+// only (types stripped, JSX compiled); it does not type-check. If the
+// CDN is unreachable the block is left untouched and the failure is
+// reported in the debug panel, never hidden.
+let sbxTranspilerPromise = null;
+function loadTranspiler() {
+  if (typeof globalThis.__SBX_TRANSPILER__ === "function") return Promise.resolve(globalThis.__SBX_TRANSPILER__);
+  if (!sbxTranspilerPromise) {
+    sbxTranspilerPromise = import("https://esm.sh/sucrase@3.35.0").then((mod) => (code, opts) => {
+      const transforms = [];
+      if (opts.ts) transforms.push("typescript");
+      if (opts.jsx) transforms.push("jsx");
+      return mod.transform(code, { transforms, production: true, filePath: opts.name || "block" }).code;
+    }).catch(() => null);
+  }
+  return sbxTranspilerPromise;
+}
+async function sbxTranspile(code, name) {
+  const lower = (name || "").toLowerCase();
+  const ts = /\.(ts|mts|tsx)$/.test(lower) || ["typescript", "ts", "tsx"].includes(lower);
+  const jsx = /\.(tsx|jsx)$/.test(lower) || ["tsx", "jsx"].includes(lower);
+  if (!ts && !jsx) return { code, error: null, skipped: true };
+  const t = await loadTranspiler();
+  if (!t) return { code, error: "transpiler unavailable (esm.sh unreachable)", skipped: false };
+  try { return { code: t(code, { ts, jsx, name }), error: null, skipped: false }; }
+  catch (e) { return { code, error: String((e && e.message) || e), skipped: false }; }
+}
+const SBX_TS_TYPE = /type\s*=\s*["']text\/(?:tsx|typescript|jsx)["']/i;
+async function sbxTranspileDoc(doc) {
+  const errors = [];
+  const tags = [];
+  const re = /<[s]cript([^>]*)>([\s\S]*?)<\/[s]cript>/gi;
+  let m;
+  while ((m = re.exec(doc))) tags.push({ full: m[0], attrs: m[1], body: m[2], at: m.index });
+  for (let i = tags.length - 1; i >= 0; i--) {
+    const t = tags[i];
+    const nameM = t.attrs.match(/data-sbx="([^"]+)"/);
+    const marked = /data-sbx-ts/.test(t.attrs) || SBX_TS_TYPE.test(t.attrs);
+    if (!marked) continue;
+    const r = await sbxTranspile(t.body, nameM ? nameM[1] : "tsx");
+    if (r.error) { errors.push({ name: nameM ? nameM[1] : "inline block", error: r.error }); continue; }
+    if (r.skipped) continue;
+    const attrs = t.attrs.replace(SBX_TS_TYPE, "").replace(/\s*data-sbx-ts="1"/, "");
+    const body = r.code.replace(/<\/script/gi, "<\\/script");
+    doc = doc.slice(0, t.at) + "<" + "script" + attrs + ">" + body + "<" + "/script>" + doc.slice(t.at + t.full.length);
+  }
+  return { doc, errors };
+}
 
 function sbxWrap(code) {
   let doc = (code.includes("<!DOCTYPE") || /<html[\s>]/i.test(code))
@@ -5128,10 +5202,10 @@ function sbxBlockInfo(block) {
   if (!code.trim()) return null;
   let kind = "other";
   if (lang === "css") kind = "css";
-  else if (lang === "js" || lang === "javascript" || lang === "mjs") kind = "js";
+  else if (lang === "js" || lang === "javascript" || lang === "mjs" || lang === "ts" || lang === "tsx" || lang === "typescript" || lang === "jsx") kind = "js";
   else if (lang === "html" || /<!doctype html|<html[\s>]/i.test(code) || (/<(div|section|main|canvas|button|input|form|svg)[\s>]/i.test(code) && lang !== "css")) kind = "html";
   const fm = code.split("\n", 3).join("\n").match(/(?:\/\/|<!-{2}|\/\*)\s*([A-Za-z0-9._-]+\.(?:html?|css|m?js))\b/i);
-  return { code, lang, kind, name: fm ? fm[1].toLowerCase() : null, el: block };
+  return { code, lang, kind, name: fm ? fm[1].toLowerCase() : null, el: block, ts: ["ts", "tsx", "typescript", "jsx"].includes(lang) };
 }
 
 function sbxAssemble(clicked) {
@@ -5146,7 +5220,7 @@ function sbxAssemble(clicked) {
   const js = infos.filter((i) => i.kind === "js");
   if (!css.length && !js.length) return base.code;
   const styleTag = (c) => `<style data-sbx="${c.name || "style.css"}">\n${c.code}\n</style>`;
-  const scriptTag = (j) => `<scr${"ipt"} data-sbx="${j.name || "app.js"}">\n${j.code.replace(/<\/script/gi, "<\\/script")}\n<\/script>`;
+  const scriptTag = (j) => `<scr${"ipt"} data-sbx="${j.name || "app.js"}"${j.ts ? ' data-sbx-ts="1"' : ""}>\n${j.code.replace(/<\/script/gi, "<\\/script")}\n<\/script>`;
   let doc = base.code;
   if (!/<!doctype html|<html[\s>]/i.test(doc)) {
     return `<!DOCTYPE html><html><head><meta charset="utf-8">${css.map(styleTag).join("\n")}</head><body>${doc}\n${js.map(scriptTag).join("\n")}</body></html>`;
@@ -5177,15 +5251,81 @@ function sbxResetPlacement(modal) {
   delete modal.dataset.pinned;
 }
 
-function launchAppSandbox(code, title = "Application Preview") {
+async function launchAppSandbox(code, title = "Application Preview") {
   currentSandboxCode = code;
   const modal = $("#app-sandbox-modal");
   $("#sandbox-app-title").textContent = title;
-  currentSandboxDoc = sbxWrap(code);
+  let doc = sbxWrap(code);
+  let errors = [];
+  try { const t = await sbxTranspileDoc(doc); doc = t.doc; errors = t.errors; } catch { /* keep the untranspiled doc */ }
+  currentSandboxDoc = doc;
   $("#sandbox-iframe").srcdoc = currentSandboxDoc;
-  $("#sandbox-logs").innerHTML = `<div class="dim">App mounted in sandbox. Console output will stream here.</div>`;
+  $("#sandbox-logs").innerHTML = `<div class="dim">App mounted in sandbox. Console + debug output stream here — errors show the call stack, the source line with its surroundings, and the containing function.</div>`;
   sbxResetPlacement(modal);
   if (!modal.open) modal.showModal();
+  for (const e of errors) sbxRenderLog({ level: "error", text: `Transpile failed in ${e.name}: ${e.error} (syntax-level transpile only — types are not checked)` });
+}
+
+// ---- sandbox debug rendering ----------------------------------------------
+// Console lines stay one-liners, but errors render as debug cards: the
+// message, the parsed call stack, the containing function, and the
+// source line with its surrounding lines — resolved against the exact
+// document loaded in the frame (currentSandboxDoc), so line numbers
+// line up with what actually ran.
+function sbxParseStack(stack) {
+  if (!stack) return [];
+  const frames = [];
+  for (const raw of String(stack).split("\n").slice(0, 12)) {
+    const m = raw.match(/at\s+(?:(.+?)\s+\()?[^()\s]*:(\d+):(\d+)\)?\s*$/) || raw.match(/^\s*(?:(.+?)@)?[^@\s]*:(\d+):(\d+)\s*$/);
+    if (m) frames.push({ fn: (m[1] || "(anonymous)").trim(), line: Number(m[2]), col: Number(m[3]) });
+  }
+  return frames;
+}
+function sbxOriginAt(lines, lineNo) {
+  for (let i = Math.min(lineNo, lines.length) - 1; i >= 0; i--) {
+    const m = lines[i].match(/data-sbx="([^"]+)"/);
+    if (m) return m[1];
+  }
+  return "assembled document";
+}
+function sbxContainingFn(lines, lineNo) {
+  const pats = [/function\s+([A-Za-z_$][\w$]*)\s*\(/, /([A-Za-z_$][\w$]*)\s*=\s*(?:async\s+)?(?:function\b|\()/, /^\s*(?:async\s+)?([A-Za-z_$][\w$]*)\s*\([^)]*\)\s*\{/, /class\s+([A-Za-z_$][\w$]*)/];
+  for (let i = Math.min(lineNo, lines.length) - 1; i >= 0; i--) {
+    for (const re of pats) { const m = lines[i].match(re); if (m) return m[1]; }
+  }
+  return "(top level)";
+}
+function sbxRenderLog(d) {
+  const logs = $("#sandbox-logs");
+  if (!logs) return;
+  const frames = d.level === "error" ? sbxParseStack(d.stack) : [];
+  const lineNo = d.line || frames[0]?.line || 0;
+  if (d.level !== "error" || !lineNo) {
+    const line = document.createElement("div");
+    if (d.level === "warn") line.style.color = "#d29922";
+    if (d.level === "error") line.style.color = "#f47067";
+    line.style.whiteSpace = "pre-wrap";
+    line.textContent = (d.level === "log" || d.level === "info" ? "" : d.level.toUpperCase() + "  ") + d.text + (d.level === "error" && frames.length ? "\n" + frames.map((f) => `  at ${f.fn} (line ${f.line}:${f.col})`).join("\n") : "");
+    logs.appendChild(line);
+  } else {
+    const lines = currentSandboxDoc ? currentSandboxDoc.split("\n") : [];
+    const origin = sbxOriginAt(lines, lineNo);
+    const fn = sbxContainingFn(lines, lineNo);
+    const from = Math.max(1, lineNo - 3), to = Math.min(lines.length, lineNo + 3);
+    const ctx = [];
+    for (let n = from; n <= to; n++) ctx.push({ n, text: lines[n - 1] ?? "", hot: n === lineNo });
+    const card = document.createElement("div");
+    card.className = "dbg-card";
+    card.innerHTML = `<div style="color:#f47067"><b>⛔ ${esc(d.text)}</b></div>
+      <div class="dbg-frame">at line ${lineNo}${(d.col || frames[0]?.col) ? ":" + (d.col || frames[0].col) : ""} · in ${esc(origin)} · inside <b>${esc(fn)}</b>()</div>
+      ${frames.length ? `<div>${frames.slice(0, 6).map((f) => `<div class="dbg-frame">↳ ${esc(f.fn)} — line ${f.line}:${f.col}</div>`).join("")}</div>` : ""}
+      <pre class="dbg-ctx">${ctx.map((c) => `<span style="display:block" class="${c.hot ? "dbg-hot" : ""}">${c.hot ? "▶" : " "} ${String(c.n).padStart(4)} │ ${esc(c.text)}</span>`).join("")}</pre>`;
+    logs.appendChild(card);
+    const panel = $("#sandbox-console");
+    if (panel) panel.hidden = false;
+  }
+  const panel = $("#sandbox-console");
+  if (panel) panel.scrollTop = panel.scrollHeight;
 }
 
 // Console stream from the preview frame
@@ -5194,15 +5334,7 @@ window.addEventListener("message", (e) => {
   if (!frame || e.source !== frame.contentWindow) return;
   const d = e.data;
   if (!d || d.__sbx !== 1) return;
-  const logs = $("#sandbox-logs");
-  if (!logs) return;
-  const line = document.createElement("div");
-  if (d.level === "warn") line.style.color = "#d29922";
-  if (d.level === "error") line.style.color = "#f47067";
-  line.textContent = (d.level === "log" || d.level === "info" ? "" : d.level.toUpperCase() + "  ") + d.text;
-  logs.appendChild(line);
-  const panel = $("#sandbox-console");
-  if (panel) panel.scrollTop = panel.scrollHeight;
+  sbxRenderLog(d);
 });
 
 // ---- move & resize ------------------------------------------------------
@@ -5765,6 +5897,7 @@ function openSheet(el) {
   refreshOverlays();
 }
 function closeSheets() {
+  wsWatch(false);
   // Every sheet openSheet() can open (all-views, tools drawer, app
   // builder) — not just moreSheet, or the drawers can never be closed.
   for (const s of $$(".sheet.open")) { s.classList.remove("open"); s.setAttribute("aria-hidden", "true"); }
@@ -6093,25 +6226,83 @@ async function wsExec(name, args) {
   return r.result;
 }
 
-function renderWsFiles() {
-  const box = $("#ws-files");
-  if (!wsFiles.length) {
-    box.innerHTML = `<div class="dim" style="font-size:12px">No files yet — ask the chat to build something (the agent writes here with its fs tools), create a file below, pull from GitHub, or import.</div>`;
-    return;
+// ---- file & folder tree -----------------------------------------------------
+// The workspace is a project, not a bag of paths: render it as a tree
+// (folders as collapsible <details>, files as open buttons) in both the
+// Workspace drawer and the App Builder's Project Files section.
+function buildFileTree(files) {
+  const root = { dirs: new Map(), files: [] };
+  for (const file of files) {
+    const parts = file.path.split("/").filter(Boolean);
+    let node = root;
+    for (const part of parts.slice(0, -1)) {
+      if (!node.dirs.has(part)) node.dirs.set(part, { dirs: new Map(), files: [] });
+      node = node.dirs.get(part);
+    }
+    node.files.push(file);
   }
-  box.innerHTML = wsFiles.map((file) => `<button class="btn q" data-ws-open="${esc(file.path)}" style="justify-content:flex-start;font-size:11.5px;${file.path === wsCur ? "border-color:var(--acc-line);color:var(--acc)" : ""}"><span style="font-family:var(--mono)">${esc(file.path)}</span><span class="dim" style="margin-left:auto">${file.bytes} B</span></button>`).join("");
+  return root;
+}
+function fileTreeHTML(node) {
+  const dirs = [...node.dirs.entries()].sort((a, b) => a[0].localeCompare(b[0]))
+    .map(([name, child]) => `<details class="ft-dir" open><summary>📁 ${esc(name)}/</summary><div class="ft-files">${fileTreeHTML(child)}</div></details>`).join("");
+  const files = node.files.slice().sort((a, b) => a.path.localeCompare(b.path))
+    .map((file) => `<button class="btn q" data-ws-open="${esc(file.path)}" style="justify-content:flex-start;font-size:11.5px;${file.path === wsCur ? "border-color:var(--acc-line);color:var(--acc)" : ""}"><span style="font-family:var(--mono)">${esc(file.path.split("/").pop())}</span><span class="dim" style="margin-left:auto">${file.bytes} B</span></button>`).join("");
+  return dirs + files;
+}
+function renderFileTrees() {
+  const html = wsFiles.length ? fileTreeHTML(buildFileTree(wsFiles)) : `<div class="dim" style="font-size:12px">No files yet — ask the chat to build something (the agent writes here with its fs tools), create a file below, pull from GitHub, or import.</div>`;
+  for (const sel of ["#ws-files", "#builder-files"]) { const box = $(sel); if (box) box.innerHTML = html; }
+}
+function renderWsFiles() { renderFileTrees(); }
+
+// ---- create / update activity ----------------------------------------------
+// Each refresh diffs the new snapshot against the previous one, so file
+// generation and edits (the agent's, GitHub pulls, your own saves) show
+// up as an activity feed instead of silently changing the list.
+let wsPrev = null;
+const wsActivity = [];
+function noteWsActivity(kind, path) {
+  wsActivity.unshift({ kind, path, t: Date.now() });
+  if (wsActivity.length > 12) wsActivity.length = 12;
+  const html = wsActivity.map((a) => `<div class="ws-act">${a.kind === "created" ? "✚ created" : a.kind === "updated" ? "✎ updated" : "✖ deleted"} ${esc(a.path)} <span class="dim">${new Date(a.t).toLocaleTimeString()}</span></div>`).join("");
+  for (const sel of ["#ws-activity", "#builder-activity"]) { const box = $(sel); if (box) box.innerHTML = html; }
+}
+function diffWsFiles(next) {
+  if (!wsPrev) { wsPrev = new Map(next.map((f) => [f.path, f.bytes + ":" + (f.mtime || "")])); return; }
+  const seen = new Set();
+  for (const f of next) {
+    seen.add(f.path);
+    const sig = f.bytes + ":" + (f.mtime || "");
+    if (!wsPrev.has(f.path)) noteWsActivity("created", f.path);
+    else if (wsPrev.get(f.path) !== sig) noteWsActivity("updated", f.path);
+    wsPrev.set(f.path, sig);
+  }
+  for (const path of [...wsPrev.keys()]) if (!seen.has(path)) { noteWsActivity("deleted", path); wsPrev.delete(path); }
 }
 
-async function wsRefresh() {
+// While a panel is open, quietly re-list every few seconds so files the
+// agent generates appear (and announce themselves) without a manual
+// refresh. Stops when all sheets close.
+let wsWatchTimer = null;
+function wsWatch(on) {
+  if (on && !wsWatchTimer) wsWatchTimer = setInterval(() => { if (document.querySelector(".sheet.open")) wsRefresh(true); }, 4000);
+  if (!on && wsWatchTimer) { clearInterval(wsWatchTimer); wsWatchTimer = null; }
+}
+
+async function wsRefresh(quiet = false) {
   const box = $("#ws-files");
-  box.innerHTML = `<div class="dim" style="font-size:12px">loading…</div>`;
+  if (!quiet) box.innerHTML = `<div class="dim" style="font-size:12px">loading…</div>`;
   try {
     const r = await wsExec("fs_list", { limit: 200 });
     wsFiles = r.files ?? [];
+    diffWsFiles(wsFiles);
     renderWsFiles();
   } catch (e) {
-    wsFiles = [];
-    box.innerHTML = `<div class="dim" style="font-size:12px">Could not list the workspace: ${esc(e.message)}</div>`;
+    if (!quiet) {
+      wsFiles = [];
+      box.innerHTML = `<div class="dim" style="font-size:12px">Could not list the workspace: ${esc(e.message)}</div>`;
+    }
   }
 }
 
@@ -6132,6 +6323,8 @@ async function wsOpen(path) {
       $("#ws-stat").textContent = `${read.bytes} B`;
     }
   } catch (e) { $("#ws-stat").textContent = "open failed: " + e.message; }
+  const tp = $("#ws-transpile");
+  if (tp) tp.hidden = !/\.(ts|tsx|jsx|mts)$/i.test(path);
   renderWsFiles();
 }
 
@@ -6141,6 +6334,23 @@ $("#ws-files")?.addEventListener("click", (e) => {
 });
 $("#ws-refresh")?.addEventListener("click", wsRefresh);
 $("#ws-analyze")?.addEventListener("click", analyzeWorkspace);
+$("#builder-open-ws")?.addEventListener("click", () => openWorkspace());
+$("#builder-files")?.addEventListener("click", (e) => {
+  const b = e.target.closest("[data-ws-open]");
+  if (b) { openWorkspace(); wsOpen(b.dataset.wsOpen); }
+});
+$("#ws-transpile")?.addEventListener("click", async () => {
+  if (!wsCur) return;
+  const target = wsCur.replace(/\.(tsx?|jsx|mts)$/i, ".js");
+  toast(`Transpiling ${wsCur}…`);
+  const r = await sbxTranspile($("#ws-editor").value, wsCur);
+  if (r.error) { toast("Transpile failed: " + r.error, true); return; }
+  try {
+    await wsExec("fs_write", { path: target, content: r.code });
+    toast(`Transpiled → ${target}`);
+    wsRefresh();
+  } catch (e) { toast("Transpile write failed: " + e.message, true); }
+});
 $("#ws-new-btn")?.addEventListener("click", async () => {
   const name = $("#ws-new-name").value.trim().replace(/^\/+/, "");
   if (!name) { toast("name the new file first", true); return; }
@@ -6357,6 +6567,7 @@ async function analyzeWorkspace() {
     const list = await wsExec("fs_list", { limit: 200 });
     const files = list.files ?? [];
     wsFiles = files;
+    diffWsFiles(files);
     const readable = files.filter((file) => !/\.(png|jpe?g|gif|webp|ico|woff2?|mp4|zip|pdf)$/i.test(file.path) && file.bytes <= 256000).slice(0, 40);
     const contents = new Map();
     for (const file of readable) {
@@ -6411,6 +6622,7 @@ async function analyzeWorkspace() {
 }
 
 function openWorkspace() {
+  wsWatch(true);
   ghLoad();
   renderWsConvs();
   openSheet(wsDrawer);
