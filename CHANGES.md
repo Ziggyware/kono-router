@@ -1,3 +1,49 @@
+# Workspace UI v2 — 2026-11-04
+
+Front-end only: `index.html` (the operator workspace) and `docs.html` (Scalar
+reference). No route, schema or routing-math changes; every existing view, id
+and keyboard shortcut still works.
+
+## Mobile-first shell
+- Phones get a real app shell: compact glass header (logo, active-view title,
+  search, theme, docs, connection chip) plus a bottom tab bar for Chat,
+  Architect, Media, Traces and a "More" sheet listing all twelve views with
+  icons and one-line descriptions.
+- Safe-area aware: `viewport-fit=cover`, `env(safe-area-inset-*)` padding on the
+  header, tab bar, sheets and composer, `100dvh` panels, 16px inputs so iOS
+  never zooms on focus, 42–44px touch targets under `(hover: none)`.
+- Wide data tables become stacked cards below 860px: cells are labelled from
+  their `<thead>` at runtime (`annotate()`), so Catalog, Endpoints, Lanes,
+  Inspector and Ops stay readable instead of scrolling sideways.
+- The chat parameter panel becomes a dismissable bottom sheet on phones
+  (scrim, grabber, close button); the command palette goes full-screen; dialogs
+  dock to the bottom edge.
+
+## Look and feel
+- New design system: Inter + JetBrains Mono, rounded surfaces, hairline borders,
+  soft elevation, lime accent with an aurora wash behind the workspace.
+- Light / dark / auto theme with a header toggle, persisted in localStorage and
+  applied before first paint (no flash). Canvas plots and the trace waterfall
+  read their colours from the same CSS tokens, so they repaint with the theme.
+- Chat gets a real empty state (logo, tagline, four prompt chips), right-aligned
+  user bubbles, a floating "jump to latest" button and a rounded composer that
+  glows on focus.
+- Reasoning, tool calls and traces restyled; markdown, code blocks and copy
+  buttons keep their behaviour.
+
+## Modern-platform plumbing
+- View Transitions API between views (desktop, skipped under reduced motion).
+- A thin request-progress bar driven by the instrumented `req()` wrapper.
+- `?` opens a keyboard-shortcut sheet; `Esc` closes overlays; the palette gains
+  theme, shortcuts and new-chat commands.
+- Overflow-aware header nav (fades only when it actually scrolls) and the
+  active tab is scrolled into view.
+- `prefers-reduced-motion`, `(hover: none)` and DPR-aware canvas drawing.
+
+## Dependencies
+- hono 4.6.14 -> 4.13.16, @opentelemetry/api 1.9.0 -> 1.10.0 (`deno.json`).
+- Scalar reference restyled to the new palette (still 1.76.4, unchanged API).
+
 # Nokey Router update — 2026-10-27
 
 Base: GitHub main @ 9aa0877 (the services.json build). Deploy = redeploy the

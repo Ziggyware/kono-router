@@ -2,26 +2,35 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="dark light">
+<meta name="theme-color" content="#06070a">
 <title>nokey-router · API</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,400..700&family=JetBrains+Mono:wght@400..600&display=swap" rel="stylesheet">
 <style>
-  body { margin: 0; background: #08090a; }
+  body { margin: 0; background: #06070a; }
   .dark-mode {
-    --scalar-font: "IBM Plex Mono", ui-monospace, monospace;
-    --scalar-font-code: "IBM Plex Mono", ui-monospace, monospace;
-    --scalar-radius: 0; --scalar-radius-lg: 0; --scalar-radius-xl: 0;
-    --scalar-color-1: #e8eadf; --scalar-color-2: #a3a79a; --scalar-color-3: #6b6f63;
-    --scalar-color-accent: #d4ff00;
-    --scalar-background-1: #08090a; --scalar-background-2: #0e1011;
-    --scalar-background-3: #15181a; --scalar-background-accent: #d4ff0014;
-    --scalar-border-color: #1f2326;
-    --scalar-button-1: #d4ff00; --scalar-button-1-color: #08090a; --scalar-button-1-hover: #b8de00;
-    --scalar-color-green: #d4ff00; --scalar-color-blue: #7cc4ff; --scalar-color-orange: #ffb547;
-    --scalar-color-red: #ff5c5c; --scalar-color-yellow: #e8d44d; --scalar-color-purple: #c79bff;
+    --scalar-font: "Inter", system-ui, sans-serif;
+    --scalar-font-code: "JetBrains Mono", ui-monospace, monospace;
+    --scalar-radius: 10px; --scalar-radius-lg: 14px; --scalar-radius-xl: 18px;
+    --scalar-color-1: #eef1f6; --scalar-color-2: #a4aebe; --scalar-color-3: #6d7889;
+    --scalar-color-accent: #c9ff4a;
+    --scalar-background-1: #06070a; --scalar-background-2: #0b0d11;
+    --scalar-background-3: #111419; --scalar-background-accent: #c9ff4a14;
+    --scalar-border-color: rgba(255,255,255,.09);
+    --scalar-button-1: #c9ff4a; --scalar-button-1-color: #0a1200; --scalar-button-1-hover: #b6ec37;
+    --scalar-color-green: #6ee7a0; --scalar-color-blue: #7fc4ff; --scalar-color-orange: #ffc061;
+    --scalar-color-red: #ff6f7d; --scalar-color-yellow: #e8d44d; --scalar-color-purple: #c3a6ff;
   }
-  .dark-mode .t-doc__sidebar { --scalar-sidebar-background-1: #08090a; --scalar-sidebar-item-active-background: #d4ff0014; --scalar-sidebar-color-active: #d4ff00; --scalar-sidebar-border-color: #1f2326; }
+  .dark-mode .t-doc__sidebar {
+    --scalar-sidebar-background-1: #06070a;
+    --scalar-sidebar-item-active-background: #c9ff4a14;
+    --scalar-sidebar-color-active: #c9ff4a;
+    --scalar-sidebar-border-color: rgba(255,255,255,.09);
+  }
+  .dark-mode .t-doc__header { --scalar-header-background: rgba(6,7,10,.82); backdrop-filter: blur(18px); }
 </style>
 </head>
 <body>
