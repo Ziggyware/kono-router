@@ -2749,20 +2749,29 @@ honoApp.post("/v1/chat/completions", async (c) => {
     const isVirtualModel = reqModelLower.startsWith("free:") || reqModelLower.startsWith("nokey-image");
     let nearMatches = 0;
     if (!isVirtualModel && ranked.length > 1) {
+      // Treat provider-qualified ids (e.g. company/model-name) as aliases for
+      // their model name in the chat picker. Put every exact-name endpoint
+      // first so a failed request can fall through to another provider serving
+      // the same model before trying a merely similar model.
+      const modelName = (id: string) => id.toLowerCase().split("/").filter(Boolean).at(-1) ?? id.toLowerCase();
+      const requestedName = modelName(reqModelLower);
       const scored = ranked.map((cand, i) => ({
         cand,
         i,
+        exactName: modelName(cand.modelId) === requestedName,
         sim: Math.max(
           modelSimilarity(reqModelLower, cand.modelId.toLowerCase()),
           modelSimilarity(reqModelLower, cand.tupleId.toLowerCase()),
+          modelSimilarity(requestedName, modelName(cand.modelId)),
         ),
       }));
-      const near = scored.filter((x) => x.sim >= 0.30)
+      const exact = scored.filter((x) => x.exactName).map((x) => x.cand);
+      const near = scored.filter((x) => !x.exactName && x.sim >= 0.30)
         .sort((a, b) => b.sim - a.sim || a.i - b.i)
         .map((x) => x.cand);
-      const rest = scored.filter((x) => x.sim < 0.30).map((x) => x.cand);
-      nearMatches = near.length;
-      ranked = [...near, ...rest];
+      const rest = scored.filter((x) => !x.exactName && x.sim < 0.30).map((x) => x.cand);
+      nearMatches = exact.length + near.length;
+      ranked = [...exact, ...near, ...rest];
     }
     rankSpan.end("ok", { candidates: ranked.length, near_matches: nearMatches, head: ranked[0]?.tupleId });
 

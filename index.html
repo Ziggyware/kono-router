@@ -1277,10 +1277,12 @@ $("#mgal").onclick = (e) => { const a = e.target.closest("[data-tr]"); if (a) { 
 // =====================================================================
 let catalog = [], csort = { k: "iq_effective", d: -1 };
 const caps = (m) => [m.supports_reasoning && "reasoning", m.supports_vision && "vision", m.is_coding_specialist && "code"].filter(Boolean).join(" ");
+const chatModelName = (id) => /^(free:|nokey-image)/i.test(id) ? id : (String(id).split("/").filter(Boolean).pop() || id);
 async function loadCatalog() {
   try {
     catalog = (await req("/v1/models")).data ?? [];
-    $("#modellist").innerHTML = catalog.map((m) => `<option value="${esc(m.id)}">`).join("");
+    const selectable = [...new Map(catalog.map((m) => [chatModelName(m.id).toLowerCase(), chatModelName(m.id)])).values()];
+    $("#modellist").innerHTML = selectable.map((id) => `<option value="${esc(id)}">`).join("");
     renderCatalog();
   } catch (e) { toast("catalog: " + e.message, true); }
 }
