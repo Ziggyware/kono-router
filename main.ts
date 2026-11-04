@@ -2324,6 +2324,18 @@ honoApp.get("/", (_c) => {
           },
         });
 });
+// Operator surfaces: static pages; every datum they show stays behind the /v1 guards.
+for (const [route, file, type] of [
+  ["/admin", "admin.html", "text/html; charset=utf-8"],
+  ["/docs", "docs.html", "text/html; charset=utf-8"],
+  ["/openapi.json", "openapi.json", "application/json"],
+] as const) {
+  honoApp.get(route, (c) => {
+    const body = loadTextFile(file);
+    if (body === null) return c.text(`${file} missing from deployment`, 404);
+    return new Response(body, { headers: { "Content-Type": type, "Cache-Control": "no-cache" } });
+  });
+}
 honoApp.get("/health", async (c) => {
   const safeRank = async (m: RoutingMode) => {
     try {
