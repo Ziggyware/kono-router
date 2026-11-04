@@ -969,6 +969,219 @@ dialog .row { margin-top: 4px; }
   .lanes-wrap, #lanes { overflow-x: clip; }
   .plot-note { display: none; }
 }
+
+/* =====================================================================
+   MODERN SYNTAX HIGHLIGHTING, EXPANDABLE CHAT, TOOLS REVAMP & COMMUNITY
+   ===================================================================== */
+.hl-key { color: var(--acc); font-weight: 600; }
+.hl-str { color: var(--ok); }
+.hl-num { color: var(--warn); }
+.hl-bool, .hl-null, .hl-lit { color: var(--vio); font-weight: 600; }
+.hl-kw { color: var(--blue); font-weight: 600; }
+.hl-type { color: var(--vio); }
+.hl-comm { color: var(--dim); font-style: italic; }
+.hl-fn { color: #facc15; }
+.hl-attr { color: var(--blue); }
+.hl-tag { color: var(--bad); }
+.hl-dec { color: var(--acc); }
+.hl-doc { color: var(--dim); }
+
+.code-block { position: relative; margin: 10px 0; border: 1px solid var(--line); border-radius: var(--r-sm); background: var(--bg-3); overflow: hidden; }
+.code-bar { display: flex; align-items: center; justify-content: space-between; padding: 6px 12px; background: var(--surface-2); border-bottom: 1px solid var(--line); font-size: 11px; }
+.code-bar .lang { color: var(--dim); font-weight: 600; text-transform: uppercase; font-family: var(--mono); }
+.code-bar .actions { display: flex; gap: 6px; align-items: center; }
+.code-block pre { border: 0; border-radius: 0; background: transparent; margin: 0; }
+.btn-run-app { background: var(--acc-soft) !important; color: var(--acc) !important; border-color: var(--acc-line) !important; font-size: 11px !important; padding: 2px 8px !important; cursor: pointer; }
+.btn-run-app:hover { background: var(--acc) !important; color: var(--acc-ink) !important; }
+
+/* Cleaner and expandable user messages */
+.msg.u { display: flex; flex-direction: column; align-items: flex-end; }
+.msg.u .u-header { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; font-size: 11px; color: var(--dim); }
+.msg.u .u-avatar { width: 20px; height: 20px; border-radius: 50%; background: var(--acc); color: var(--acc-ink); display: inline-flex; align-items: center; justify-content: center; font-weight: 700; font-size: 10px; }
+.msg.u .body {
+  background: var(--surface-2); border: 1px solid var(--line-2);
+  border-radius: 16px 4px 16px 16px; padding: 10px 14px;
+  max-width: min(78ch, 92%); white-space: normal; word-break: break-word;
+  font-size: 13.5px; position: relative;
+}
+.msg.u .body.clamped { max-height: 160px; overflow: hidden; mask-image: linear-gradient(180deg, #000 65%, transparent); }
+.btn-expand-msg {
+  margin-top: 5px; font-size: 11px; color: var(--acc); background: var(--surface-2);
+  border: 1px solid var(--line); border-radius: 99px; padding: 2px 10px; cursor: pointer;
+  align-self: flex-end; transition: .15s;
+}
+.btn-expand-msg:hover { background: var(--acc-soft); border-color: var(--acc-line); }
+
+/* Cleaner, expandable composer */
+.composer-toolbar { max-width: 940px; margin: 0 auto 6px; display: flex; align-items: center; gap: 8px; }
+.quick-chips { display: flex; align-items: center; gap: 6px; overflow-x: auto; padding: 2px 0; }
+.quick-chips .chip { padding: 3px 9px; font-size: 11px; cursor: pointer; white-space: nowrap; }
+.quick-chips .chip:hover { border-color: var(--acc-line); color: var(--acc); background: var(--acc-soft); }
+.input-container { position: relative; width: 100%; }
+.input-meta { position: absolute; bottom: 6px; right: 8px; font-size: 10.5px; color: var(--dim); pointer-events: none; font-family: var(--mono); }
+.composer.expanded {
+  position: fixed; inset: 0; z-index: 55;
+  background: rgba(6, 7, 10, .88); backdrop-filter: blur(12px);
+  display: flex; flex-direction: column; justify-content: center; align-items: center;
+  padding: 24px 20px;
+}
+.composer.expanded .wrapc {
+  width: 100%; max-width: 960px; height: min(80vh, 720px);
+  display: flex; flex-direction: column; padding: 16px; border-color: var(--acc-line);
+  box-shadow: 0 0 0 4px var(--acc-soft), var(--shadow);
+}
+.composer.expanded #cinput {
+  flex: 1; max-height: none !important; height: 100% !important;
+  font-family: var(--mono); font-size: 13.5px; line-height: 1.6;
+}
+
+/* Modern Tools Tab Revamp */
+.tools-layout { display: grid; grid-template-columns: 310px 1fr; gap: 16px; align-items: start; margin-top: 14px; }
+.tools-sidebar { border: 1px solid var(--line); border-radius: var(--r); background: var(--bg-2); overflow: hidden; display: flex; flex-direction: column; max-height: calc(100vh - 220px); }
+.tools-cat-tabs { display: flex; gap: 4px; overflow-x: auto; padding: 8px 10px; border-bottom: 1px solid var(--line); background: var(--surface); }
+.tools-cat-btn { padding: 3px 8px; font-size: 11px; border: 1px solid transparent; border-radius: 99px; background: none; color: var(--dim); cursor: pointer; white-space: nowrap; }
+.tools-cat-btn.active, .tools-cat-btn:hover { background: var(--surface-2); color: var(--fg); border-color: var(--line); }
+.tools-cat-btn.active { color: var(--acc); border-color: var(--acc-line); background: var(--acc-soft); font-weight: 600; }
+.tool-list-wrap { overflow-y: auto; flex: 1; }
+.tool-item-card {
+  display: flex; flex-direction: column; gap: 4px; padding: 9px 12px;
+  border-bottom: 1px solid var(--line); cursor: pointer; transition: background .12s;
+}
+.tool-item-card:hover { background: var(--surface-2); }
+.tool-item-card.active { background: var(--acc-soft); border-left: 3px solid var(--acc); }
+.tool-item-header { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
+.tool-item-name { font-family: var(--mono); font-weight: 600; font-size: 12.5px; color: var(--fg); }
+.tool-item-badges { display: flex; gap: 4px; align-items: center; }
+.tool-item-desc { font-size: 11.5px; color: var(--dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tool-item-meta { display: flex; align-items: center; gap: 8px; font-size: 10.5px; color: var(--dim); font-family: var(--mono); }
+.tool-comp-dot { width: 7px; height: 7px; border-radius: 50%; display: inline-block; }
+.tool-comp-dot.good { background: var(--ok); }
+.tool-comp-dot.mid { background: var(--warn); }
+.tool-comp-dot.bad { background: var(--bad); }
+
+.tool-workbench {
+  border: 1px solid var(--line); border-radius: var(--r); background: var(--bg-2);
+  box-shadow: var(--shadow); overflow: hidden; display: flex; flex-direction: column; gap: 14px; padding: 18px;
+}
+.wb-head { display: flex; flex-direction: column; gap: 6px; border-bottom: 1px solid var(--line); padding-bottom: 14px; }
+.wb-title-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.wb-title { font-size: 18px; font-family: var(--mono); font-weight: 700; color: var(--fg); display: flex; align-items: center; gap: 8px; }
+.wb-desc { font-size: 13px; color: var(--mid); line-height: 1.5; }
+.wb-aliases { font-size: 11px; color: var(--dim); font-family: var(--mono); }
+.wb-kpis { display: flex; gap: 6px; flex-wrap: wrap; }
+.wb-kpi-chip { font-size: 11px; padding: 3px 8px; border-radius: 99px; background: var(--surface-2); border: 1px solid var(--line); color: var(--mid); font-family: var(--mono); }
+
+.wb-mode-bar { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+.mode-switch { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); padding: 2px; }
+.mode-switch-btn { padding: 4px 12px; font-size: 11.5px; border: 0; background: none; color: var(--dim); border-radius: 6px; cursor: pointer; transition: .14s; }
+.mode-switch-btn.active { background: var(--bg-2); color: var(--fg); font-weight: 600; box-shadow: 0 1px 3px rgba(0,0,0,.3); }
+
+.tool-form-grid { display: grid; gap: 12px; }
+.tool-form-group { display: flex; flex-direction: column; gap: 5px; }
+.tool-form-label { display: flex; align-items: center; justify-content: space-between; font-size: 12px; font-family: var(--mono); color: var(--mid); }
+.tool-form-label .req { color: var(--bad); font-size: 10px; font-weight: 600; text-transform: uppercase; margin-left: 4px; }
+.tool-form-label .type-badge { font-size: 10px; padding: 1px 5px; border-radius: 4px; background: var(--surface-2); color: var(--dim); }
+.tool-form-desc { font-size: 11px; color: var(--dim); margin-top: 1px; }
+.tool-form-in {
+  width: 100%; border: 1px solid var(--line); border-radius: var(--r-sm);
+  background: var(--bg-3); padding: 8px 10px; font-size: 12.5px; color: var(--fg);
+  transition: border-color .15s; font-family: inherit;
+}
+.tool-form-in:focus { border-color: var(--acc-line); outline: none; }
+select.tool-form-in { background: var(--bg-3); color: var(--fg); }
+
+.examples-card { border: 1px solid var(--line); border-radius: var(--r-sm); background: var(--surface); padding: 12px; }
+.examples-card-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+.examples-split { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.example-pane { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
+.example-pane-title { font-size: 11px; color: var(--dim); text-transform: uppercase; font-family: var(--mono); display: flex; justify-content: space-between; align-items: center; }
+.example-pane pre { max-height: 180px; overflow: auto; font-size: 11.5px; }
+
+.wb-exec-bar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.wb-out-box { border: 1px solid var(--line); border-radius: var(--r-sm); background: var(--bg-3); overflow: hidden; }
+.wb-out-header { display: flex; align-items: center; justify-content: space-between; padding: 6px 12px; background: var(--surface-2); border-bottom: 1px solid var(--line); font-size: 11.5px; }
+.wb-out-content { padding: 12px; max-height: 320px; overflow: auto; font-family: var(--mono); font-size: 12px; line-height: 1.55; white-space: pre; }
+
+/* App Builder & Sandbox */
+.tech-cards-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 10px; margin: 10px 0; max-height: 220px; overflow-y: auto; }
+.tech-card {
+  border: 1px solid var(--line); border-radius: var(--r-sm); background: var(--surface);
+  padding: 10px 12px; cursor: pointer; transition: .15s; display: flex; flex-direction: column; gap: 4px;
+}
+.tech-card:hover { border-color: var(--acc-line); background: var(--surface-2); }
+.tech-card.selected { border-color: var(--acc); background: var(--acc-soft); box-shadow: 0 0 0 1px var(--acc); }
+.tech-card-h { display: flex; align-items: center; justify-content: space-between; }
+.tech-card-h b { font-size: 12.5px; color: var(--fg); }
+.tech-card-desc { font-size: 11px; color: var(--dim); line-height: 1.4; }
+
+.sandbox-modal {
+  position: fixed; inset: 24px; z-index: 60; border: 1px solid var(--line-2);
+  border-radius: var(--r); background: var(--bg-2); box-shadow: 0 30px 90px rgba(0,0,0,.9);
+  display: flex; flex-direction: column; overflow: hidden;
+}
+.sandbox-modal.fullscreen { inset: 0; border-radius: 0; border: 0; }
+.sandbox-header { display: flex; align-items: center; justify-content: space-between; padding: 10px 16px; border-bottom: 1px solid var(--line); background: var(--surface); }
+.sandbox-frame { flex: 1; border: 0; background: #fff; width: 100%; height: 100%; }
+.sandbox-console { height: 140px; border-top: 1px solid var(--line); background: var(--bg); overflow-y: auto; padding: 8px 12px; font-family: var(--mono); font-size: 11.5px; }
+
+/* Community / People Chat */
+.community-layout { display: grid; grid-template-columns: 240px 1fr; height: calc(100vh - var(--hdr)); overflow: hidden; width: 100%; }
+.comm-sidebar { border-right: 1px solid var(--line); background: var(--bg-2); display: flex; flex-direction: column; }
+.comm-side-header { padding: 14px 16px; border-bottom: 1px solid var(--line); display: flex; flex-direction: column; gap: 2px; }
+.comm-brand { display: flex; align-items: center; gap: 8px; font-size: 14px; font-weight: 600; color: var(--fg); }
+.comm-brand svg { width: 18px; height: 18px; color: var(--acc); }
+.comm-user-box { display: flex; align-items: center; gap: 10px; padding: 12px 16px; border-bottom: 1px solid var(--line); background: var(--surface); }
+.comm-user-avatar { width: 34px; height: 34px; border-radius: 50%; background: var(--surface-3); display: grid; place-items: center; font-size: 16px; border: 1px solid var(--line); flex-shrink: 0; }
+.comm-user-info { flex: 1; min-width: 0; }
+.comm-username-in { width: 100%; background: transparent; border: 1px solid transparent; border-radius: 4px; padding: 2px 4px; font-weight: 600; font-size: 12.5px; color: var(--fg); }
+.comm-username-in:focus { border-color: var(--acc-line); background: var(--bg-3); outline: none; }
+.comm-status { display: flex; align-items: center; gap: 6px; font-size: 10.5px; color: var(--dim); }
+.comm-dot.online { width: 6px; height: 6px; border-radius: 50%; background: var(--ok); }
+.comm-channels-header { display: flex; align-items: center; justify-content: space-between; padding: 12px 16px 6px; }
+.comm-channel-list { display: flex; flex-direction: column; gap: 2px; padding: 0 8px; flex: 1; overflow-y: auto; }
+.comm-channel-btn {
+  display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-radius: 8px;
+  border: 0; background: none; color: var(--mid); cursor: pointer; text-align: left; font-size: 13px;
+}
+.comm-channel-btn:hover { background: var(--surface-2); color: var(--fg); }
+.comm-channel-btn.active { background: var(--acc-soft); color: var(--acc); font-weight: 600; }
+.comm-channel-btn .hash { color: var(--dim); font-family: var(--mono); }
+.comm-side-footer { padding: 12px 16px; border-top: 1px solid var(--line); }
+
+.comm-main { display: flex; flex-direction: column; height: 100%; min-width: 0; background: var(--bg); }
+.comm-header { display: flex; align-items: center; justify-content: space-between; padding: 12px 20px; border-bottom: 1px solid var(--line); background: var(--bg-2); }
+.comm-room-info h3 { margin: 0; font-size: 15px; font-weight: 600; color: var(--fg); }
+.comm-room-info .dim { font-size: 11.5px; }
+.comm-thread { flex: 1; overflow-y: auto; padding: 16px 20px; display: flex; flex-direction: column; gap: 14px; }
+.comm-msg-card { display: flex; gap: 12px; align-items: flex-start; max-width: 860px; }
+.comm-msg-avatar { width: 32px; height: 32px; border-radius: 50%; display: grid; place-items: center; font-size: 14px; flex-shrink: 0; font-weight: 700; background: var(--surface-3); border: 1px solid var(--line); }
+.comm-msg-body { flex: 1; min-width: 0; }
+.comm-msg-head { display: flex; align-items: baseline; gap: 8px; margin-bottom: 4px; }
+.comm-msg-user { font-weight: 600; font-size: 13px; color: var(--fg); }
+.comm-msg-time { font-size: 10.5px; color: var(--dim); }
+.comm-msg-text { font-size: 13px; line-height: 1.55; color: var(--fg); word-break: break-word; }
+.comm-msg-text.clamped { max-height: 140px; overflow: hidden; mask-image: linear-gradient(180deg, #000 60%, transparent); }
+.comm-reactions { display: flex; gap: 4px; flex-wrap: wrap; margin-top: 6px; }
+.comm-reaction-chip { font-size: 11px; padding: 2px 7px; border-radius: 99px; border: 1px solid var(--line); background: var(--surface); color: var(--mid); cursor: pointer; }
+.comm-reaction-chip:hover { border-color: var(--acc-line); color: var(--acc); background: var(--acc-soft); }
+.comm-reaction-add { opacity: 0; transition: opacity .15s; }
+.comm-msg-card:hover .comm-reaction-add { opacity: 1; }
+
+.comm-composer { padding: 12px 20px 16px; border-top: 1px solid var(--line); background: var(--bg-2); }
+.comm-composer-tools { display: flex; gap: 6px; align-items: center; margin-bottom: 8px; }
+.comm-wrapc {
+  display: flex; gap: 8px; align-items: flex-end; border: 1px solid var(--line);
+  border-radius: var(--r-sm); background: var(--bg-3); padding: 8px 10px;
+}
+.comm-wrapc:focus-within { border-color: var(--acc-line); box-shadow: 0 0 0 3px var(--acc-soft); }
+.comm-wrapc textarea { flex: 1; border: 0; background: transparent; resize: none; min-height: 36px; max-height: 160px; font-size: 13px; line-height: 1.5; color: var(--fg); }
+.comm-wrapc textarea:focus { outline: none; }
+@media (max-width: 860px) {
+  .tools-layout { grid-template-columns: 1fr; }
+  .community-layout { grid-template-columns: 1fr; }
+  .comm-sidebar { display: none; }
+  .comm-sidebar.mobile-open { display: flex; position: fixed; inset: 0; z-index: 50; }
+}
 </style>
 </head>
 <body>
@@ -1002,6 +1215,12 @@ dialog .row { margin-top: 4px; }
     <symbol id="i-img" viewBox="0 0 24 24"><rect x="3" y="4.4" width="18" height="15.2" rx="3.2"/><circle cx="8.4" cy="9.8" r="1.4"/><path d="m4 17 4.8-4.6a2 2 0 0 1 2.7 0l4.5 4.3"/></symbol>
     <symbol id="i-sliders" viewBox="0 0 24 24"><path d="M3.6 7.4h9.2M17.6 7.4h2.8M3.6 16.6h3.2M11.6 16.6h8.8"/><circle cx="15.2" cy="7.4" r="2.2"/><circle cx="9.2" cy="16.6" r="2.2"/></symbol>
     <symbol id="i-stop" viewBox="0 0 24 24"><rect x="6.2" y="6.2" width="11.6" height="11.6" rx="2.6"/></symbol>
+    <symbol id="i-users" viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></symbol>
+    <symbol id="i-expand" viewBox="0 0 24 24"><polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/></symbol>
+    <symbol id="i-shrink" viewBox="0 0 24 24"><polyline points="4 14 10 14 10 20"/><polyline points="20 10 14 10 14 4"/><line x1="14" y1="10" x2="21" y2="3"/><line x1="3" y1="21" x2="10" y2="14"/></symbol>
+    <symbol id="i-sparkles" viewBox="0 0 24 24"><path d="m12 3-1.9 5.8a2 2 0 0 1-1.3 1.3L3 12l5.8 1.9a2 2 0 0 1 1.3 1.3L12 21l1.9-5.8a2 2 0 0 1 1.3-1.3L21 12l-5.8-1.9a2 2 0 0 1-1.3-1.3Z"/></symbol>
+    <symbol id="i-play" viewBox="0 0 24 24"><polygon points="5 3 19 12 5 21 5 3"/></symbol>
+    <symbol id="i-code" viewBox="0 0 24 24"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></symbol>
   </defs>
 </svg>
 <div id="prog" aria-hidden="true"></div>
@@ -1015,6 +1234,7 @@ dialog .row { margin-top: 4px; }
   <span class="vtitle" id="vtitle"></span>
   <nav role="tablist" aria-label="Views" id="nav">
     <button role="tab" data-v="chat">Chat</button>
+    <button role="tab" data-v="community">People Chat</button>
     <button role="tab" data-v="architect">Architect</button>
     <button role="tab" data-v="media">Media</button>
     <button role="tab" data-v="plugins">Plugins</button>
@@ -1058,14 +1278,32 @@ dialog .row { margin-top: 4px; }
       </div>
       <div class="composer">
         <button id="jump" aria-label="Jump to latest message" title="Jump to latest"><svg aria-hidden="true"><use href="#i-down"/></svg></button>
+        <div class="composer-toolbar" id="cquick-tools">
+          <div class="quick-chips">
+            <span class="dim" style="font-size:11px;margin-right:2px">Integrate:</span>
+            <button class="chip" data-quick-tool="calculate" title="Quick calculate tool">⚡ calculate</button>
+            <button class="chip" data-quick-tool="web_search" title="Quick web search tool">🔍 search</button>
+            <button class="chip" data-quick-tool="fs_read" title="Quick file read tool">📁 read</button>
+            <button class="chip" data-quick-tool="memory_recall" title="Quick memory recall tool">🧠 recall</button>
+            <button class="chip" data-quick-app="app-builder" title="Open App Builder Studio">🔨 app builder</button>
+          </div>
+        </div>
         <div class="wrapc">
-          <div>
+          <div style="width:100%">
             <div class="attach" id="attach"></div>
-            <textarea id="cinput" rows="1" aria-label="Message" placeholder="Ask anything — routed across every free lane…"></textarea>
+            <div class="input-container">
+              <textarea id="cinput" rows="1" aria-label="Message" placeholder="Ask anything — routed across every free lane…"></textarea>
+              <div class="input-meta" id="cinput-meta" hidden>
+                <span id="cline-info">1 line</span>
+              </div>
+            </div>
           </div>
           <div class="row" style="flex-wrap:nowrap">
             <input type="file" id="cfile" accept="image/*" multiple hidden>
             <button class="btn q" id="cattach" title="Attach images" aria-label="Attach images"><svg aria-hidden="true"><use href="#i-img"/></svg><span class="btxt">img</span></button>
+            <button class="btn q" id="ctools-btn" title="Use or insert tools in chat" aria-label="Tools"><svg aria-hidden="true"><use href="#i-tool"/></svg><span class="btxt">tools</span></button>
+            <button class="btn q" id="cappbuilder-btn" title="Build Application with Tech Stack" aria-label="Build App"><svg aria-hidden="true"><use href="#i-sparkles"/></svg><span class="btxt">build</span></button>
+            <button class="btn q" id="cexpand" title="Expand / contract editor mode" aria-label="Expand editor"><svg aria-hidden="true"><use href="#i-expand"/></svg></button>
             <button class="btn q" id="cside" title="Settings" aria-label="Open settings"><svg aria-hidden="true"><use href="#i-sliders"/></svg><span class="btxt">settings</span></button>
             <button class="btn" id="csend" aria-label="Send"><span class="btxt">send</span><svg aria-hidden="true"><use href="#i-up"/></svg></button>
             <button class="btn stop" id="cstop" aria-label="Stop" hidden><span class="btxt">stop</span><svg aria-hidden="true"><use href="#i-stop"/></svg></button>
@@ -1234,6 +1472,69 @@ dialog .row { margin-top: 4px; }
     </aside>
   </section>
 
+  <section class="view full" id="v-community" hidden>
+    <div class="community-layout">
+      <!-- Channels & User Sidebar -->
+      <aside class="comm-sidebar">
+        <div class="comm-side-header">
+          <div class="comm-brand">
+            <svg viewBox="0 0 24 24" class="comm-icon"><use href="#i-users"/></svg>
+            <b>People Chat</b>
+          </div>
+          <span class="dim" style="font-size:11px">Local &amp; Mesh Relay</span>
+        </div>
+        <div class="comm-user-box">
+          <div class="comm-user-avatar" id="comm-avatar-preview">🧑‍💻</div>
+          <div class="comm-user-info">
+            <input id="comm-username" class="comm-username-in" value="Developer" placeholder="Your Handle" maxlength="24" title="Click to edit handle">
+            <div class="comm-status"><span class="comm-dot online"></span><span id="comm-conn-status">Online (SSE)</span></div>
+          </div>
+        </div>
+        <div class="comm-channels-header">
+          <span class="lbl">Channels</span>
+          <button class="btn q icon-btn" id="comm-add-channel" title="Add Channel" aria-label="Add Channel">+</button>
+        </div>
+        <div class="comm-channel-list" id="comm-channels">
+          <button class="comm-channel-btn active" data-room="general"><span class="hash">#</span> general</button>
+          <button class="comm-channel-btn" data-room="dev-chat"><span class="hash">#</span> dev-chat</button>
+          <button class="comm-channel-btn" data-room="app-showcase"><span class="hash">#</span> app-showcase</button>
+          <button class="comm-channel-btn" data-room="tools-prompts"><span class="hash">#</span> tools-prompts</button>
+        </div>
+        <div class="comm-side-footer">
+          <div class="dim" style="font-size:10.5px">Real-time peer chat with live SSE stream and cross-tab sync.</div>
+        </div>
+      </aside>
+
+      <!-- Main Messages Stream -->
+      <div class="comm-main">
+        <div class="comm-header">
+          <div class="comm-room-info">
+            <h3 id="comm-room-title"># general</h3>
+            <span class="dim" id="comm-room-topic">General discussion, tech ideas, and router queries</span>
+          </div>
+          <div class="comm-header-actions">
+            <button class="btn q" id="comm-refresh-btn" title="Refresh messages">refresh</button>
+            <span class="dim" id="comm-msg-count" style="margin-left:8px">0 messages</span>
+          </div>
+        </div>
+        <div class="comm-thread" id="comm-thread" aria-live="polite"></div>
+        <div class="comm-composer">
+          <div class="comm-composer-tools">
+            <button class="btn q" id="comm-share-app" title="Share an App from App Builder">⚡ Share App</button>
+            <button class="btn q" id="comm-share-tool" title="Share a Tool Call Snippet">🛠 Share Tool Call</button>
+            <button class="btn q" id="comm-insert-code" title="Insert Code Block">&lt;/&gt; Code</button>
+            <span class="grow"></span>
+            <button class="btn q" id="comm-expand-btn" title="Expand composer"><svg aria-hidden="true"><use href="#i-expand"/></svg></button>
+          </div>
+          <div class="comm-wrapc">
+            <textarea id="comm-input" rows="2" placeholder="Message #general (Enter to send, Shift+Enter for new line)..." spellcheck="true"></textarea>
+            <button class="btn" id="comm-send-btn"><span class="btxt">Send</span><svg aria-hidden="true"><use href="#i-up"/></svg></button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
   <section class="view full" id="v-architect" hidden>
     <div class="agent">
       <div id="athread" style="flex:1;overflow:auto;padding:16px 0 24px" aria-live="polite"></div>
@@ -1282,8 +1583,9 @@ dialog .row { margin-top: 4px; }
   </section>
 
   <section class="view" id="v-tools" hidden>
-    <div class="row" style="margin-bottom:10px">
-      <input id="tfilter" size="22" aria-label="Filter tools">
+    <!-- Top toolbar & KPIs -->
+    <div class="row" style="margin-bottom:12px;gap:10px">
+      <input id="tfilter" size="24" placeholder="Filter tools by name, kind, desc…" aria-label="Filter tools">
       <select id="tflavor" aria-label="Vendor wire format">
         <option value="openai">openai</option>
         <option value="openai-strict">openai-strict</option>
@@ -1292,28 +1594,135 @@ dialog .row { margin-top: 4px; }
       </select>
       <button class="btn q" id="treload">reload</button>
       <button class="btn q" id="twire">copy wire</button>
-      <span class="grow"></span><span class="dim" id="tstat"></span>
+      <span class="grow"></span>
+      <span class="dim" id="tstat"></span>
     </div>
+
     <div class="kpis" id="tkpis"></div>
-    <div class="row" style="margin-bottom:10px;align-items:stretch">
-      <div style="display:grid;gap:6px;flex:1">
-        <input id="trname" placeholder="tool name, e.g. calculate" aria-label="Tool name" spellcheck="false">
-        <textarea id="trargs" rows="4" spellcheck="false" aria-label="Tool arguments (JSON, or the mangled text a model produced)">{}</textarea>
-      </div>
-      <div style="display:grid;gap:6px;align-content:start">
-        <button class="btn" id="trgo">execute</button>
-        <span class="dim" id="trstat" style="max-width:260px"></span>
-      </div>
+
+    <!-- Master-Detail Modern Workbench -->
+    <div class="tools-layout">
+      <!-- Left: Tools Explorer Sidebar -->
+      <aside class="tools-sidebar">
+        <div class="tools-cat-tabs" id="tool-cats">
+          <button class="tools-cat-btn active" data-cat="all">All</button>
+          <button class="tools-cat-btn" data-cat="compute">Compute</button>
+          <button class="tools-cat-btn" data-cat="data">Data/Text</button>
+          <button class="tools-cat-btn" data-cat="system">System/Files</button>
+          <button class="tools-cat-btn" data-cat="web">Web/Network</button>
+          <button class="tools-cat-btn" data-cat="memory">Memory/RAG</button>
+          <button class="tools-cat-btn" data-cat="router">Router</button>
+        </div>
+        <div class="tool-list-wrap" id="tool-list-items"></div>
+      </aside>
+
+      <!-- Right: Active Tool Test Console & Workbench -->
+      <main class="tool-workbench" id="tool-workbench">
+        <div class="wb-head">
+          <div class="wb-title-row">
+            <div class="wb-title">
+              <span id="wb-tool-name">calculate</span>
+              <span class="badge" id="wb-tool-kind">compute</span>
+              <span class="badge adm" id="wb-tool-admin" hidden>admin</span>
+              <span class="badge" id="wb-tool-pure" style="border-color:var(--ok);color:var(--ok)" hidden>pure</span>
+            </div>
+            <div class="wb-kpis" id="wb-skill-chips"></div>
+          </div>
+          <div class="wb-desc" id="wb-tool-desc">Evaluates a mathematical expression or statistical batch.</div>
+          <div class="wb-aliases" id="wb-tool-aliases" hidden></div>
+        </div>
+
+        <!-- Mode Switcher: Form Controls vs Raw JSON -->
+        <div class="wb-mode-bar">
+          <div class="mode-switch">
+            <button class="mode-switch-btn active" id="btn-mode-form">🎛 User Input Controls</button>
+            <button class="mode-switch-btn" id="btn-mode-raw">📄 Raw JSON</button>
+          </div>
+          <div class="row" style="gap:6px">
+            <button class="btn q" id="wb-btn-example" title="Load working example request">⚡ Load Example</button>
+            <button class="btn q" id="wb-btn-reset" title="Reset arguments to default">↺ Reset</button>
+            <button class="btn q" id="wb-btn-copyargs" title="Copy JSON payload">📋 Copy Args</button>
+          </div>
+        </div>
+
+        <!-- Dynamic User Input Form Controls -->
+        <div id="tool-form-view">
+          <div class="tool-form-grid" id="tool-form-controls"></div>
+        </div>
+
+        <!-- Raw JSON Editor View -->
+        <div id="tool-raw-view" hidden>
+          <div style="display:grid;gap:6px">
+            <div class="row" style="justify-content:space-between">
+              <span class="lbl">Arguments JSON</span>
+              <span class="dim" id="json-valid-stat" style="font-size:11px">Valid JSON</span>
+            </div>
+            <input id="trname" placeholder="tool name, e.g. calculate" aria-label="Tool name" spellcheck="false" hidden>
+            <textarea id="trargs" rows="6" spellcheck="false" class="tool-form-in" style="font-family:var(--mono);line-height:1.5" aria-label="Tool arguments (JSON)">{}</textarea>
+          </div>
+        </div>
+
+        <!-- Curated Example Requests & Responses -->
+        <div class="examples-card" id="wb-examples-box">
+          <div class="examples-card-head">
+            <span class="lbl">Example Request &amp; Expected Response</span>
+            <div class="row" style="gap:6px">
+              <button class="btn q" id="btn-run-example" style="font-size:11px;padding:2px 8px">▶ Run This Example</button>
+            </div>
+          </div>
+          <div class="examples-split">
+            <div class="example-pane">
+              <div class="example-pane-title"><span>Example Request</span><span class="dim" id="ex-req-hint">JSON</span></div>
+              <pre class="wrap" id="ex-req-code" style="padding:8px 10px;margin:0;background:var(--bg-3)"><code>{}</code></pre>
+            </div>
+            <div class="example-pane">
+              <div class="example-pane-title"><span>Expected Response</span><span class="dim" id="ex-res-hint">Schema</span></div>
+              <pre class="wrap" id="ex-res-code" style="padding:8px 10px;margin:0;background:var(--bg-3)"><code>{}</code></pre>
+            </div>
+          </div>
+        </div>
+
+        <!-- Execution Action & Output -->
+        <div class="wb-exec-bar">
+          <button class="btn" id="trgo" style="min-width:130px;font-weight:600">Execute Tool</button>
+          <span class="dim" style="font-size:11.5px"><kbd>Ctrl</kbd> + <kbd>Enter</kbd></span>
+          <span class="grow"></span>
+          <div id="trstat" class="row" style="gap:6px"></div>
+        </div>
+
+        <div class="wb-out-box" id="wb-out-container">
+          <div class="wb-out-header">
+            <span class="lbl">Execution Output</span>
+            <div class="row" style="gap:6px">
+              <button class="btn q" id="btn-copy-out" style="font-size:11px;padding:2px 8px">Copy Output</button>
+              <button class="btn q" id="btn-clear-out" style="font-size:11px;padding:2px 8px">Clear</button>
+            </div>
+          </div>
+          <div class="wb-out-content" id="trout">(Run a tool call to view the live execution response)</div>
+        </div>
+
+        <!-- Collapsible Schema Details -->
+        <details class="rs" id="wb-schema-details">
+          <summary>JSON Schema Parameters</summary>
+          <div class="rb"><pre id="wb-schema-code" style="background:transparent;border:0;padding:0">{}</pre></div>
+        </details>
+      </main>
     </div>
-    <pre class="wrap" id="trout" hidden style="margin-bottom:12px;max-height:260px;overflow:auto"></pre>
-    <table>
-      <thead><tr>
-        <th class="l" data-k="name">tool</th><th class="l" data-k="kind">kind</th><th data-k="calls">calls</th>
-        <th data-k="competence">competence</th><th data-k="p50">p50</th><th data-k="p95">p95</th>
-        <th data-k="repair">repair%</th><th class="l">flags</th>
-      </tr></thead>
-      <tbody id="ttb"></tbody>
-    </table>
+
+    <!-- Collapsible Full Registry Table -->
+    <details class="rs" style="margin-top:16px" id="all-tools-table-details">
+      <summary>Complete Registry Table (Click column headers to sort)</summary>
+      <div class="rb" style="padding:0">
+        <table>
+          <thead><tr>
+            <th class="l" data-k="name">tool</th><th class="l" data-k="kind">kind</th><th data-k="calls">calls</th>
+            <th data-k="competence">competence</th><th data-k="p50">p50</th><th data-k="p95">p95</th>
+            <th data-k="repair">repair%</th><th class="l">flags</th>
+          </tr></thead>
+          <tbody id="ttb"></tbody>
+        </table>
+      </div>
+    </details>
   </section>
 
   <section class="view" id="v-harvester" hidden>
@@ -1411,6 +1820,163 @@ dialog .row { margin-top: 4px; }
     <pre id="changelog-content" style="margin:0 0 14px;max-height:44vh;overflow:auto;font:12px/1.6 var(--mono);color:var(--mid);border:1px solid var(--line);border-radius:var(--r-sm);background:var(--bg-3);padding:10px 12px">Loading…</pre>
     <button class="btn q">Close</button>
   </form>
+</dialog>
+<dialog id="chat-tools-drawer" class="sheet" style="max-width:540px" aria-label="Tools Drawer">
+  <div class="sheet-h">
+    <h2>🛠 Tools Integration</h2>
+    <span class="grow"></span>
+    <button class="icon-btn" data-close aria-label="Close tools"><svg aria-hidden="true"><use href="#i-x"/></svg></button>
+  </div>
+  <div class="sheet-b">
+    <div style="display:flex;flex-direction:column;gap:12px">
+      <div class="dim" style="font-size:12px">Select a tool to test, configure parameters, and integrate into chat.</div>
+      <div class="row">
+        <select id="chat-tool-select" class="tool-form-in grow" aria-label="Select tool"></select>
+        <button class="btn q" id="chat-tool-load-ex">Load Example</button>
+      </div>
+      <div id="chat-tool-desc" class="dim" style="font-size:11.5px"></div>
+      <div style="display:flex;flex-direction:column;gap:6px">
+        <span class="lbl">Parameters (JSON)</span>
+        <textarea id="chat-tool-args" class="tool-form-in" rows="4" style="font-family:var(--mono);font-size:12px">{}</textarea>
+      </div>
+      <div class="row" style="margin-top:6px;gap:8px">
+        <button class="btn grow" id="chat-tool-run-insert">⚡ Run &amp; Insert in Chat</button>
+        <button class="btn q" id="chat-tool-insert-prompt">📝 Insert Directive</button>
+      </div>
+      <div id="chat-tool-res-preview" hidden style="margin-top:4px">
+        <span class="lbl">Result Preview</span>
+        <pre class="wrap" id="chat-tool-preview-code" style="max-height:140px;overflow:auto;font-size:11px"></pre>
+      </div>
+    </div>
+  </div>
+</dialog>
+<dialog id="app-builder-drawer" class="sheet" style="max-width:640px" aria-label="App Builder Studio">
+  <div class="sheet-h">
+    <h2>⚡ App Builder Studio</h2>
+    <span class="grow"></span>
+    <button class="icon-btn" data-close aria-label="Close builder"><svg aria-hidden="true"><use href="#i-x"/></svg></button>
+  </div>
+  <div class="sheet-b">
+    <div style="display:flex;flex-direction:column;gap:14px">
+      <div class="dim" style="font-size:12.5px">Build interactive web applications using modular architectural techniques and technologies. Create and persist custom tech locally.</div>
+
+      <div>
+        <div class="row" style="justify-content:space-between;margin-bottom:6px">
+          <span class="lbl">1. Build Technique</span>
+          <button class="btn q" id="btn-add-technique" style="font-size:10.5px;padding:2px 8px">+ New Technique</button>
+        </div>
+        <div class="tech-cards-grid" id="builder-techniques-list"></div>
+      </div>
+
+      <div>
+        <div class="row" style="justify-content:space-between;margin-bottom:6px">
+          <span class="lbl">2. Technology / Stack</span>
+          <button class="btn q" id="btn-add-tech" style="font-size:10.5px;padding:2px 8px">+ New Technology</button>
+        </div>
+        <div class="tech-cards-grid" id="builder-tech-list"></div>
+      </div>
+
+      <div>
+        <div class="row" style="justify-content:space-between;margin-bottom:6px">
+          <span class="lbl">3. Application Goal</span>
+          <select id="builder-presets" class="tool-form-in" style="width:auto;font-size:11px;padding:2px 6px">
+            <option value="">Choose preset idea…</option>
+            <option value="Kanban board with drag-and-drop, state persistence in localStorage, dark mode, and column statistics">Kanban Board</option>
+            <option value="Realtime audio spectrum visualizer using Web Audio API and interactive HTML5 Canvas 2D filters">Audio Visualizer</option>
+            <option value="Live Markdown note-taking editor with split preview, syntax highlighting, word count, and JSON export">Markdown Note Studio</option>
+            <option value="Interactive REST API &amp; Tool Tester with method selector, request builder, latency chart, and response explorer">REST API Workbench</option>
+            <option value="Financial telemetry dashboard with interactive charts, summary metrics, and mock streaming ticker">Telemetry Dashboard</option>
+          </select>
+        </div>
+        <textarea id="builder-prompt" class="tool-form-in" rows="3" placeholder="Describe the application you want to build in detail…"></textarea>
+      </div>
+
+      <div class="row" style="gap:8px;margin-top:6px">
+        <button class="btn grow" id="btn-generate-app">Generate Application in Chat</button>
+        <button class="btn q" id="btn-export-techpack" title="Export custom techniques and technologies">Export Pack</button>
+        <button class="btn q" id="btn-import-techpack" title="Import custom techniques and technologies">Import Pack</button>
+        <input type="file" id="techpack-file-in" accept=".json" hidden>
+      </div>
+    </div>
+  </div>
+</dialog>
+<dialog id="app-sandbox-modal" class="sandbox-modal" aria-label="Application Sandbox">
+  <div class="sandbox-header">
+    <div class="row" style="gap:8px">
+      <span class="badge" style="background:var(--acc-soft);color:var(--acc);border-color:var(--acc-line)">App Sandbox</span>
+      <b id="sandbox-app-title">Live Application Preview</b>
+    </div>
+    <div class="row" style="gap:6px">
+      <button class="btn q icon-btn" id="sb-reload" title="Reload Application"><svg aria-hidden="true"><use href="#i-radar"/></svg></button>
+      <button class="btn q icon-btn" id="sb-fullscreen" title="Toggle Fullscreen"><svg aria-hidden="true"><use href="#i-expand"/></svg></button>
+      <button class="btn q icon-btn" id="sb-toggle-console" title="Toggle Console Log"><svg aria-hidden="true"><use href="#i-terminal"/></svg></button>
+      <button class="btn q icon-btn" id="sb-copy-code" title="Copy Source Code"><svg aria-hidden="true"><use href="#i-more"/></svg></button>
+      <button class="btn q icon-btn" id="sb-close" title="Close Sandbox"><svg aria-hidden="true"><use href="#i-x"/></svg></button>
+    </div>
+  </div>
+  <iframe id="sandbox-iframe" class="sandbox-frame" sandbox="allow-scripts allow-modals"></iframe>
+  <div class="sandbox-console" id="sandbox-console" hidden>
+    <div class="row" style="justify-content:space-between;margin-bottom:4px">
+      <span class="lbl">Sandbox Console Logs</span>
+      <button class="btn q" id="sb-clear-console" style="font-size:10px;padding:1px 6px">Clear</button>
+    </div>
+    <div id="sandbox-logs" style="display:flex;flex-direction:column;gap:3px;color:var(--mid)"></div>
+  </div>
+</dialog>
+<dialog id="custom-technique-modal" class="sheet" style="max-width:480px" aria-label="New Build Technique">
+  <div class="sheet-h">
+    <h2>New Build Technique</h2>
+    <span class="grow"></span>
+    <button class="icon-btn" data-close aria-label="Close"><svg aria-hidden="true"><use href="#i-x"/></svg></button>
+  </div>
+  <div class="sheet-b">
+    <form id="form-custom-technique" method="dialog" style="display:flex;flex-direction:column;gap:10px">
+      <label><span class="lbl">Technique Name</span><input id="tech-name-in" class="tool-form-in" required placeholder="e.g. Event-Sourced Canvas Engine"></label>
+      <label><span class="lbl">Category</span><input id="tech-cat-in" class="tool-form-in" placeholder="Architecture / State / Graphics"></label>
+      <label><span class="lbl">Description</span><input id="tech-desc-in" class="tool-form-in" required placeholder="Short summary of technique"></label>
+      <label><span class="lbl">Architecture Rules (System Prompt Directive)</span><textarea id="tech-rules-in" class="tool-form-in" rows="4" placeholder="Instructions injected to guide the model when generating the app code..."></textarea></label>
+      <div class="row" style="justify-content:flex-end;margin-top:6px">
+        <button class="btn q" value="cancel">Cancel</button>
+        <button class="btn" id="btn-save-technique" value="save">Save Technique Locally</button>
+      </div>
+    </form>
+  </div>
+</dialog>
+<dialog id="custom-technology-modal" class="sheet" style="max-width:480px" aria-label="New Technology">
+  <div class="sheet-h">
+    <h2>New Technology / Stack</h2>
+    <span class="grow"></span>
+    <button class="icon-btn" data-close aria-label="Close"><svg aria-hidden="true"><use href="#i-x"/></svg></button>
+  </div>
+  <div class="sheet-b">
+    <form id="form-custom-tech" method="dialog" style="display:flex;flex-direction:column;gap:10px">
+      <label><span class="lbl">Technology Name</span><input id="t-name-in" class="tool-form-in" required placeholder="e.g. Three.js 3D / Leaflet Maps"></label>
+      <label><span class="lbl">Category</span><input id="t-cat-in" class="tool-form-in" placeholder="UI / 3D / Visualization / Database"></label>
+      <label><span class="lbl">Description</span><input id="t-desc-in" class="tool-form-in" required placeholder="Short summary of tech"></label>
+      <label><span class="lbl">CDN Script / ESM Imports / Tags</span><textarea id="t-tags-in" class="tool-form-in" rows="2" placeholder="&lt;script src='https://...'&gt;&lt;/script&gt; or import ..."></textarea></label>
+      <label><span class="lbl">Boilerplate / Starter Template Code</span><textarea id="t-template-in" class="tool-form-in" rows="4" placeholder="HTML/JS snippet demonstrating initialization..."></textarea></label>
+      <div class="row" style="justify-content:flex-end;margin-top:6px">
+        <button class="btn q" value="cancel">Cancel</button>
+        <button class="btn" id="btn-save-tech" value="save">Save Technology Locally</button>
+      </div>
+    </form>
+  </div>
+</dialog>
+<dialog id="comm-channel-modal" class="sheet" style="max-width:380px" aria-label="Add Channel">
+  <div class="sheet-h">
+    <h2>New Community Channel</h2>
+    <span class="grow"></span>
+    <button class="icon-btn" data-close aria-label="Close"><svg aria-hidden="true"><use href="#i-x"/></svg></button>
+  </div>
+  <div class="sheet-b">
+    <form id="form-comm-channel" method="dialog" style="display:flex;flex-direction:column;gap:10px">
+      <label><span class="lbl">Channel Name</span><input id="new-channel-name" class="tool-form-in" required placeholder="e.g. prompts-showcase"></label>
+      <div class="row" style="justify-content:flex-end;margin-top:6px">
+        <button class="btn q" value="cancel">Cancel</button>
+        <button class="btn" id="btn-create-channel" value="create">Create Channel</button>
+      </div>
+    </form>
+  </div>
 </dialog>
 <div id="toast" hidden role="status"></div>
 <script type="module">
@@ -1510,7 +2076,109 @@ async function* sse(res, signal) {
   }
 }
 
-// ---------- markdown (sanitised; libraries load lazily, plain text until then) ----------
+// ---------- markdown & syntax highlighting ----------
+function highlightCode(code, lang = "") {
+  lang = (lang || "").toLowerCase().trim();
+  const escH = (s) => String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  if (!code) return "";
+  const trimmed = code.trim();
+
+  if (lang === "json" || lang === "jsonc" || (!lang && (trimmed.startsWith("{") || trimmed.startsWith("[")) && (trimmed.endsWith("}") || trimmed.endsWith("]")))) {
+    return escH(code).replace(/(&quot;(\\u[a-zA-Z0-9]{4}|\\[^u]|[^\\&])*&quot;(\s*:)?|\b(true|false|null)\b|-?\d+(?:\.\d*)?(?:[eE][+\-]?\d+)?)/g, (match) => {
+      let cls = "hl-num";
+      if (/^&quot;/.test(match)) {
+        if (/:$/.test(match)) cls = "hl-key";
+        else cls = "hl-str";
+      } else if (/true|false/.test(match)) cls = "hl-bool";
+      else if (/null/.test(match)) cls = "hl-null";
+      return `<span class="${cls}">${match}</span>`;
+    });
+  }
+
+  if (["js", "javascript", "ts", "typescript", "jsx", "tsx"].includes(lang)) {
+    const rx = /(\/\/[^\n]*|\/\*[\s\S]*?\*\/)|(`(?:\\`|[\s\S])*?`|"(?:\\u[a-zA-Z0-9]{4}|\\[^u]|[^\\"])*"|'(?:\\u[a-zA-Z0-9]{4}|\\[^u]|[^\\'])*')|(\b(?:const|let|var|function|return|import|export|from|async|await|class|extends|if|else|for|while|do|try|catch|finally|throw|new|typeof|instanceof|switch|case|default|break|continue|yield|in|of)\b)|(\b(?:true|false|null|undefined|NaN|Infinity)\b)|(\b(?:string|number|boolean|any|void|unknown|never|object|Promise|Array|Record|Set|Map)\b)|(-?\b\d+(?:\.\d+)?\b)|(\b[A-Za-z_$][A-Za-z0-9_$]*(?=\s*\())/g;
+    return code.replace(rx, (m, comm, str, kw, lit, type, num, fn) => {
+      if (comm) return `<span class="hl-comm">${escH(comm)}</span>`;
+      if (str) return `<span class="hl-str">${escH(str)}</span>`;
+      if (kw) return `<span class="hl-kw">${escH(kw)}</span>`;
+      if (lit) return `<span class="hl-lit">${escH(lit)}</span>`;
+      if (type) return `<span class="hl-type">${escH(type)}</span>`;
+      if (num) return `<span class="hl-num">${escH(num)}</span>`;
+      if (fn) return `<span class="hl-fn">${escH(fn)}</span>`;
+      return escH(m);
+    });
+  }
+
+  if (["python", "py"].includes(lang)) {
+    const rx = /(#[^\n]*)|("""[\s\S]*?"""|'''[\s\S]*?'''|"(?:\\u[a-zA-Z0-9]{4}|\\[^u]|[^\\"])*"|'(?:\\u[a-zA-Z0-9]{4}|\\[^u]|[^\\'])*')|(\b(?:def|class|return|import|from|as|if|elif|else|for|while|try|except|finally|with|pass|raise|yield|async|await|lambda|global|nonlocal|assert|in|is|not|and|or)\b)|(\b(?:True|False|None)\b)|(\b(?:int|float|str|bool|list|dict|set|tuple|self)\b)|(-?\b\d+(?:\.\d+)?\b)|(@[a-zA-Z_]\w*)/g;
+    return code.replace(rx, (m, comm, str, kw, lit, type, num, dec) => {
+      if (comm) return `<span class="hl-comm">${escH(comm)}</span>`;
+      if (str) return `<span class="hl-str">${escH(str)}</span>`;
+      if (kw) return `<span class="hl-kw">${escH(kw)}</span>`;
+      if (lit) return `<span class="hl-lit">${escH(lit)}</span>`;
+      if (type) return `<span class="hl-type">${escH(type)}</span>`;
+      if (num) return `<span class="hl-num">${escH(num)}</span>`;
+      if (dec) return `<span class="hl-dec">${escH(dec)}</span>`;
+      return escH(m);
+    });
+  }
+
+  if (["html", "xml", "svg"].includes(lang) || (!lang && trimmed.startsWith("<") && trimmed.endsWith(">"))) {
+    const rx = /(<!--[\s\S]*?-->)|(<!DOCTYPE[^>]*>)|(<\/?)([a-zA-Z0-9\-:]+)|(\s+[a-zA-Z_:][-a-zA-Z0-9_:.]*)(?:\s*=\s*("[^"]*"|'[^']*'|[^\s>]+))?|(\/?>)/g;
+    return code.replace(rx, (m, comm, doc, tagOpen, tagName, attrName, attrVal, tagClose) => {
+      if (comm) return `<span class="hl-comm">${escH(comm)}</span>`;
+      if (doc) return `<span class="hl-doc">${escH(doc)}</span>`;
+      if (tagOpen && tagName) return `${escH(tagOpen)}<span class="hl-tag">${escH(tagName)}</span>`;
+      if (attrName) {
+        let res = `<span class="hl-attr">${escH(attrName)}</span>`;
+        if (attrVal) res += `="<span class="hl-str">${escH(attrVal.replace(/^["']|["']$/g, ""))}</span>"`;
+        return res;
+      }
+      if (tagClose) return escH(tagClose);
+      return escH(m);
+    });
+  }
+
+  if (["css"].includes(lang)) {
+    const rx = /(\/\*[\s\S]*?\*\/)|([.#]?[a-zA-Z_-][a-zA-Z0-9_-]*(?:\s*,\s*[.#]?[a-zA-Z_-][a-zA-Z0-9_-]*)*\s*\{)|([a-zA-Z_-][a-zA-Z0-9_-]*\s*:)|("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*')|(#(?:[0-9a-fA-F]{3,8})\b)|(\b\d+(?:\.\d+)?(?:px|em|rem|%|vh|vw|s|ms|deg)?\b)/g;
+    return code.replace(rx, (m, comm, sel, prop, str, hex, num) => {
+      if (comm) return `<span class="hl-comm">${escH(comm)}</span>`;
+      if (sel) return `<span class="hl-tag">${escH(sel)}</span>`;
+      if (prop) return `<span class="hl-attr">${escH(prop)}</span>`;
+      if (str) return `<span class="hl-str">${escH(str)}</span>`;
+      if (hex) return `<span class="hl-lit">${escH(hex)}</span>`;
+      if (num) return `<span class="hl-num">${escH(num)}</span>`;
+      return escH(m);
+    });
+  }
+
+  if (["bash", "sh", "shell", "zsh"].includes(lang)) {
+    const rx = /(#[^\n]*)|("(?:\\.|[^"\\])*"|'[^']*')|(\$[a-zA-Z_]\w*|\$\{[^}]+\})|(\b(?:if|then|else|elif|fi|for|while|in|do|done|case|esac|function|return|exit)\b)|(\b(?:echo|cd|ls|mkdir|rm|cp|mv|cat|grep|sed|awk|curl|wget|npm|deno|node|git|docker)\b)|(--?[a-zA-Z0-9_-]+)/g;
+    return code.replace(rx, (m, comm, str, v, kw, cmd, flag) => {
+      if (comm) return `<span class="hl-comm">${escH(comm)}</span>`;
+      if (str) return `<span class="hl-str">${escH(str)}</span>`;
+      if (v) return `<span class="hl-fn">${escH(v)}</span>`;
+      if (kw) return `<span class="hl-kw">${escH(kw)}</span>`;
+      if (cmd) return `<span class="hl-dec">${escH(cmd)}</span>`;
+      if (flag) return `<span class="hl-attr">${escH(flag)}</span>`;
+      return escH(m);
+    });
+  }
+
+  if (["sql"].includes(lang)) {
+    const rx = /(--[^\n]*|\/\*[\s\S]*?\*\/)|('(?:''|[^'])*')|(\b(?:SELECT|FROM|WHERE|INSERT|INTO|VALUES|UPDATE|SET|DELETE|CREATE|TABLE|DROP|ALTER|ADD|INDEX|JOIN|INNER|LEFT|RIGHT|FULL|OUTER|ON|GROUP|BY|ORDER|HAVING|LIMIT|OFFSET|UNION|ALL|AS|AND|OR|NOT|NULL|IS|LIKE|IN|BETWEEN|EXISTS|CASE|WHEN|THEN|ELSE|END)\b)|(-?\b\d+(?:\.\d+)?\b)/gi;
+    return code.replace(rx, (m, comm, str, kw, num) => {
+      if (comm) return `<span class="hl-comm">${escH(comm)}</span>`;
+      if (str) return `<span class="hl-str">${escH(str)}</span>`;
+      if (kw) return `<span class="hl-kw">${escH(kw.toUpperCase())}</span>`;
+      if (num) return `<span class="hl-num">${escH(num)}</span>`;
+      return escH(m);
+    });
+  }
+
+  return escH(code);
+}
+
 const mdlib = Promise.all([
   import("https://cdn.jsdelivr.net/npm/marked@18.1.3/lib/marked.esm.js"),
   import("https://cdn.jsdelivr.net/npm/dompurify@3.4.17/dist/purify.es.mjs"),
@@ -1518,19 +2186,76 @@ const mdlib = Promise.all([
 ]).then(([m, p, h]) => ({ marked: m.marked, purify: p.default, hljs: h.default })).catch(() => null);
 let MD = null;
 mdlib.then((x) => { MD = x; $$(".md[data-src]").forEach((el) => renderMd(el, el.dataset.src)); });
+
+function postProcessCode(el, final) {
+  for (const pre of $$("pre", el)) {
+    if (pre.closest(".code-block")) continue;
+    const code = $("code", pre);
+    const rawText = (code ?? pre).innerText;
+    let lang = "";
+    if (code) {
+      const cls = code.className || "";
+      const m = cls.match(/language-([a-zA-Z0-9_-]+)/);
+      if (m) lang = m[1];
+    }
+    const isApp = (lang === "html" || rawText.includes("<!DOCTYPE html>") || rawText.includes("<html") || (rawText.includes("<canvas") && rawText.includes("<script")));
+    if (final && code && !code.dataset.hl) {
+      try {
+        if (MD?.hljs) MD.hljs.highlightElement(code);
+        else code.innerHTML = highlightCode(rawText, lang);
+      } catch {
+        code.innerHTML = highlightCode(rawText, lang);
+      }
+      code.dataset.hl = 1;
+    }
+    const block = document.createElement("div");
+    block.className = "code-block";
+    block.innerHTML = `<div class="code-bar"><span class="lang">${esc(lang || "code")}</span><div class="actions">${isApp ? `<button class="btn q btn-run-app">▶ Run in Sandbox</button>` : ""}<button class="btn q cp">copy</button></div></div>`;
+    pre.parentNode.insertBefore(block, pre);
+    block.appendChild(pre);
+    const cp = $(".cp", block);
+    if (cp) cp.onclick = () => navigator.clipboard.writeText(rawText).then(() => toast("copied"));
+    const runBtn = $(".btn-run-app", block);
+    if (runBtn) runBtn.onclick = () => launchAppSandbox(rawText, "Interactive App");
+  }
+}
+
 function renderMd(el, text, final = true) {
-  if (!MD) { el.textContent = text; if (final) el.dataset.src = text; return; }
+  if (!MD) {
+    // Robust fallback markdown renderer
+    let s = esc(text);
+    s = s.replace(/```([a-zA-Z0-9_-]*)\n([\s\S]*?)```/g, (_m, lang, code) => {
+      const unescaped = code.replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&#39;/g, "'");
+      const isApp = (lang === "html" || unescaped.includes("<!DOCTYPE html>") || unescaped.includes("<html"));
+      const hl = highlightCode(unescaped, lang);
+      return `<div class="code-block"><div class="code-bar"><span class="lang">${esc(lang || "code")}</span><div class="actions">${isApp ? `<button class="btn q btn-run-app" data-app-code="${esc(unescaped)}">▶ Run in Sandbox</button>` : ""}<button class="btn q cp">copy</button></div></div><pre><code>${hl}</code></pre></div>`;
+    });
+    s = s.replace(/`([^`]+)`/g, "<code>$1</code>");
+    s = s.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
+    s = s.replace(/\*([^*]+)\*/g, "<em>$1</em>");
+    s = s.replace(/\n\n/g, "<p></p>");
+    s = s.replace(/\n/g, "<br>");
+    el.innerHTML = s;
+    for (const cp of $$(".cp", el)) {
+      cp.onclick = () => {
+        const pre = cp.closest(".code-block")?.querySelector("pre");
+        if (pre) navigator.clipboard.writeText(pre.innerText).then(() => toast("copied"));
+      };
+    }
+    for (const runBtn of $$(".btn-run-app", el)) {
+      runBtn.onclick = () => {
+        const pre = runBtn.closest(".code-block")?.querySelector("pre");
+        const code = runBtn.dataset.appCode || pre?.innerText || "";
+        launchAppSandbox(code, "Interactive App");
+      };
+    }
+    if (final) el.dataset.src = text;
+    return;
+  }
   delete el.dataset.src;
   el.innerHTML = MD.purify.sanitize(MD.marked.parse(text, { gfm: true, breaks: false }), { ADD_ATTR: ["target"] });
   for (const a of $$("a", el)) { a.target = "_blank"; a.rel = "noopener noreferrer"; }
-  for (const pre of $$("pre", el)) {
-    const code = $("code", pre);
-    if (final && code && !code.dataset.hl) { try { MD.hljs.highlightElement(code); } catch { /* unknown language */ } code.dataset.hl = 1; }
-    const b = document.createElement("button");
-    b.className = "btn q cp"; b.textContent = "copy";
-    b.onclick = () => navigator.clipboard.writeText((code ?? pre).innerText).then(() => toast("copied"));
-    pre.append(b);
-  }
+  postProcessCode(el, final);
 }
 
 // ---------- views / routing ----------
@@ -1782,7 +2507,30 @@ function msgEl(m, i) {
   if (m.role === "user") {
     el.className = "msg u";
     const imgs = Array.isArray(m.content) ? m.content.filter((b) => b.type === "image_url").map((b) => `<img src="${esc(b.image_url.url)}" alt="attachment">`).join("") : "";
-    el.innerHTML = `<div class="body">${imgs}${esc(textOf(m.content))}</div>`;
+    const rawText = textOf(m.content);
+    const lines = (rawText.match(/\n/g) || []).length + 1;
+    const isLong = lines > 6 || rawText.length > 350;
+
+    const head = document.createElement("div");
+    head.className = "u-header";
+    head.innerHTML = `<span class="dim" style="font-size:11px">You</span><span class="u-avatar">U</span>`;
+
+    const body = document.createElement("div");
+    body.className = "body md" + (isLong ? " clamped" : "");
+    if (imgs) body.innerHTML = imgs;
+    renderMd(body, rawText, true);
+
+    el.replaceChildren(head, body);
+    if (isLong) {
+      const expBtn = document.createElement("button");
+      expBtn.className = "btn-expand-msg";
+      expBtn.textContent = `Show more (${lines} lines) ▾`;
+      expBtn.onclick = () => {
+        const clamped = body.classList.toggle("clamped");
+        expBtn.textContent = clamped ? `Show more (${lines} lines) ▾` : "Show less ▴";
+      };
+      el.appendChild(expBtn);
+    }
   } else if (m.role === "tool") {
     el.className = "msg t";
     el.innerHTML = `<div class="body"><span class="dim">${esc(m.name ?? "")} ${esc(m.tool_call_id)} →</span> ${esc(textOf(m.content))}</div>`;
@@ -1974,11 +2722,71 @@ async function sendChat() {
 }
 $("#csend").onclick = sendChat;
 $("#cstop").onclick = () => chatCtl?.abort();
-function autosize(t) { t.style.height = "auto"; t.style.height = Math.min(t.scrollHeight + 2, innerHeight * 0.4) + "px"; }
+
+function updateInputStats(t) {
+  const meta = $("#cinput-meta");
+  if (!meta) return;
+  const val = t.value;
+  const lines = val ? (val.match(/\n/g) || []).length + 1 : 0;
+  if (lines > 1 || val.length > 80) {
+    meta.hidden = false;
+    $("#cline-info").textContent = `${lines} line${lines > 1 ? "s" : ""} · ${val.length} char${val.length === 1 ? "" : "s"}`;
+  } else {
+    meta.hidden = true;
+  }
+}
+
+function autosize(t) {
+  if (document.querySelector(".composer.expanded")) {
+    t.style.height = "100%";
+    updateInputStats(t);
+    return;
+  }
+  t.style.height = "auto";
+  t.style.height = Math.min(t.scrollHeight + 2, innerHeight * 0.42) + "px";
+  updateInputStats(t);
+}
+
 $("#cinput").value = store.get("draft", "");
 autosize($("#cinput"));
 $("#cinput").addEventListener("input", (e) => { autosize(e.target); store.set("draft", e.target.value); });
-$("#cinput").addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); sendChat(); } });
+$("#cinput").addEventListener("keydown", (e) => {
+  if (e.key === "Tab") {
+    e.preventDefault();
+    const s = e.target.selectionStart, end = e.target.selectionEnd;
+    e.target.value = e.target.value.substring(0, s) + "  " + e.target.value.substring(end);
+    e.target.selectionStart = e.target.selectionEnd = s + 2;
+    autosize(e.target);
+    return;
+  }
+  if (e.key === "Enter" && !e.shiftKey && !e.isComposing) {
+    if (document.querySelector(".composer.expanded")) {
+      if (e.ctrlKey || e.metaKey) { e.preventDefault(); sendChat(); }
+      return;
+    }
+    e.preventDefault();
+    sendChat();
+  }
+});
+
+$("#cexpand").onclick = () => {
+  const comp = document.querySelector(".composer");
+  const isExp = comp.classList.toggle("expanded");
+  $("#cexpand").title = isExp ? "Contract editor mode" : "Expand editor mode";
+  const icon = $("#cexpand use");
+  if (icon) icon.setAttribute("href", isExp ? "#i-shrink" : "#i-expand");
+  autosize($("#cinput"));
+  $("#cinput").focus();
+};
+
+$("#cquick-tools")?.addEventListener("click", (e) => {
+  const btn = e.target.closest("button[data-quick-tool]");
+  if (btn) { openChatToolsDrawer(btn.dataset.quickTool); return; }
+  const appBtn = e.target.closest("button[data-quick-app]");
+  if (appBtn) { openAppBuilder(); return; }
+});
+$("#ctools-btn").onclick = () => openChatToolsDrawer();
+$("#cappbuilder-btn").onclick = () => openAppBuilder();
 
 // ---- attachments ----
 function renderAttach() {
@@ -2804,8 +3612,8 @@ enter.endpoints = () => { if (!endpoints.length) loadEndpoints(); };
 // =====================================================================
 let toolList = [], toolSkills = {}, toolTotals = {}, toolAgent = {}, toolWire = { flavor: "openai", tools: [] };
 let toolPlane = "asck-t-v2", toolEnabled = true, toolOpen = null, tsort = { k: "name", d: 1 };
+let activeTool = null, currentToolCat = "all", toolMode = "form";
 
-// Seeds double as documentation: each one is a call that actually works.
 const TOOL_SEEDS = {
   calculate: { expression: "(23*19)+14" },
   data: { op: "query", data: { a: { b: [10, 20, 30] } }, path: "$.a.b[1]" },
@@ -2840,8 +3648,176 @@ const TOOL_SEEDS = {
   router_trace: { limit: 5 },
 };
 
+const TOOL_EXAMPLES = {
+  calculate: {
+    title: "Exact arithmetic & functions",
+    request: { expression: "(23 * 19) + 14 / (2.5 - 0.5)" },
+    response: { ok: true, result: 444, expression: "(23 * 19) + 14 / (2.5 - 0.5)", ms: 0.8 }
+  },
+  data: {
+    title: "JSONPath Query & Projection",
+    request: {
+      op: "query",
+      data: { users: [{ id: 1, name: "Ada", role: "admin" }, { id: 2, name: "Alan", role: "developer" }] },
+      path: "$.users[?(@.role == 'admin')].name"
+    },
+    response: { ok: true, matches: ["Ada"], count: 1 }
+  },
+  text: {
+    title: "Semantic & string similarity ranking",
+    request: {
+      op: "similarity",
+      query: "fast inference router",
+      candidates: ["high speed llm gateway", "database migration script", "realtime text router"]
+    },
+    response: { ok: true, best: "high speed llm gateway", score: 0.84, ranked: [{ candidate: "high speed llm gateway", score: 0.84 }] }
+  },
+  time: {
+    title: "Current timestamp with IANA timezone",
+    request: { op: "now", zone: "America/New_York" },
+    response: { ok: true, iso: "2026-11-04T12:00:00-05:00", epoch_ms: 1793800800000, zone: "America/New_York" }
+  },
+  crypto: {
+    title: "Cryptographic hash digest",
+    request: { op: "digest", algorithm: "sha-256", data: "nokey-router-asck" },
+    response: { ok: true, algorithm: "sha-256", digest: "b5d4045c3f466fa91fe2cc6abe79232a1a57cdf104f7a26e716e0a1e2789df78", bytes: 32 }
+  },
+  web_search: {
+    title: "Search the web with rank fusion",
+    request: { query: "modern web components 2026", limit: 3 },
+    response: { ok: true, query: "modern web components 2026", count: 3, results: [{ title: "Web Components in 2026", url: "https://developer.mozilla.org", snippet: "Modern declarative custom elements with shadow DOM..." }] }
+  },
+  web_fetch: {
+    title: "Fetch readable content as clean Markdown",
+    request: { url: "https://example.com" },
+    response: { ok: true, status: 200, markdown: "# Example Domain\nThis domain is for use in illustrative examples.", bytes: 1256 }
+  },
+  http_request: {
+    title: "Execute arbitrary HTTP request",
+    request: { method: "GET", url: "https://api.github.com/zen" },
+    response: { ok: true, status: 200, data: "Design for failure." }
+  },
+  fs_write: {
+    title: "Write sandboxed file to virtual filesystem",
+    request: { path: "app.config.json", content: '{\n  "theme": "ocean",\n  "telemetry": true\n}' },
+    response: { ok: true, path: "app.config.json", bytes: 49, created: true }
+  },
+  fs_read: {
+    title: "Read sandboxed file from virtual filesystem",
+    request: { path: "app.config.json" },
+    response: { ok: true, path: "app.config.json", content: '{\n  "theme": "ocean",\n  "telemetry": true\n}', bytes: 49 }
+  },
+  fs_list: {
+    title: "List sandboxed files",
+    request: { path: "" },
+    response: { ok: true, files: [{ path: "app.config.json", bytes: 49, updated: "2026-11-04T12:00:00Z" }] }
+  },
+  fs_grep: {
+    title: "Search inside virtual filesystem files",
+    request: { pattern: "telemetry" },
+    response: { ok: true, matches: [{ file: "app.config.json", line: 3, text: '  "telemetry": true' }] }
+  },
+  fs_patch: {
+    title: "Atomic find-and-replace patch",
+    request: { path: "app.config.json", edits: [{ find: '"ocean"', replace: '"violet"' }] },
+    response: { ok: true, path: "app.config.json", applied: 1, bytes: 50 }
+  },
+  fs_delete: {
+    title: "Delete file from virtual filesystem",
+    request: { path: "app.config.json" },
+    response: { ok: true, deleted: "app.config.json" }
+  },
+  clipboard: {
+    title: "Store text in named clipboard slot",
+    request: { op: "set", slot: "prompt_draft", content: "Build a responsive Kanban board app" },
+    response: { ok: true, slot: "prompt_draft", bytes: 34, revision: 1 }
+  },
+  task: {
+    title: "Add a task to the durable task board",
+    request: { op: "add", title: "Revamp Tools Tab and add People Chat", priority: "high" },
+    response: { ok: true, task_id: "tsk-001", status: "todo", priority: "high" }
+  },
+  memory_write: {
+    title: "Record durable semantic memory fact",
+    request: { text: "User prefers Preact components with Tailwind CSS.", tags: ["preferences", "frontend"], importance: 0.9 },
+    response: { ok: true, id: "mem-01", importance: 0.9, indexed: true }
+  },
+  memory_recall: {
+    title: "Recall relevant semantic memories",
+    request: { query: "What frontend stack does the user prefer?", k: 3 },
+    response: { ok: true, memories: [{ text: "User prefers Preact components with Tailwind CSS.", score: 0.94 }], count: 1 }
+  },
+  memory_forget: {
+    title: "Forget memories by query match",
+    request: { query: "outdated stack" },
+    response: { ok: true, forgotten: 0 }
+  },
+  memory_graph: {
+    title: "Inspect memory entity knowledge graph",
+    request: { limit: 10 },
+    response: { ok: true, nodes: 4, edges: 6, entities: ["User", "Preact", "Tailwind CSS"] }
+  },
+  rag_index: {
+    title: "Index document into RAG collection",
+    request: { collection: "docs", docs: [{ id: "guide", source: "readme.md", text: "The ASCK tool plane executes built-ins with self-repair ladders." }] },
+    response: { ok: true, collection: "docs", indexed: 1, total_chunks: 1 }
+  },
+  rag_search: {
+    title: "Hybrid vector and BM25 RAG search",
+    request: { collection: "docs", query: "repair ladders in tool plane", k: 3 },
+    response: { ok: true, hits: [{ id: "guide", score: 0.91, text: "The ASCK tool plane executes built-ins with self-repair ladders." }] }
+  },
+  rag_collections: {
+    title: "List available RAG collections",
+    request: { collection: "docs" },
+    response: { ok: true, collections: ["docs"], stats: { docs: { chunks: 1 } } }
+  },
+  embed: {
+    title: "Generate dense semantic embedding vector",
+    request: { text: "Bayesian optimal stopping and lane scoring" },
+    response: { ok: true, dimensions: 128, vector: [0.038, -0.092, 0.141, -0.021] }
+  },
+  router_capabilities: {
+    title: "Inspect router engine capabilities",
+    request: {},
+    response: { ok: true, engine: "nokey-router v6", kernel: "asck-t-v2", models: 140, endpoints: 102 }
+  },
+  router_catalog: {
+    title: "Inspect model catalog by mode",
+    request: { mode: "tools", limit: 5 },
+    response: { ok: true, mode: "tools", lane: "free:tools", count: 5, candidates: ["qwen-2.5-coder-32b", "llama-3.3-70b"] }
+  },
+  router_health: {
+    title: "Router health and subsystem telemetry",
+    request: { section: "tool_plane" },
+    response: { ok: true, status: "healthy", tool_plane: "asck-t-v2", agent_loop: true }
+  },
+  router_models: {
+    title: "Filter registered model catalog",
+    request: { filter: "free:", limit: 5 },
+    response: { ok: true, returned: 5, total: 140, data: [{ id: "free:fast" }, { id: "free:smart" }, { id: "free:code" }] }
+  },
+  router_endpoints: {
+    title: "List configured upstream endpoints",
+    request: { limit: 5 },
+    response: { ok: true, count: 5, endpoints: [{ name: "Pollinations", status: "ok" }] }
+  },
+  router_lane: {
+    title: "Predict optimal lane for prompt",
+    request: { prompt: "write a python function to compute fibonacci", with_tools: false },
+    response: { ok: true, lane: "free:code", confidence: 0.92, suggested_model: "qwen-2.5-coder-32b" }
+  },
+  router_trace: {
+    title: "Inspect recent routing traces",
+    request: { limit: 5 },
+    response: { ok: true, returned: 5, traces: [{ id: "tr-01", model: "free:fast", outcome: "won", ms: 420 }] }
+  }
+};
+
 const pct = (v) => (v === null || v === undefined ? "\u2014" : `${(v * 100).toFixed(1)}%`);
+
 function exampleArgs(name) {
+  if (TOOL_EXAMPLES[name]?.request) return TOOL_EXAMPLES[name].request;
   if (TOOL_SEEDS[name]) return TOOL_SEEDS[name];
   const props = toolList.find((t) => t.name === name)?.parameters?.properties ?? {};
   const required = toolList.find((t) => t.name === name)?.parameters?.required ?? [];
@@ -2860,6 +3836,17 @@ function exampleArgs(name) {
   return out;
 }
 
+function toolCategoryOf(t) {
+  const n = t.name, k = t.kind || "";
+  if (["calculate", "crypto", "time"].includes(n) || k.includes("compute")) return "compute";
+  if (["data", "text", "embed"].includes(n)) return "data";
+  if (n.startsWith("fs_") || ["clipboard", "task"].includes(n)) return "system";
+  if (n.startsWith("web_") || n.startsWith("http_")) return "web";
+  if (n.startsWith("memory_") || n.startsWith("rag_")) return "memory";
+  if (n.startsWith("router_")) return "router";
+  return "compute";
+}
+
 async function loadTools() {
   try {
     const flavor = $("#tflavor").value;
@@ -2871,30 +3858,206 @@ async function loadTools() {
     toolWire = d.wire ?? { flavor, tools: [] };
     toolPlane = d.plane ?? toolPlane;
     toolEnabled = d.enabled !== false;
+    if (!activeTool && toolList.length) activeTool = toolList[0];
     renderTools();
   } catch (e) { toast("tools: " + e.message, true); }
 }
 
-function toolDetail(t) {
+function renderActiveTool(t) {
+  if (!t) return;
+  activeTool = t;
+  $("#trname").value = t.name;
+  $("#wb-tool-name").textContent = t.name;
+  $("#wb-tool-kind").textContent = t.kind || "tool";
+  $("#wb-tool-admin").hidden = !t.admin;
+  $("#wb-tool-pure").hidden = !t.deterministic;
+  $("#wb-tool-desc").textContent = t.description || "";
+  
+  const aliasesEl = $("#wb-tool-aliases");
+  if (t.aliases?.length) {
+    aliasesEl.hidden = false;
+    aliasesEl.textContent = `Also answers to: ${t.aliases.join(", ")}`;
+  } else {
+    aliasesEl.hidden = true;
+  }
+
   const s = toolSkills[t.name];
-  const chips = [
-    s ? `${s.calls} calls` : "no evidence yet",
-    s ? `${s.errors} errors` : "",
-    s ? `success ${pct(s.success_rate)}` : "",
-    s ? `p99 ${ms(s.p99_ms)}` : "",
-    s ? `stale ${f(s.stale_hours, 1)}h` : "",
-    ...(s?.top_errors ?? []).map((e) => `${esc(e.code)} \u00d7${e.count}`),
-  ].filter(Boolean).join(" \u00b7 ");
-  return `<div class="dim" style="margin-bottom:6px">${esc(t.description)}</div>
-    <div class="dim t" style="margin-bottom:6px">${chips || "\u2014"}${s?.last_error ? ` \u00b7 last: ${esc(String(s.last_error).slice(0, 160))}` : ""}</div>
-    ${t.aliases?.length ? `<div class="dim t" style="margin-bottom:6px">also answers to: ${t.aliases.map(esc).join(", ")}</div>` : ""}
-    <div class="row" style="margin-bottom:6px"><button class="btn q" data-run="${esc(t.name)}">run ${esc(t.name)}</button></div>
-    <pre class="wrap" style="max-height:240px;overflow:auto">${esc(JSON.stringify(t.parameters ?? {}, null, 2))}</pre>`;
+  $("#wb-skill-chips").innerHTML = [
+    s ? `<span class="wb-kpi-chip">${s.calls} calls</span>` : '<span class="wb-kpi-chip">no calls yet</span>',
+    s ? `<span class="wb-kpi-chip ${s.competence >= 0.8 ? "ok" : s.competence < 0.5 ? "no" : "warn"}">competence ${pct(s.competence)}</span>` : "",
+    s?.p50_ms ? `<span class="wb-kpi-chip">p50 ${ms(s.p50_ms)}</span>` : "",
+    s?.repair_rate !== undefined ? `<span class="wb-kpi-chip">repair ${pct(s.repair_rate)}</span>` : "",
+  ].filter(Boolean).join("");
+
+  // Examples
+  const ex = TOOL_EXAMPLES[t.name] || { request: exampleArgs(t.name), response: { ok: true } };
+  const exReq = ex.request;
+  const exRes = ex.response;
+  $("#ex-req-code").innerHTML = `<code>${highlightCode(JSON.stringify(exReq, null, 2), "json")}</code>`;
+  $("#ex-res-code").innerHTML = `<code>${highlightCode(JSON.stringify(exRes, null, 2), "json")}</code>`;
+
+  // Schema code
+  $("#wb-schema-code").innerHTML = `<code>${highlightCode(JSON.stringify(t.parameters ?? {}, null, 2), "json")}</code>`;
+
+  // Build Dynamic Form Controls
+  buildToolFormControls(t);
+}
+
+function buildToolFormControls(t) {
+  const container = $("#tool-form-controls");
+  container.innerHTML = "";
+  const props = t.parameters?.properties ?? {};
+  const required = new Set(t.parameters?.required ?? []);
+
+  // Parse current values
+  let curVals = {};
+  try {
+    const raw = $("#trargs").value.trim();
+    if (raw && raw !== "{}") curVals = JSON.parse(raw);
+    else curVals = exampleArgs(t.name);
+  } catch {
+    curVals = exampleArgs(t.name);
+  }
+
+  const propKeys = Object.keys(props);
+  if (!propKeys.length) {
+    container.innerHTML = `<div class="dim" style="font-size:12px;padding:8px">This tool requires no input parameters. Click <b>Execute Tool</b> to run.</div>`;
+    $("#trargs").value = "{}";
+    return;
+  }
+
+  propKeys.forEach((k) => {
+    const p = props[k];
+    const isReq = required.has(k);
+    const type = Array.isArray(p.type) ? p.type[0] : (p.type || "string");
+    const group = document.createElement("div");
+    group.className = "tool-form-group";
+
+    const labelRow = document.createElement("div");
+    labelRow.className = "tool-form-label";
+    labelRow.innerHTML = `<div><b>${esc(k)}</b>${isReq ? `<span class="req">* required</span>` : ""}</div><span class="type-badge">${esc(type)}${p.enum ? " enum" : ""}</span>`;
+    group.appendChild(labelRow);
+
+    if (p.description) {
+      const desc = document.createElement("div");
+      desc.className = "tool-form-desc";
+      desc.textContent = p.description;
+      group.appendChild(desc);
+    }
+
+    let inputEl;
+    const curVal = curVals[k] !== undefined ? curVals[k] : (p.default !== undefined ? p.default : "");
+
+    if (p.enum && Array.isArray(p.enum)) {
+      inputEl = document.createElement("select");
+      inputEl.className = "tool-form-in";
+      p.enum.forEach((opt) => {
+        const o = document.createElement("option");
+        o.value = opt; o.textContent = opt;
+        if (opt === curVal) o.selected = true;
+        inputEl.appendChild(o);
+      });
+    } else if (type === "boolean") {
+      const row = document.createElement("div");
+      row.className = "row";
+      inputEl = document.createElement("input");
+      inputEl.type = "checkbox";
+      inputEl.checked = Boolean(curVal);
+      const span = document.createElement("span");
+      span.textContent = "Enable";
+      span.className = "mid";
+      span.style.fontSize = "12px";
+      row.append(inputEl, span);
+      group.appendChild(row);
+    } else if (type === "number" || type === "integer") {
+      inputEl = document.createElement("input");
+      inputEl.type = "number";
+      inputEl.className = "tool-form-in";
+      inputEl.value = curVal !== undefined ? curVal : 0;
+      if (p.minimum !== undefined) inputEl.min = p.minimum;
+      if (p.maximum !== undefined) inputEl.max = p.maximum;
+      if (type === "number") inputEl.step = "any";
+    } else if (type === "string") {
+      const isMulti = (p.description && /expression|content|script|body|code/i.test(p.description)) || k === "content" || k === "expression" || k === "query";
+      if (isMulti) {
+        inputEl = document.createElement("textarea");
+        inputEl.rows = 3;
+        inputEl.className = "tool-form-in";
+        inputEl.style.fontFamily = "var(--mono)";
+        inputEl.value = typeof curVal === "string" ? curVal : JSON.stringify(curVal);
+      } else {
+        inputEl = document.createElement("input");
+        inputEl.type = "text";
+        inputEl.className = "tool-form-in";
+        inputEl.value = typeof curVal === "string" ? curVal : (curVal !== undefined ? String(curVal) : "");
+      }
+    } else {
+      // array or object
+      inputEl = document.createElement("textarea");
+      inputEl.rows = 3;
+      inputEl.className = "tool-form-in";
+      inputEl.style.fontFamily = "var(--mono)";
+      inputEl.value = typeof curVal === "object" ? JSON.stringify(curVal, null, 2) : String(curVal ?? "");
+    }
+
+    if (inputEl && inputEl.type !== "checkbox") group.appendChild(inputEl);
+
+    // Two-way sync to #trargs
+    const syncToArgs = () => {
+      const obj = collectFormValues(t);
+      $("#trargs").value = JSON.stringify(obj, null, 2);
+      $("#json-valid-stat").textContent = "Valid JSON";
+      $("#json-valid-stat").className = "dim";
+    };
+
+    if (inputEl) {
+      inputEl.dataset.field = k;
+      inputEl.dataset.type = type;
+      inputEl.addEventListener("input", syncToArgs);
+      inputEl.addEventListener("change", syncToArgs);
+    }
+
+    container.appendChild(group);
+  });
+
+  // initial sync
+  syncToArgsFromForm(t);
+}
+
+function syncToArgsFromForm(t) {
+  const obj = collectFormValues(t);
+  $("#trargs").value = JSON.stringify(obj, null, 2);
+}
+
+function collectFormValues(t) {
+  const container = $("#tool-form-controls");
+  const props = t.parameters?.properties ?? {};
+  const obj = {};
+  for (const el of container.querySelectorAll("[data-field]")) {
+    const k = el.dataset.field;
+    const type = el.dataset.type;
+    if (el.type === "checkbox") {
+      obj[k] = el.checked;
+    } else if (type === "number" || type === "integer") {
+      const n = Number(el.value);
+      obj[k] = Number.isFinite(n) ? n : 0;
+    } else if (type === "object" || type === "array") {
+      try { obj[k] = JSON.parse(el.value); } catch { obj[k] = el.value; }
+    } else {
+      obj[k] = el.value;
+    }
+  }
+  return obj;
 }
 
 function renderTools() {
   const q = $("#tfilter").value.trim().toLowerCase();
-  const rows = toolList.filter((t) => !q || [t.name, t.kind, t.description, ...(t.aliases ?? [])].join(" ").toLowerCase().includes(q));
+  let rows = toolList.filter((t) => {
+    if (currentToolCat !== "all" && toolCategoryOf(t) !== currentToolCat) return false;
+    if (q && ![t.name, t.kind, t.description, ...(t.aliases ?? [])].join(" ").toLowerCase().includes(q)) return false;
+    return true;
+  });
+
   const key = (t) => {
     const s = toolSkills[t.name];
     if (tsort.k === "calls") return s?.calls ?? -1;
@@ -2907,46 +4070,177 @@ function renderTools() {
   rows.sort((a, b) => { const x = key(a), y = key(b); return (typeof x === "number" ? x - y : String(x).localeCompare(String(y))) * tsort.d; });
 
   const t = toolTotals;
-  $("#tkpis").innerHTML = [["tools", t.tools], ["instrumented", t.instrumented], ["calls", t.calls], ["errors", t.errors], ["repairs", t.repairs], ["agent rounds", toolAgent.max_rounds]]
-    .map(([k, v]) => `<div class="kpi"><b>${esc(v ?? "\u2014")}</b><span>${k}</span></div>`).join("")
+  $("#tkpis").innerHTML = [
+    ["tools", t.tools], ["instrumented", t.instrumented], ["calls", t.calls],
+    ["errors", t.errors], ["repairs", t.repairs], ["agent rounds", toolAgent.max_rounds]
+  ].map(([k, v]) => `<div class="kpi"><b>${esc(v ?? "\u2014")}</b><span>${k}</span></div>`).join("")
     + `<div class="kpi"><b class="${toolEnabled ? "ok" : "no"}">${toolEnabled ? "on" : "off"}</b><span>${esc(toolPlane)}</span></div>`
     + `<div class="kpi"><b>${esc(toolAgent.auto_tools?.length ?? 0)}</b><span>auto tools</span></div>`;
   $("#tstat").textContent = `${rows.length}/${toolList.length} tools \u00b7 wire ${toolWire.flavor} \u00b7 ${toolEnabled ? "agent loop on" : "plane disabled"}`;
 
+  // Render Left Tool Items List
+  const listEl = $("#tool-list-items");
+  if (listEl) {
+    listEl.innerHTML = rows.map((x) => {
+      const s = toolSkills[x.name];
+      const comp = s?.competence;
+      const compClass = comp >= 0.8 ? "good" : comp < 0.5 ? "bad" : "mid";
+      const isSel = activeTool && activeTool.name === x.name;
+      return `<div class="tool-item-card ${isSel ? "active" : ""}" data-tool="${esc(x.name)}">
+        <div class="tool-item-header">
+          <span class="tool-item-name">${esc(x.name)}</span>
+          <div class="tool-item-badges">
+            ${x.admin ? '<span class="badge adm" style="font-size:9px;padding:1px 4px">adm</span>' : ""}
+            ${x.deterministic ? '<span class="badge" style="border-color:var(--ok);color:var(--ok);font-size:9px;padding:1px 4px">pure</span>' : ""}
+            <span class="badge" style="font-size:9px;padding:1px 4px">${esc(x.kind)}</span>
+          </div>
+        </div>
+        <div class="tool-item-desc">${esc(x.description || "")}</div>
+        <div class="tool-item-meta">
+          <span class="tool-comp-dot ${compClass}"></span>
+          <span>${s ? pct(s.competence) : "untested"}</span>
+          <span>·</span>
+          <span>${s?.calls ?? 0} calls</span>
+          ${s?.p50_ms ? `<span>·</span><span>${ms(s.p50_ms)}</span>` : ""}
+        </div>
+      </div>`;
+    }).join("");
+  }
+
+  // Render complete registry table
   $("#ttb").innerHTML = rows.map((x) => {
     const s = toolSkills[x.name];
     const flags = [x.admin ? "admin" : "", x.deterministic ? "pure" : ""].filter(Boolean).join(" \u00b7 ");
-    const head = `<tr class="click" data-tool="${esc(x.name)}">
+    return `<tr class="click" data-tool="${esc(x.name)}">
       <td class="l t">${esc(x.name)}</td><td class="l">${esc(x.kind)}</td>
       <td class="${s?.calls ? "" : "no"}">${s?.calls ?? 0}</td>
       <td class="${s && s.competence < 0.5 ? "no" : ""}">${s ? pct(s.competence) : "\u2014"}</td>
       <td>${s ? ms(s.p50_ms) : "\u2014"}</td><td>${s ? ms(s.p95_ms) : "\u2014"}</td>
       <td class="${s && s.repair_rate > 0.25 ? "no" : ""}">${s ? pct(s.repair_rate) : "\u2014"}</td>
       <td class="l dim">${flags || "\u2014"}</td></tr>`;
-    return head + (toolOpen === x.name ? `<tr class="x"><td colspan="8">${toolDetail(x)}</td></tr>` : "");
   }).join("");
+
+  if (!activeTool && rows.length) {
+    renderActiveTool(rows[0]);
+  } else if (activeTool) {
+    const fresh = toolList.find((t) => t.name === activeTool.name);
+    if (fresh) renderActiveTool(fresh);
+  }
 }
 
 async function runToolCall() {
-  const name = $("#trname").value.trim();
+  const name = $("#trname").value.trim() || activeTool?.name;
   if (!name) { toast("name a tool first", true); return; }
   const raw = $("#trargs").value.trim();
   let args;
-  // Unparsable text is sent as-is on purpose: the repair ladder is the feature.
   try { args = raw ? JSON.parse(raw) : {}; } catch { args = raw; }
-  $("#trstat").textContent = "running\u2026";
+  const statEl = $("#trstat");
+  statEl.innerHTML = `<span class="dim">running…</span>`;
   try {
     const d = await req("/v1/tools/execute", { method: "POST", admin: true, body: { name, arguments: args } });
     const r = d.results?.[0] ?? {};
-    $("#trstat").textContent = r.ok
-      ? `ok \u00b7 ${ms(r.ms)} \u00b7 ${r.strategy}${r.repairs?.length ? ` \u00b7 ${r.repairs.join(", ")}` : ""} \u00b7 ${r.bytes ?? 0}B${r.truncated ? " truncated" : ""}`
-      : `${r.code ?? "error"} \u00b7 ${ms(r.ms)} \u00b7 ${r.error ?? ""}`;
+    statEl.innerHTML = r.ok
+      ? `<span class="badge" style="background:var(--acc-soft);color:var(--acc);border-color:var(--acc-line)">200 OK</span>
+         <span class="wb-kpi-chip">${ms(r.ms)}</span>
+         <span class="wb-kpi-chip">${esc(r.strategy)}</span>
+         ${r.repairs?.length ? `<span class="wb-kpi-chip warn">${r.repairs.length} repair(s)</span>` : ""}
+         <span class="wb-kpi-chip">${r.bytes ?? 0}B</span>`
+      : `<span class="badge" style="background:rgba(255,111,125,.15);color:var(--bad);border-color:var(--bad)">${esc(r.code ?? "error")}</span>
+         <span class="wb-kpi-chip">${ms(r.ms)}</span>`;
+    
     const out = $("#trout");
     out.hidden = false;
-    out.textContent = JSON.stringify(r.ok ? r.result : { error: r.error, code: r.code, issues: r.issues ?? [], suggestions: r.suggestions ?? [] }, null, 2).slice(0, 40000);
+    const formatted = JSON.stringify(r.ok ? r.result : { error: r.error, code: r.code, issues: r.issues ?? [] }, null, 2);
+    out.innerHTML = `<code>${highlightCode(formatted.slice(0, 40000), "json")}</code>`;
     loadTools();
-  } catch (e) { $("#trstat").textContent = ""; toast("execute: " + e.message, true); }
+  } catch (e) {
+    statEl.innerHTML = `<span class="no">Error: ${esc(e.message)}</span>`;
+    toast("execute: " + e.message, true);
+  }
 }
+
+// Category tabs
+$("#tool-cats")?.addEventListener("click", (e) => {
+  const btn = e.target.closest("button[data-cat]");
+  if (!btn) return;
+  for (const b of $$("#tool-cats button")) b.classList.toggle("active", b === btn);
+  currentToolCat = btn.dataset.cat;
+  renderTools();
+});
+
+// Sidebar selection
+$("#tool-list-items")?.addEventListener("click", (e) => {
+  const card = e.target.closest("[data-tool]");
+  if (!card) return;
+  const tool = toolList.find((t) => t.name === card.dataset.tool);
+  if (tool) {
+    for (const c of $$("#tool-list-items .tool-item-card")) c.classList.toggle("active", c === card);
+    renderActiveTool(tool);
+  }
+});
+
+// Mode switch
+$("#btn-mode-form")?.addEventListener("click", () => {
+  toolMode = "form";
+  $("#btn-mode-form").classList.add("active");
+  $("#btn-mode-raw").classList.remove("active");
+  $("#tool-form-view").hidden = false;
+  $("#tool-raw-view").hidden = true;
+  if (activeTool) buildToolFormControls(activeTool);
+});
+$("#btn-mode-raw")?.addEventListener("click", () => {
+  toolMode = "raw";
+  $("#btn-mode-raw").classList.add("active");
+  $("#btn-mode-form").classList.remove("active");
+  $("#tool-form-view").hidden = true;
+  $("#tool-raw-view").hidden = false;
+});
+
+$("#wb-btn-example")?.addEventListener("click", () => {
+  if (!activeTool) return;
+  const ex = TOOL_EXAMPLES[activeTool.name]?.request ?? exampleArgs(activeTool.name);
+  $("#trargs").value = JSON.stringify(ex, null, 2);
+  buildToolFormControls(activeTool);
+  toast(`Loaded example for ${activeTool.name}`);
+});
+
+$("#btn-run-example")?.addEventListener("click", () => {
+  if (!activeTool) return;
+  const ex = TOOL_EXAMPLES[activeTool.name]?.request ?? exampleArgs(activeTool.name);
+  $("#trargs").value = JSON.stringify(ex, null, 2);
+  buildToolFormControls(activeTool);
+  runToolCall();
+});
+
+$("#wb-btn-reset")?.addEventListener("click", () => {
+  if (!activeTool) return;
+  $("#trargs").value = "{}";
+  buildToolFormControls(activeTool);
+});
+
+$("#wb-btn-copyargs")?.addEventListener("click", () => {
+  navigator.clipboard.writeText($("#trargs").value).then(() => toast("Arguments JSON copied"));
+});
+
+$("#btn-copy-out")?.addEventListener("click", () => {
+  navigator.clipboard.writeText($("#trout").innerText).then(() => toast("Output copied"));
+});
+
+$("#btn-clear-out")?.addEventListener("click", () => {
+  $("#trout").textContent = "(Output cleared)";
+  $("#trstat").innerHTML = "";
+});
+
+$("#trargs").addEventListener("input", (e) => {
+  try {
+    JSON.parse(e.target.value);
+    $("#json-valid-stat").textContent = "Valid JSON";
+    $("#json-valid-stat").className = "dim";
+  } catch (err) {
+    $("#json-valid-stat").textContent = "Invalid JSON: " + err.message;
+    $("#json-valid-stat").className = "no";
+  }
+});
 
 $("#tfilter").oninput = renderTools;
 $("#tflavor").onchange = loadTools;
@@ -2959,17 +4253,535 @@ $("#twire").onclick = () => {
 };
 $$("#v-tools th[data-k]").forEach((th) => th.onclick = () => { tsort = { k: th.dataset.k, d: tsort.k === th.dataset.k ? -tsort.d : 1 }; renderTools(); });
 $("#ttb").onclick = (ev) => {
-  const run = ev.target.closest("button[data-run]");
-  if (run) {
-    $("#trname").value = run.dataset.run;
-    $("#trargs").value = JSON.stringify(exampleArgs(run.dataset.run), null, 2);
-    $("#trgo").scrollIntoView({ block: "nearest" });
-    return;
-  }
   const tr = ev.target.closest("tr[data-tool]");
-  if (tr) { toolOpen = toolOpen === tr.dataset.tool ? null : tr.dataset.tool; renderTools(); }
+  if (tr) {
+    const tool = toolList.find((t) => t.name === tr.dataset.tool);
+    if (tool) { renderActiveTool(tool); $("#tool-workbench")?.scrollIntoView({ block: "nearest" }); }
+  }
 };
 enter.tools = () => { if (!toolList.length) loadTools(); else renderTools(); };
+
+// =====================================================================
+// CHAT TOOLS INTEGRATION & DRAWER
+// =====================================================================
+const chatToolsDrawer = $("#chat-tools-drawer");
+function openChatToolsDrawer(preselectedTool = null) {
+  if (!toolList.length) loadTools();
+  const sel = $("#chat-tool-select");
+  sel.innerHTML = toolList.map((t) => `<option value="${esc(t.name)}">${esc(t.name)} (${esc(t.kind)})</option>`).join("");
+  if (preselectedTool && toolList.some((t) => t.name === preselectedTool)) {
+    sel.value = preselectedTool;
+  }
+  updateChatToolDrawerFields();
+  openSheet(chatToolsDrawer);
+}
+function updateChatToolDrawerFields() {
+  const name = $("#chat-tool-select").value;
+  const tool = toolList.find((t) => t.name === name);
+  $("#chat-tool-desc").textContent = tool?.description || "";
+  const ex = TOOL_EXAMPLES[name]?.request ?? exampleArgs(name);
+  $("#chat-tool-args").value = JSON.stringify(ex, null, 2);
+  $("#chat-tool-res-preview").hidden = true;
+}
+$("#chat-tool-select")?.addEventListener("change", updateChatToolDrawerFields);
+$("#chat-tool-load-ex")?.addEventListener("click", updateChatToolDrawerFields);
+
+$("#chat-tool-run-insert")?.addEventListener("click", async () => {
+  const name = $("#chat-tool-select").value;
+  let args;
+  try { args = JSON.parse($("#chat-tool-args").value); } catch { args = $("#chat-tool-args").value; }
+  toast(`Running ${name}…`);
+  try {
+    const d = await req("/v1/tools/execute", { method: "POST", admin: true, body: { name, arguments: args } });
+    const r = d.results?.[0] ?? {};
+    const resSnippet = JSON.stringify(r.ok ? r.result : { error: r.error }, null, 2);
+    const snippet = `\`\`\`tool:${name}\nRequest: ${JSON.stringify(args, null, 2)}\nResponse: ${resSnippet}\n\`\`\`\n`;
+    const cur = $("#cinput").value;
+    $("#cinput").value = cur ? cur + "\n\n" + snippet : snippet;
+    autosize($("#cinput"));
+    closeSheets();
+    toast(`Inserted ${name} result into chat message`);
+  } catch (err) {
+    toast(`Tool execute error: ${err.message}`, true);
+  }
+});
+
+$("#chat-tool-insert-prompt")?.addEventListener("click", () => {
+  const name = $("#chat-tool-select").value;
+  const args = $("#chat-tool-args").value.trim();
+  const directive = `Use the ${name} tool with arguments: ${args}`;
+  const cur = $("#cinput").value;
+  $("#cinput").value = cur ? cur + "\n" + directive : directive;
+  autosize($("#cinput"));
+  closeSheets();
+  toast(`Inserted ${name} directive into prompt`);
+});
+
+// =====================================================================
+// APP BUILDER STUDIO & LIVE SANDBOX RUNNER
+// =====================================================================
+const DEFAULT_TECHNIQUES = [
+  { id: "spa-single", name: "Single-File Standalone SPA", cat: "Architecture", desc: "Complete HTML5 + CSS + ES2024 single-file app with zero build step.", rules: "Produce a single self-contained HTML file with embedded CSS and modern JavaScript. All styling and logic must be inline or via reliable ESM imports. Never leave placeholder code." },
+  { id: "reactive-comp", name: "Component-Driven Reactive", cat: "Architecture", desc: "Modular state-driven UI components with clean unidirectional data flow.", rules: "Structure the app into reusable components with declarative state bindings and reactive re-rendering." },
+  { id: "micro-widget", name: "Micro-App Embed Widget", cat: "Embed", desc: "Self-contained sandboxed widget with postMessage event bus.", rules: "Create an isolated widget that fits into dashboards or iframes with responsive boundaries." },
+  { id: "api-runner", name: "API-Driven Tool Runner", cat: "Dashboard", desc: "Client-first control surface communicating with REST APIs & tools.", rules: "Include interactive controls, live parameter testing, network latency monitoring, and response viewing." },
+  { id: "tdd-spec", name: "Step-by-Step TDD Architecture", cat: "Testing", desc: "Specification-driven build with embedded test runner and verified assertions.", rules: "Write test cases and an embedded test assertion suite that proves functionality and shows all green tests." },
+  { id: "offline-pwa", name: "Offline-First Local Storage", cat: "Persistence", desc: "Client-side application using localStorage / IndexedDB with export/import.", rules: "Persist all user data and state to localStorage with automatic schema migration, import, and export." },
+];
+
+const DEFAULT_TECHNOLOGIES = [
+  { id: "preact-tailwind", name: "Preact + Tailwind CSS", cat: "UI Framework", desc: "Reactive component UI with Tailwind styling via ESM.", tags: '<script src="https://cdn.tailwindcss.com"></script>\n<script type="module" src="https://esm.sh/htm/preact/standalone"></script>', template: '<div id="app"></div>\n<script type="module">\nimport { html, render, useState } from "https://esm.sh/htm/preact/standalone";\nfunction App() {\n  const [count, setCount] = useState(0);\n  return html`<div class="p-6 max-w-sm mx-auto bg-slate-900 text-white rounded-xl shadow-lg flex flex-col items-center gap-4">\n    <h1 class="text-xl font-bold">Preact + Tailwind</h1>\n    <button class="px-4 py-2 bg-emerald-500 rounded font-semibold" onClick=${() => setCount(count + 1)}>Count: ${count}</button>\n  </div>`;\n}\nrender(html`<${App} />`, document.getElementById("app"));\n</script>' },
+  { id: "alpine-pico", name: "Alpine.js + PicoCSS", cat: "Minimalist UI", desc: "Minimal declarative reactivity with semantic responsive styling.", tags: '<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css">\n<script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>', template: '<main class="container" x-data="{ count: 0 }">\n  <h2>Alpine + PicoCSS</h2>\n  <button @click="count++" x-text="`Clicked: ${count}`"></button>\n</main>' },
+  { id: "vanilla-modules", name: "Vanilla ES2024 + CSS Modules", cat: "Native Web", desc: "Modern native web components, CSS Grid/Flexbox, zero dependencies.", tags: '', template: '<div class="app-container">\n  <h1>Vanilla Modern App</h1>\n  <button id="btn">Click me</button>\n</div>' },
+  { id: "petite-vue", name: "Vue 3 Petite + UnoCSS", cat: "Progressive UI", desc: "Progressive minimal reactive framework with instant inline templates.", tags: '<script src="https://unpkg.com/petite-vue" defer init></script>', template: '<div v-scope="{ count: 0 }">\n  <button @click="count++">{{ count }}</button>\n</div>' },
+  { id: "canvas-2d", name: "HTML5 Canvas 2D / WebGL", cat: "Graphics & Games", desc: "High performance double-buffered 2D canvas with animation loop.", tags: '', template: '<canvas id="c" width="600" height="400" style="background:#111;border-radius:8px"></canvas>' },
+  { id: "chart-viz", name: "Chart.js / Visual Analytics", cat: "Data Viz", desc: "Interactive telemetry and data visualization charts.", tags: '<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>', template: '<canvas id="myChart"></canvas>' },
+];
+
+let selTechnique = DEFAULT_TECHNIQUES[0].id;
+let selTech = DEFAULT_TECHNOLOGIES[0].id;
+
+const appBuilderDrawer = $("#app-builder-drawer");
+function openAppBuilder() {
+  renderAppBuilderLists();
+  openSheet(appBuilderDrawer);
+}
+
+function getSavedTechniques() {
+  return store.get("user_techniques", []);
+}
+function getSavedTechnologies() {
+  return store.get("user_tech", []);
+}
+
+function renderAppBuilderLists() {
+  const techniques = [...DEFAULT_TECHNIQUES, ...getSavedTechniques()];
+  const techList = [...DEFAULT_TECHNOLOGIES, ...getSavedTechnologies()];
+
+  const tecContainer = $("#builder-techniques-list");
+  if (tecContainer) {
+    tecContainer.innerHTML = techniques.map((t) => `
+      <div class="tech-card ${t.id === selTechnique ? "selected" : ""}" data-technique="${esc(t.id)}">
+        <div class="tech-card-h">
+          <b>${esc(t.name)}</b>
+          <span class="badge ${t.custom ? "adm" : ""}" style="font-size:9.5px">${t.custom ? "custom" : esc(t.cat)}</span>
+        </div>
+        <div class="tech-card-desc">${esc(t.desc)}</div>
+      </div>
+    `).join("");
+  }
+
+  const techContainer = $("#builder-tech-list");
+  if (techContainer) {
+    techContainer.innerHTML = techList.map((t) => `
+      <div class="tech-card ${t.id === selTech ? "selected" : ""}" data-tech="${esc(t.id)}">
+        <div class="tech-card-h">
+          <b>${esc(t.name)}</b>
+          <span class="badge ${t.custom ? "adm" : ""}" style="font-size:9.5px">${t.custom ? "custom" : esc(t.cat)}</span>
+        </div>
+        <div class="tech-card-desc">${esc(t.desc)}</div>
+      </div>
+    `).join("");
+  }
+}
+
+$("#builder-techniques-list")?.addEventListener("click", (e) => {
+  const card = e.target.closest("[data-technique]");
+  if (card) {
+    selTechnique = card.dataset.technique;
+    renderAppBuilderLists();
+  }
+});
+$("#builder-tech-list")?.addEventListener("click", (e) => {
+  const card = e.target.closest("[data-tech]");
+  if (card) {
+    selTech = card.dataset.tech;
+    renderAppBuilderLists();
+  }
+});
+
+$("#builder-presets")?.addEventListener("change", (e) => {
+  if (e.target.value) $("#builder-prompt").value = e.target.value;
+});
+
+$("#btn-generate-app")?.addEventListener("click", () => {
+  const allTechniques = [...DEFAULT_TECHNIQUES, ...getSavedTechniques()];
+  const allTech = [...DEFAULT_TECHNOLOGIES, ...getSavedTechnologies()];
+  const technique = allTechniques.find((t) => t.id === selTechnique) || DEFAULT_TECHNIQUES[0];
+  const tech = allTech.find((t) => t.id === selTech) || DEFAULT_TECHNOLOGIES[0];
+  const goal = $("#builder-prompt").value.trim() || "Interactive Kanban Board application with local storage persistence and responsive design";
+
+  const appPrompt = [
+    `Please build a complete, production-grade interactive application based on the following specifications:`,
+    ``,
+    `BUILD TECHNIQUE: ${technique.name}`,
+    `Technique Guidelines: ${technique.rules}`,
+    ``,
+    `TECHNOLOGY STACK: ${tech.name}`,
+    tech.tags ? `Includes tags / imports: ${tech.tags}` : ``,
+    ``,
+    `APPLICATION REQUIREMENTS:`,
+    goal,
+    ``,
+    `CRITICAL INSTRUCTIONS:`,
+    `- Output the entire complete single-file HTML application inside a single \`\`\`html ... \`\`\` code block.`,
+    `- Zero placeholders, zero TODOs. Must run directly in browser immediately.`,
+    `- Ensure beautiful modern UI with styling, responsive layout, and robust state management.`,
+  ].filter(Boolean).join("\n");
+
+  $("#pmodel").value = "free:code";
+  $("#cinput").value = appPrompt;
+  autosize($("#cinput"));
+  closeSheets();
+  go("chat");
+  sendChat();
+});
+
+// Custom Technique modal
+$("#btn-add-technique")?.addEventListener("click", () => {
+  $("#custom-technique-modal").showModal();
+});
+$("#btn-save-technique")?.addEventListener("click", (e) => {
+  e.preventDefault();
+  const name = $("#tech-name-in").value.trim();
+  const cat = $("#tech-cat-in").value.trim() || "Custom";
+  const desc = $("#tech-desc-in").value.trim();
+  const rules = $("#tech-rules-in").value.trim();
+  if (!name || !desc) { toast("Name and description required", true); return; }
+  const id = "custom-" + name.toLowerCase().replace(/[^a-z0-9]/g, "-") + "-" + Date.now().toString(36);
+  const list = getSavedTechniques();
+  list.push({ id, name, cat, desc, rules, custom: true });
+  store.set("user_techniques", list);
+  selTechnique = id;
+  $("#custom-technique-modal").close();
+  renderAppBuilderLists();
+  toast(`Saved custom technique "${name}" locally`);
+});
+
+// Custom Technology modal
+$("#btn-add-tech")?.addEventListener("click", () => {
+  $("#custom-technology-modal").showModal();
+});
+$("#btn-save-tech")?.addEventListener("click", (e) => {
+  e.preventDefault();
+  const name = $("#t-name-in").value.trim();
+  const cat = $("#t-cat-in").value.trim() || "Custom";
+  const desc = $("#t-desc-in").value.trim();
+  const tags = $("#t-tags-in").value.trim();
+  const template = $("#t-template-in").value.trim();
+  if (!name || !desc) { toast("Name and description required", true); return; }
+  const id = "custom-tech-" + name.toLowerCase().replace(/[^a-z0-9]/g, "-") + "-" + Date.now().toString(36);
+  const list = getSavedTechnologies();
+  list.push({ id, name, cat, desc, tags, template, custom: true });
+  store.set("user_tech", list);
+  selTech = id;
+  $("#custom-technology-modal").close();
+  renderAppBuilderLists();
+  toast(`Saved custom technology "${name}" locally`);
+});
+
+// Export / Import Tech Pack
+$("#btn-export-techpack")?.addEventListener("click", () => {
+  const pack = { techniques: getSavedTechniques(), technologies: getSavedTechnologies() };
+  const blob = new Blob([JSON.stringify(pack, null, 2)], { type: "application/json" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = "nokey-techpack.json";
+  a.click();
+  toast("Exported custom tech pack");
+});
+
+$("#btn-import-techpack")?.addEventListener("click", () => {
+  $("#techpack-file-in").click();
+});
+$("#techpack-file-in")?.addEventListener("change", (e) => {
+  const file = e.target.files?.[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = (ev) => {
+    try {
+      const data = JSON.parse(ev.target.result);
+      if (Array.isArray(data.techniques)) store.set("user_techniques", data.techniques);
+      if (Array.isArray(data.technologies)) store.set("user_tech", data.technologies);
+      renderAppBuilderLists();
+      toast("Imported custom tech pack successfully");
+    } catch (err) { toast("Invalid pack JSON: " + err.message, true); }
+  };
+  reader.readAsText(file);
+});
+
+// Live App Sandbox Runner
+let currentSandboxCode = "";
+function launchAppSandbox(code, title = "Application Preview") {
+  currentSandboxCode = code;
+  const modal = $("#app-sandbox-modal");
+  $("#sandbox-app-title").textContent = title;
+  const frame = $("#sandbox-iframe");
+  
+  // Inject console interceptor script
+  const wrappedCode = code.includes("<!DOCTYPE") ? code : `<!DOCTYPE html><html><head><meta charset="utf-8"><style>body{margin:0;font-family:system-ui,sans-serif}</style></head><body>${code}</body></html>`;
+  frame.srcdoc = wrappedCode;
+  
+  $("#sandbox-logs").innerHTML = `<div class="dim">App mounted in sandbox. Console output will stream here.</div>`;
+  modal.showModal();
+}
+$("#sb-close")?.addEventListener("click", () => $("#app-sandbox-modal").close());
+$("#sb-fullscreen")?.addEventListener("click", () => $("#app-sandbox-modal").classList.toggle("fullscreen"));
+$("#sb-reload")?.addEventListener("click", () => {
+  const frame = $("#sandbox-iframe");
+  frame.srcdoc = currentSandboxCode;
+  toast("Reloaded sandbox");
+});
+$("#sb-copy-code")?.addEventListener("click", () => {
+  navigator.clipboard.writeText(currentSandboxCode).then(() => toast("Copied application code"));
+});
+$("#sb-toggle-console")?.addEventListener("click", () => {
+  const c = $("#sandbox-console");
+  c.hidden = !c.hidden;
+});
+$("#sb-clear-console")?.addEventListener("click", () => {
+  $("#sandbox-logs").innerHTML = "";
+});
+
+// =====================================================================
+// PEOPLE CHAT (COMMUNITY PEER CHAT)
+// =====================================================================
+let commRoom = "general";
+let commMessages = [];
+let commEventSource = null;
+const commChannel = typeof BroadcastChannel !== "undefined" ? new BroadcastChannel("nokey-community") : null;
+
+function getCommUser() {
+  let user = store.get("comm_user", "");
+  if (!user) {
+    user = "User-" + Math.floor(1000 + Math.random() * 9000);
+    store.set("comm_user", user);
+  }
+  return user;
+}
+
+function initCommunityChat() {
+  const usernameInput = $("#comm-username");
+  if (usernameInput) {
+    usernameInput.value = getCommUser();
+    usernameInput.addEventListener("change", () => {
+      const v = usernameInput.value.trim() || "Anonymous";
+      store.set("comm_user", v);
+      toast(`Handle updated to ${v}`);
+    });
+  }
+
+  // BroadcastChannel listener
+  if (commChannel) {
+    commChannel.onmessage = (e) => {
+      if (e.data?.room === commRoom && e.data?.message) {
+        appendCommMessage(e.data.message);
+      }
+    };
+  }
+
+  connectCommSSE();
+  loadCommMessages();
+}
+
+function connectCommSSE() {
+  if (commEventSource) commEventSource.close();
+  try {
+    const url = new URL("/v1/community/stream", location.origin);
+    url.searchParams.set("room", commRoom);
+    commEventSource = new EventSource(url.toString());
+    commEventSource.onopen = () => {
+      const st = $("#comm-conn-status");
+      if (st) st.textContent = "Online (SSE)";
+    };
+    commEventSource.onmessage = (e) => {
+      try {
+        const j = JSON.parse(e.data);
+        if (j.type === "message" && j.message) {
+          appendCommMessage(j.message);
+        }
+      } catch { /* ping/comment */ }
+    };
+    commEventSource.onerror = () => {
+      const st = $("#comm-conn-status");
+      if (st) st.textContent = "Reconnecting (Relay active)";
+    };
+  } catch { /* EventSource fallback */ }
+}
+
+async function loadCommMessages() {
+  try {
+    const d = await req(`/v1/community/messages?room=${encodeURIComponent(commRoom)}&limit=100`);
+    commMessages = d.messages ?? [];
+    renderCommThread();
+  } catch (err) {
+    console.error("loadCommMessages error", err);
+  }
+}
+
+function renderCommThread() {
+  const thread = $("#comm-thread");
+  if (!thread) return;
+  thread.innerHTML = "";
+  commMessages.forEach((msg) => appendCommMessageEl(msg, thread));
+  thread.scrollTop = thread.scrollHeight;
+  const countEl = $("#comm-msg-count");
+  if (countEl) countEl.textContent = `${commMessages.length} messages`;
+}
+
+function appendCommMessage(msg) {
+  if (commMessages.some((m) => m.id === msg.id)) return;
+  commMessages.push(msg);
+  const thread = $("#comm-thread");
+  if (thread) {
+    appendCommMessageEl(msg, thread);
+    thread.scrollTop = thread.scrollHeight;
+    const countEl = $("#comm-msg-count");
+    if (countEl) countEl.textContent = `${commMessages.length} messages`;
+  }
+}
+
+function appendCommMessageEl(msg, thread) {
+  const card = document.createElement("div");
+  card.className = "comm-msg-card";
+  card.dataset.id = msg.id;
+  
+  const avatar = msg.avatar || msg.user?.slice(0, 1)?.toUpperCase() || "U";
+  const time = msg.createdAt ? new Date(msg.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "";
+  const lines = (msg.content.match(/\n/g) || []).length + 1;
+  const isLong = lines > 6 || msg.content.length > 380;
+
+  card.innerHTML = `
+    <div class="comm-msg-avatar">${esc(avatar)}</div>
+    <div class="comm-msg-body">
+      <div class="comm-msg-head">
+        <span class="comm-msg-user">${esc(msg.user || "Anonymous")}</span>
+        <span class="comm-msg-time">${esc(time)}</span>
+      </div>
+      <div class="comm-msg-text md ${isLong ? "clamped" : ""}"></div>
+      ${isLong ? `<button class="btn-expand-msg" data-act="toggle-comm-expand">Show more (${lines} lines) ▾</button>` : ""}
+      <div class="comm-reactions">
+        <button class="comm-reaction-chip" data-emoji="👍">👍 <span class="cnt">1</span></button>
+        <button class="comm-reaction-chip" data-emoji="🚀">🚀 <span class="cnt">1</span></button>
+        <button class="comm-reaction-chip comm-reaction-add" data-act="add-reaction">+ 😀</button>
+      </div>
+    </div>
+  `;
+
+  renderMd($(".comm-msg-text", card), msg.content, true);
+
+  if (isLong) {
+    const btn = card.querySelector(".btn-expand-msg");
+    const textEl = card.querySelector(".comm-msg-text");
+    btn.onclick = () => {
+      const clamped = textEl.classList.toggle("clamped");
+      btn.textContent = clamped ? `Show more (${lines} lines) ▾` : "Show less ▴";
+    };
+  }
+
+  thread.appendChild(card);
+}
+
+async function sendCommMessage() {
+  const input = $("#comm-input");
+  const content = input.value.trim();
+  if (!content) return;
+  const user = getCommUser();
+  const msgObj = {
+    room: commRoom,
+    user,
+    content,
+    avatar: "💬",
+  };
+  input.value = "";
+  input.style.height = "auto";
+  try {
+    const d = await req("/v1/community/messages", { method: "POST", body: msgObj });
+    if (d.ok && d.message) {
+      appendCommMessage(d.message);
+      commChannel?.postMessage({ room: commRoom, message: d.message });
+    }
+  } catch (err) {
+    toast(`Send failed: ${err.message}`, true);
+  }
+}
+
+$("#comm-send-btn")?.addEventListener("click", sendCommMessage);
+$("#comm-input")?.addEventListener("keydown", (e) => {
+  if (e.key === "Enter" && !e.shiftKey) {
+    e.preventDefault();
+    sendCommMessage();
+  }
+});
+$("#comm-refresh-btn")?.addEventListener("click", loadCommMessages);
+
+// Channel switching
+$("#comm-channels")?.addEventListener("click", (e) => {
+  const btn = e.target.closest("button[data-room]");
+  if (!btn) return;
+  for (const b of $$("#comm-channels button")) b.classList.toggle("active", b === btn);
+  commRoom = btn.dataset.room;
+  $("#comm-room-title").textContent = `# ${commRoom}`;
+  connectCommSSE();
+  loadCommMessages();
+});
+
+$("#comm-add-channel")?.addEventListener("click", () => {
+  $("#comm-channel-modal").showModal();
+});
+$("#btn-create-channel")?.addEventListener("click", (e) => {
+  e.preventDefault();
+  const name = $("#new-channel-name").value.trim().toLowerCase().replace(/[^a-z0-9_-]/g, "");
+  if (!name) return;
+  const list = $("#comm-channels");
+  const btn = document.createElement("button");
+  btn.className = "comm-channel-btn";
+  btn.dataset.room = name;
+  btn.innerHTML = `<span class="hash">#</span> ${esc(name)}`;
+  list.appendChild(btn);
+  $("#comm-channel-modal").close();
+  btn.click();
+  toast(`Joined #${name}`);
+});
+
+$("#comm-share-app")?.addEventListener("click", () => {
+  const input = $("#comm-input");
+  input.value += `Hey everyone, check out this application built with nokey-router App Builder:\n\`\`\`html\n<!DOCTYPE html>\n<html>\n<head><title>Community App</title></head>\n<body><h1>Hello from App Builder!</h1></body>\n</html>\n\`\`\`\n`;
+  input.focus();
+});
+
+$("#comm-share-tool")?.addEventListener("click", () => {
+  const input = $("#comm-input");
+  input.value += `Executed tool call snippet:\n\`\`\`json\n{\n  "tool": "calculate",\n  "expression": "(23 * 19) + 14",\n  "result": 451\n}\n\`\`\`\n`;
+  input.focus();
+});
+
+$("#comm-insert-code")?.addEventListener("click", () => {
+  const input = $("#comm-input");
+  input.value += `\`\`\`typescript\n// Paste code here\n\`\`\`\n`;
+  input.focus();
+});
+
+// Reactions
+$("#comm-thread")?.addEventListener("click", (e) => {
+  const chip = e.target.closest(".comm-reaction-chip");
+  if (!chip) return;
+  const cnt = chip.querySelector(".cnt");
+  if (cnt) {
+    cnt.textContent = String(Number(cnt.textContent) + 1);
+    chip.classList.add("sel");
+  } else if (chip.dataset.act === "add-reaction") {
+    const parent = chip.closest(".comm-reactions");
+    const b = document.createElement("button");
+    b.className = "comm-reaction-chip sel";
+    b.innerHTML = `🔥 <span class="cnt">1</span>`;
+    parent.insertBefore(b, chip);
+  }
+});
+
+enter.community = () => {
+  initCommunityChat();
+};
 
 // =====================================================================
 // TRACES — live tail + span waterfall
@@ -3146,6 +4958,7 @@ req = (...args) => {
 // ---- view metadata (mobile sheet) ----
 const VIEW_META = [
   ["chat", "Chat", "Stream completions", "#i-chat"],
+  ["community", "People Chat", "Real-time peer chat", "#i-users"],
   ["architect", "Architect", "Agentic admin tools", "#i-wand"],
   ["media", "Media", "Image generation", "#i-image"],
   ["plugins", "Plugins", "Mounted widgets", "#i-plug"],
@@ -3256,7 +5069,7 @@ $("#bnav").addEventListener("click", (e) => {
 });
 
 // ---- navigation sync + view transitions ----
-const PRIMARY = new Set(["chat", "architect", "media", "traces"]);
+const PRIMARY = new Set(["chat", "community", "architect", "media", "traces"]);
 const navEl = $("#nav");
 const navFit = () => navEl.classList.toggle("overflowing", navEl.scrollWidth > navEl.clientWidth + 1);
 function syncNav() {
@@ -3368,6 +5181,9 @@ addEventListener("keydown", (e) => {
 cmd("toggle theme", () => cycleTheme(), "ui");
 cmd("keyboard shortcuts", () => openKeys(), "help");
 cmd("new chat", () => { go("chat"); newChat(); }, "chat");
+cmd("people chat", () => go("community"), "community");
+cmd("app builder studio", () => openAppBuilder(), "builder");
+cmd("tools workbench", () => go("tools"), "tools");
 cmd("all views", () => openSheet(moreSheet), "nav");
 
 // ---- boot the shell ----
