@@ -1,3 +1,26 @@
+# Backlog knock-offs: /v1/probe honors its mode; workspace Run assembles the project — 2026-11-04
+
+**Probe.** The dashboard has been sending `{ mode }` to POST /v1/probe
+all along (command palette + api helper) and the server silently
+probed the smart lane's top 4 regardless. The endpoint now accepts
+`{ mode: "fast" | "smart" | "code" | "reasoning", limit: 1..12 }`,
+probes that lane, and echoes the lane actually probed (unknown modes
+fall back to smart). Verified against a local server: a code-lane
+probe returned code-lane tuples, a bogus mode fell back to smart.
+
+**Workspace Run.** Running a file used to run only the editor buffer,
+so a generated multi-file project's `<link>`/`<script src>` pointed
+nowhere. Run now assembles the project: relative stylesheet and
+script references are inlined from the workspace (marked with the
+real file name for debug origins; TypeScript siblings are transpiled
+on the way in), missing references are reported rather than silently
+dropped, and a standalone JS/TS file runs wrapped as its own app
+under its own name.
+
+Verified: harness run8 (project run inlines + transpiles siblings,
+standalone TS run) plus run4–run7, deno check + test 103/0, and the
+local probe calls above.
+
 # App Builder: file tree, live updates, transpiling, real debug output — 2026-11-04
 
 The builder could generate, but it couldn't *show* a project. Now it

@@ -6370,7 +6370,66 @@ $("#ws-save")?.addEventListener("click", async () => {
     wsRefresh();
   } catch (e) { $("#ws-stat").textContent = "save failed: " + e.message; }
 });
-$("#ws-run")?.addEventListener("click", () => { if (wsCur) launchAppSandbox($("#ws-editor").value, wsCur); });
+// Run the workspace project, not just the open buffer: an HTML file's
+// relative <link>/<script src> references are inlined from the workspace
+// (marked with data-sbx so debug origins name the real file, and with
+// data-sbx-ts when the sibling is TypeScript), and a JS/TS file runs
+// wrapped as its own app so it transpiles and debugs under its own name.
+async function wsRunProject() {
+  if (!wsCur) return;
+  const code = $("#ws-editor").value;
+  const dir = wsCur.includes("/") ? wsCur.slice(0, wsCur.lastIndexOf("/") + 1) : "";
+  if (/\.(tsx?|jsx|mjs)$/i.test(wsCur)) {
+    const isTs = /\.(tsx?|mts)$/i.test(wsCur) || /\.jsx$/i.test(wsCur);
+    const tag = "<" + "script" + ` data-sbx="${esc(wsCur)}"${isTs ? ' data-sbx-ts="1"' : ""}>\n${code.replace(/<\/script/gi, "<\\/script")}\n` + "<" + "/script>";
+    launchAppSandbox(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>${esc(wsCur)}</title></head><body>${tag}</body></html>`, wsCur);
+    return;
+  }
+  if (!/\.html?$/i.test(wsCur)) { toast("Run works for HTML and JS/TS files", true); return; }
+  const missing = [];
+  const resolveRef = (ref) => {
+    if (/^(https?:)?\/\//i.test(ref) || ref.startsWith("data:") || ref.startsWith("/")) return null;
+    return dir + ref.replace(/^\.\//, "");
+  };
+  const readSibling = async (path) => {
+    try { const r = await wsExec("fs_read", { path }); return r.binary ? null : (r.content ?? ""); }
+    catch { return null; }
+  };
+  let doc = code;
+  // script srcs, replaced back-to-front so offsets stay valid
+  const sRe = /<[s]cript([^>]*?)src=["']([^"']+)["']([^>]*)>\s*<\/[s]cript>/gi;
+  const sTags = [];
+  let sm;
+  while ((sm = sRe.exec(code))) sTags.push({ full: sm[0], src: sm[2], at: sm.index });
+  for (let i = sTags.length - 1; i >= 0; i--) {
+    const t = sTags[i];
+    const path = resolveRef(t.src);
+    if (!path) continue;
+    const content = await readSibling(path);
+    if (content === null) { missing.push(t.src); continue; }
+    const isTs = /\.(tsx?|mts)$/i.test(path) || /\.jsx$/i.test(path);
+    const tag = "<" + "script" + ` data-sbx="${esc(path)}"${isTs ? ' data-sbx-ts="1"' : ""}>\n${content.replace(/<\/script/gi, "<\\/script")}\n` + "<" + "/script>";
+    doc = doc.slice(0, t.at) + tag + doc.slice(t.at + t.full.length);
+  }
+  // stylesheet links
+  const lRe = /<link[^>]*href=["']([^"']+)["'][^>]*>/gi;
+  const lTags = [];
+  let lm;
+  while ((lm = lRe.exec(doc))) lTags.push({ full: lm[0], href: lm[1], at: lm.index });
+  for (let i = lTags.length - 1; i >= 0; i--) {
+    const t = lTags[i];
+    if (!/\.css($|\?)/i.test(t.href)) continue;
+    const path = resolveRef(t.href);
+    if (!path) continue;
+    const content = await readSibling(path);
+    if (content === null) { missing.push(t.href); continue; }
+    doc = doc.slice(0, t.at) + `<style data-sbx="${esc(path)}">\n${content}\n</style>` + doc.slice(t.at + t.full.length);
+  }
+  if (missing.length) toast("Not in the workspace (left as-is): " + missing.join(", "));
+  launchAppSandbox(doc, wsCur);
+}
+
+$("#ws-run")?.addEventListener("click", () => { if (wsCur) wsRunProject(); });
 $("#ws-dl")?.addEventListener("click", () => {
   if (!wsCur) return;
   const a = document.createElement("a");

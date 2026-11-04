@@ -2716,8 +2716,8 @@ async function recordTupleFailure(tupleId: string, errMsg: string): Promise<void
   });
 }
 
-async function runCanaryProbeOnTopCandidates(limit: number = 4) {
-  const topSmart = (await getRankedCandidates("smart", true)).slice(0, limit);
+async function runCanaryProbeOnTopCandidates(limit: number = 4, mode: RoutingMode = "smart") {
+  const topSmart = (await getRankedCandidates(mode, true)).slice(0, limit);
   const probePrompt = [
     {
       role: "user",
@@ -4432,7 +4432,20 @@ honoApp.delete("/v1/tools/forge/:name", requireAdmin, async (c) => {
 });
 
 honoApp.post("/v1/probe", requireAdmin, async (c) => {
-  const probeResults = await runCanaryProbeOnTopCandidates(4);
+  // Honors the requested lane: { mode: "fast" | "smart" | "code" |
+  // "reasoning", limit: 1..12 }. Unknown modes fall back to smart rather
+  // than failing, and the response reports the lane actually probed —
+  // the dashboard has been sending { mode } all along.
+  let mode: RoutingMode = "smart";
+  let limit = 4;
+  try {
+    const b = await c.req.json();
+    if (["fast", "smart", "code", "reasoning"].includes(b?.mode)) mode = b.mode as RoutingMode;
+    if (typeof b?.limit === "number") limit = Math.min(12, Math.max(1, Math.floor(b.limit)));
+  } catch {
+    // no body: defaults apply
+  }
+  const probeResults = await runCanaryProbeOnTopCandidates(limit, mode);
   const results = probeResults
     .map((r) => {
       if (r.status === "fulfilled" && r.value) {
@@ -4445,7 +4458,7 @@ honoApp.post("/v1/probe", requireAdmin, async (c) => {
       return null;
     })
     .filter((x) => x !== null);
-  return c.json({ status: "probe_complete", results });
+  return c.json({ status: "probe_complete", mode, results });
 });
 
 honoApp.post("/v1/sync", requireAdmin, async (c) => {
