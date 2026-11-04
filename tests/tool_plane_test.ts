@@ -183,18 +183,19 @@ test("GET /v1/tools publishes the executable registry, aliases and vendor wire s
   try {
     const data = await getJson("/v1/tools");
     if (data.object !== "list") throw new Error(`object ${data.object}`);
-    if (data.plane !== "asck-t-v1") throw new Error(`plane ${data.plane}`);
+    if (data.plane !== "asck-t-v2") throw new Error(`plane ${data.plane}`);
     if (data.enabled !== true) throw new Error("plane disabled by default");
     if (!(data.agent.max_rounds >= 1)) throw new Error(`max_rounds ${data.agent.max_rounds}`);
-    if (!Array.isArray(data.agent.auto_tools) || !data.agent.auto_tools.includes("math_evaluate")) {
+    if (!Array.isArray(data.agent.auto_tools) || !data.agent.auto_tools.includes("calculate")) {
       throw new Error(`auto_tools ${JSON.stringify(data.agent.auto_tools)}`);
     }
 
     const byName = new Map<string, any>(data.data.map((t: any) => [t.name, t]));
     for (const name of [
-      "math_evaluate", "math_statistics", "text_similarity", "text_extract", "json_query",
-      "json_validate", "json_transform", "time_convert", "crypto_digest", "crypto_id",
-      "encode_transform", "encode_jwt", "random_sample", "router_capabilities",
+      "calculate", "data", "text", "time", "crypto", "web_search", "web_fetch", "http_request",
+      "fs_read", "fs_write", "fs_patch", "fs_grep", "fs_list", "fs_delete", "clipboard",
+      "memory_write", "memory_recall", "memory_forget", "memory_graph", "rag_index",
+      "rag_search", "rag_collections", "embed", "task", "router_capabilities",
       "router_catalog", "router_health", "router_models", "router_endpoints", "router_lane",
     ]) {
       if (!byName.has(name)) throw new Error(`missing tool ${name}`);
@@ -206,14 +207,14 @@ test("GET /v1/tools publishes the executable registry, aliases and vendor wire s
       if (!Array.isArray(t.aliases)) throw new Error(`aliases missing for ${t.name}`);
       if (typeof t.deterministic !== "boolean" || typeof t.admin !== "boolean") throw new Error(`flags for ${t.name}`);
     }
-    const calc = byName.get("math_evaluate");
+    const calc = byName.get("calculate");
     if (calc.parameters?.properties?.expression?.type !== "string") throw new Error("schema not published");
     if (!calc.aliases.includes("math.evaluate")) throw new Error(`aliases ${JSON.stringify(calc.aliases)}`);
-    if (calc.deterministic !== true) throw new Error("math_evaluate must be deterministic");
+    if (calc.deterministic !== true) throw new Error("calculate must be deterministic");
 
     // Vendor projections, one registry.
     if (data.wire.flavor !== "openai") throw new Error(`default flavor ${data.wire.flavor}`);
-    const wireMath = data.wire.tools.find((t: any) => t.function?.name === "math_evaluate");
+    const wireMath = data.wire.tools.find((t: any) => t.function?.name === "calculate");
     if (wireMath?.type !== "function") throw new Error("openai projection broken");
     if (!wireMath.function.parameters?.properties?.expression) throw new Error("openai projection lost the schema");
 
@@ -221,7 +222,7 @@ test("GET /v1/tools publishes the executable registry, aliases and vendor wire s
     if (slim.data.some((t: any) => "parameters" in t)) throw new Error("schemas=0 still published schemas");
     if (slim.wire.flavor !== "gemini") throw new Error(`flavor ${slim.wire.flavor}`);
     // Gemini wraps the whole registry in one functionDeclarations envelope.
-    const gem = slim.wire.tools[0]?.functionDeclarations?.find((t: any) => t.name === "math_evaluate");
+    const gem = slim.wire.tools[0]?.functionDeclarations?.find((t: any) => t.name === "calculate");
     if (gem?.parameters?.properties?.expression?.type !== "STRING") {
       throw new Error(`gemini types not uppercased: ${JSON.stringify(gem)}`);
     }
@@ -230,13 +231,13 @@ test("GET /v1/tools publishes the executable registry, aliases and vendor wire s
     }
 
     const strict = await getJson("/v1/tools?flavor=openai-strict");
-    const strictMath = strict.wire.tools.find((t: any) => t.function?.name === "math_evaluate");
+    const strictMath = strict.wire.tools.find((t: any) => t.function?.name === "calculate");
     if (strictMath?.function?.strict !== true) throw new Error("strict projection did not set strict:true");
     if (strictMath.function.parameters?.additionalProperties !== false) throw new Error("strict projection not closed");
     if (!Array.isArray(strictMath.function.parameters?.required)) throw new Error("strict projection dropped required");
 
     const anthropic = await getJson("/v1/tools?flavor=anthropic");
-    const ant = anthropic.wire.tools.find((t: any) => t.name === "math_evaluate");
+    const ant = anthropic.wire.tools.find((t: any) => t.name === "calculate");
     if (!ant?.input_schema?.properties?.expression) throw new Error("anthropic projection missing input_schema");
     if (anthropic.wire.flavor !== "anthropic") throw new Error("anthropic flavor not echoed");
   } finally {
@@ -282,7 +283,7 @@ test("POST /v1/tools/execute runs built-ins and reports the repair ladder it use
     const res = await app.fetch(new Request("https://router.test/v1/tools/execute", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ name: "math_evaluate", arguments: { expression: "2^10 + 1" } }),
+      body: JSON.stringify({ name: "calculate", arguments: { expression: "2^10 + 1" } }),
     }));
     if (res.status !== 200) throw new Error(`status ${res.status}`);
     if (!/^00-[0-9a-f]{32}-[0-9a-f]{16}-01$/.test(res.headers.get("traceparent") ?? "")) throw new Error("no traceparent");
@@ -291,7 +292,7 @@ test("POST /v1/tools/execute runs built-ins and reports the repair ladder it use
       throw new Error(`envelope ${JSON.stringify(data).slice(0, 240)}`);
     }
     const r = data.results[0];
-    if (r.name !== "math_evaluate" || r.ok !== true) throw new Error(JSON.stringify(r));
+    if (r.name !== "calculate" || r.ok !== true) throw new Error(JSON.stringify(r));
     if (r.result?.value !== 1025) throw new Error(`value ${JSON.stringify(r.result)}`);
     if (r.strategy !== "native") throw new Error(`strategy ${r.strategy}`);
     if (!(r.ms >= 0) || !(r.bytes > 0)) throw new Error(`telemetry ${JSON.stringify(r)}`);
@@ -302,9 +303,9 @@ test("POST /v1/tools/execute runs built-ins and reports the repair ladder it use
     // markdown fence — what real models actually emit.
     const batch = await execute({
       calls: [
-        { id: "call_a", function: { name: "math.evaluate", arguments: '```json\n{"expression": "6*7"}\n```' } },
-        { id: "call_b", function: { name: "crypto_digest", arguments: { algorithm: "sha-256", data: "abc" } } },
-        { id: "call_c", name: "json_query", arguments: { data: { a: { b: [10, 20, 30] } }, path: "$.a.b[1]" } },
+        { id: "call_a", function: { name: "calculate", arguments: '```json\n{"expression": "6*7"}\n```' } },
+        { id: "call_b", function: { name: "crypto", arguments: { op: "digest", algorithm: "sha-256", data: "abc" } } },
+        { id: "call_c", name: "data", arguments: { op: "query", data: { a: { b: [10, 20, 30] } }, path: "$.a.b[1]" } },
       ],
     });
     if (batch.count !== 3 || batch.ok !== true) throw new Error(`batch ${JSON.stringify(batch).slice(0, 400)}`);
@@ -312,10 +313,10 @@ test("POST /v1/tools/execute runs built-ins and reports the repair ladder it use
     if (a.id !== "call_a" || a.result?.value !== 42) throw new Error(JSON.stringify(a));
     if (a.strategy !== "extract") throw new Error(`fenced arguments used strategy ${a.strategy}`);
     if (!a.repairs.includes("fence-or-prose")) throw new Error(`repairs ${JSON.stringify(a.repairs)}`);
-    if (b.result?.digest !== "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad") {
+    if (b.result?.hex !== "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad") {
       throw new Error(`digest ${JSON.stringify(b.result)}`);
     }
-    if (!String(JSON.stringify(cq.result)).includes("20")) throw new Error(`json_query ${JSON.stringify(cq.result)}`);
+    if (!String(JSON.stringify(cq.result)).includes("20")) throw new Error(`data query ${JSON.stringify(cq.result)}`);
   } finally {
     restoreMock();
   }
@@ -328,8 +329,8 @@ test("POST /v1/tools/execute reports failures per call so a model can retry", as
       calls: [
         { id: "u", name: "get_weather", arguments: { city: "Paris" } },
         { id: "n", name: "json_querry", arguments: { data: {}, path: "$.a" } },
-        { id: "i", name: "crypto_digest", arguments: { algorithm: "sha-256" } },
-        { id: "e", name: "time_convert", arguments: { value: "sometime last tuesday-ish" } },
+        { id: "i", name: "fs_read", arguments: {} },
+        { id: "e", name: "time", arguments: { op: "parse", value: "sometime last tuesday-ish" } },
       ],
     });
     if (data.ok !== false) throw new Error("batch reported ok despite failures");
@@ -341,16 +342,16 @@ test("POST /v1/tools/execute reports failures per call so a model can retry", as
     // A one-character typo has to come back with the tool the model meant, so
     // the next round can call it instead of guessing again.
     if (nearMiss.ok !== false || nearMiss.code !== "UNKNOWN_TOOL") throw new Error(JSON.stringify(nearMiss));
-    if (nearMiss.suggestions?.[0]?.name !== "json_query") {
+    if (nearMiss.suggestions?.[0]?.name !== "data") {
       throw new Error(`no fuzzy suggestion for a near miss: ${JSON.stringify(nearMiss.suggestions)}`);
     }
     if (!(nearMiss.suggestions[0].score > 0.6 && nearMiss.suggestions[0].score < 1)) {
       throw new Error(`suggestion score ${nearMiss.suggestions[0].score}`);
     }
-    if (!/json_query/.test(String(nearMiss.error))) throw new Error(`error text lost the suggestion: ${nearMiss.error}`);
+    if (!/data/.test(String(nearMiss.error))) throw new Error(`error text lost the suggestion: ${nearMiss.error}`);
 
     if (invalid.ok !== false || invalid.code !== "INVALID_ARGUMENTS") throw new Error(JSON.stringify(invalid));
-    if (!invalid.issues?.some((i: any) => i.keyword === "required" && String(i.path).includes("data"))) {
+    if (!invalid.issues?.some((i: any) => i.keyword === "required" && String(i.path).includes("path"))) {
       throw new Error(`issues ${JSON.stringify(invalid.issues)}`);
     }
 
@@ -359,9 +360,9 @@ test("POST /v1/tools/execute reports failures per call so a model can retry", as
 
     // A tool can succeed while the value it computed failed: the expression
     // evaluator reports per-expression errors instead of throwing.
-    const partial = await execute({ name: "math_evaluate", arguments: { expression: "2+" } });
+    const partial = await execute({ name: "calculate", arguments: { expression: "2+" } });
     if (partial.results[0].ok !== true) throw new Error(`expression failure became a tool failure: ${JSON.stringify(partial.results[0])}`);
-    if (partial.results[0].result?.ok !== false) throw new Error(`per-expression error lost: ${JSON.stringify(partial.results[0].result)}`);
+    if (typeof partial.results[0].result?.error !== "string") throw new Error(`per-expression error lost: ${JSON.stringify(partial.results[0].result)}`);
 
     // Unusable request bodies stay 200 with a shaped envelope.
     const empty = await execute({});
@@ -423,7 +424,7 @@ test("execution stays bounded: deadlines are enforced and oversized inputs are c
 
     // Inclusive bounds are clamped and recorded, so a model cannot make a tool
     // fan out without limit.
-    const batch = await execute({ name: "math_evaluate", arguments: { expressions: new Array(5000).fill("1+1") } });
+    const batch = await execute({ name: "calculate", arguments: { expressions: new Array(5000).fill("1+1") } });
     if (batch.results[0].ok !== true) throw new Error(JSON.stringify(batch.results[0]));
     if (batch.results[0].result.count !== 64) throw new Error(`batch not clamped: ${batch.results[0].result.count}`);
     if (!batch.results[0].repairs.some((r: string) => r.includes("maxItems"))) throw new Error("clamp not reported");
@@ -433,22 +434,22 @@ test("execution stays bounded: deadlines are enforced and oversized inputs are c
     const oversized = await app.fetch(new Request("https://router.test/v1/tools/execute", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ name: "crypto_digest", arguments: { data: "x".repeat(700_000) } }),
+      body: JSON.stringify({ name: "crypto", arguments: { data: "x".repeat(700_000) } }),
     }));
     if (oversized.status !== 413) throw new Error(`oversized body -> ${oversized.status}`);
 
-    const sample = await execute({ name: "random_sample", arguments: { count: 20_000, kind: "numbers" } });
+    const sample = await execute({ name: "crypto", arguments: { op: "id", count: 20_000, bogus: 1 } });
     if (sample.results[0].ok !== true) throw new Error(JSON.stringify(sample.results[0]));
-    if (sample.results[0].result.count !== 10_000) throw new Error(`sample not clamped: ${sample.results[0].result.count}`);
+    if (sample.results[0].result.count !== 20) throw new Error(`sample not clamped: ${sample.results[0].result.count}`);
     if (!sample.results[0].repairs.some((r: string) => r.includes("additionalProperties"))) {
       throw new Error("undeclared key was not reported as dropped");
     }
 
     // A declared default being filled is not damage: `repaired` must stay false.
-    const clean = await execute({ name: "math_evaluate", arguments: { expression: "1+1" } });
+    const clean = await execute({ name: "calculate", arguments: { expression: "1+1" } });
     if (clean.results[0].ok !== true) throw new Error(JSON.stringify(clean.results[0]));
     if (clean.results[0].repairs.some((r: string) => r.includes("maxItems"))) throw new Error("unexpected clamp");
-    const skillAfter = (await getJson("/v1/tools")).skills.math_evaluate;
+    const skillAfter = (await getJson("/v1/tools")).skills.calculate;
     if (!(skillAfter.repair_rate < 1)) throw new Error(`default fills counted as damage: ${JSON.stringify(skillAfter)}`);
   } finally {
     unregisterTool("plane_test_slow");
@@ -463,14 +464,14 @@ test("execution stays bounded: deadlines are enforced and oversized inputs are c
 test("skill memory compounds: repeated executions move calls, competence and latency", async () => {
   installMock(dead);
   try {
-    const tool = "crypto_digest";
+    const tool = "crypto";
     for (let i = 0; i < 6; i++) {
-      await execute({ name: tool, arguments: { algorithm: "sha-256", data: `sample-${i}` } });
+      await execute({ name: tool, arguments: { op: "digest", algorithm: "sha-256", data: `sample-${i}` } });
     }
     // One repaired call (single quotes) and one schema failure (missing `data`).
-    const repairedCall = await execute({ name: tool, arguments: "{'algorithm': 'sha-256', 'data': 'abc'}" });
+    const repairedCall = await execute({ name: tool, arguments: "{'op': 'digest', 'algorithm': 'sha-256', 'data': 'abc'}" });
     if (repairedCall.results[0].strategy !== "repair") throw new Error(`strategy ${repairedCall.results[0].strategy}`);
-    await execute({ name: tool, arguments: { algorithm: "sha-256" } });
+    await execute({ name: tool, arguments: { op: "not_an_op" } });
 
     const data = await getJson("/v1/tools");
     const skill = data.skills[tool];
@@ -517,7 +518,7 @@ test("mesh introspection tools answer from live router state", async () => {
     if (data.ok !== true) throw new Error(`mesh tools failed: ${JSON.stringify(data.results).slice(0, 500)}`);
     const [health, catalog, models, lane, endpoints, caps] = data.results;
 
-    if (health.result?.tool_plane?.name !== "ASCK-T v1") {
+    if (health.result?.tool_plane?.name !== "ASCK-T v2") {
       throw new Error(`router_health ${JSON.stringify(health.result).slice(0, 240)}`);
     }
     if (!(health.result.tool_plane.builtin_tools >= 19)) throw new Error(`builtin_tools ${health.result.tool_plane.builtin_tools}`);
@@ -560,7 +561,7 @@ test("chat with tools:\"auto\" attaches built-ins, executes the calls and loops 
   const good = await pickHealthyUrl();
   const seen: any[] = [];
   installMock(scripted(good, (_payload, call) =>
-    call === 0 ? toolCallCompletion("math_evaluate", '{"expression":"17*3"}') : answerCompletion("Seventeen times three is 51."), seen));
+    call === 0 ? toolCallCompletion("calculate", '{"expression":"17*3"}') : answerCompletion("Seventeen times three is 51."), seen));
   try {
     const res = await app.fetch(chatRequest({
       model: "free:smart",
@@ -580,7 +581,7 @@ test("chat with tools:\"auto\" attaches built-ins, executes the calls and loops 
     if (data.telemetry.tool_rounds !== 1) throw new Error(`telemetry ${JSON.stringify(data.telemetry)}`);
     const executed = data.nokey.tools_executed;
     if (executed?.length !== 1) throw new Error(`tools_executed ${JSON.stringify(executed)}`);
-    if (executed[0].tool !== "math_evaluate" || executed[0].ok !== true || executed[0].round !== 1) {
+    if (executed[0].tool !== "calculate" || executed[0].ok !== true || executed[0].round !== 1) {
       throw new Error(JSON.stringify(executed[0]));
     }
     if (typeof executed[0].ms !== "number" || typeof executed[0].repaired !== "boolean") {
@@ -590,7 +591,7 @@ test("chat with tools:\"auto\" attaches built-ins, executes the calls and loops 
     if (seen.length !== 2) throw new Error(`expected exactly 2 upstream calls, saw ${seen.length}`);
     const first = seen[0];
     const firstNames = (first.tools ?? []).map((t: any) => t.function?.name);
-    if (!firstNames.includes("math_evaluate") || !firstNames.includes("json_query")) {
+    if (!firstNames.includes("calculate") || !firstNames.includes("data")) {
       throw new Error(`auto tools not declared upstream: ${JSON.stringify(firstNames)}`);
     }
     if (!first.messages.some((m: any) => m.role === "system" && /tool/i.test(String(m.content)))) {
@@ -605,7 +606,7 @@ test("chat with tools:\"auto\" attaches built-ins, executes the calls and loops 
       throw new Error(`assistant turn ${JSON.stringify(assistant)}`);
     }
     if (assistant.tool_calls[0].id !== "call_plane_1") throw new Error(`call id ${assistant.tool_calls[0].id}`);
-    if (toolMsg.role !== "tool" || toolMsg.tool_call_id !== "call_plane_1" || toolMsg.name !== "math_evaluate") {
+    if (toolMsg.role !== "tool" || toolMsg.tool_call_id !== "call_plane_1" || toolMsg.name !== "calculate") {
       throw new Error(`tool turn ${JSON.stringify(toolMsg)}`);
     }
     if (!String(toolMsg.content).includes("51")) throw new Error(`tool content ${toolMsg.content}`);
@@ -619,7 +620,7 @@ test("the agent loop keeps going for several rounds and stops at the round cap",
   const seen: any[] = [];
   // A model that never stops calling tools must be cut off by the round cap,
   // and the cut-off has to look like an ordinary tool_calls completion.
-  installMock(scripted(good, () => toolCallCompletion("crypto_id", '{"kind":"ulid"}'), seen));
+  installMock(scripted(good, () => toolCallCompletion("crypto", '{"op":"id","id_kind":"ulid"}'), seen));
   try {
     await withEnv("NOKEY_TOOL_ROUNDS", "2", async () => {
       const res = await app.fetch(chatRequest({
@@ -668,10 +669,10 @@ test("repaired tool arguments still execute and are attributed to the round", as
   // ladder has to recover it instead of erroring back at the model.
   const mangled = "Sure! Here you go:\n```json\n{'values': [3, 5, 7, 9, 100]}\n```";
   installMock(scripted(good, (_p, call) =>
-    call === 0 ? toolCallCompletion("math_statistics", mangled) : answerCompletion("the median is 7"), seen));
+    call === 0 ? toolCallCompletion("calculate", mangled) : answerCompletion("the median is 7"), seen));
   try {
     const res = await app.fetch(chatRequest({
-      model: "free:smart", stream: false, nokey_tools: ["math_statistics"],
+      model: "free:smart", stream: false, nokey_tools: ["calculate"],
       messages: [{ role: "user", content: "median of 3,5,7,9,100" }],
     }));
     const data = await asJson(res);
@@ -691,7 +692,7 @@ test("a failed tool call goes back to the model as a tool message, never as a re
   const seen: any[] = [];
   installMock(scripted(good, (_p, call) =>
     call === 0
-      ? toolCallCompletion("time_convert", '{"value":"sometime last tuesday"}', "call_bad")
+      ? toolCallCompletion("time", '{"op":"parse","value":"sometime last tuesday"}', "call_bad")
       : answerCompletion("I could not parse that date."), seen));
   try {
     const res = await app.fetch(chatRequest({
@@ -760,7 +761,7 @@ test("a round mixing built-in and client calls is handed back whole, never half-
         message: {
           role: "assistant", content: null,
           tool_calls: [
-            { id: "call_1", type: "function", function: { name: "math_evaluate", arguments: '{"expression":"1+1"}' } },
+            { id: "call_1", type: "function", function: { name: "calculate", arguments: '{"expression":"1+1"}' } },
             { id: "call_2", type: "function", function: { name: "get_weather", arguments: '{"city":"Oslo"}' } },
           ],
         },
@@ -769,7 +770,7 @@ test("a round mixing built-in and client calls is handed back whole, never half-
   try {
     const res = await app.fetch(chatRequest({
       model: "free:smart", stream: false, tools: "auto",
-      nokey_tools: ["math_evaluate"],
+      nokey_tools: ["calculate"],
       messages: [{ role: "user", content: "go" }],
     }));
     const data = await asJson(res);
@@ -785,7 +786,7 @@ test("a round mixing built-in and client calls is handed back whole, never half-
 test("a client declaration shadows a same-named built-in", async () => {
   const good = await pickHealthyUrl();
   const seen: any[] = [];
-  installMock(scripted(good, () => toolCallCompletion("math_evaluate", '{"expression":"1+1"}'), seen));
+  installMock(scripted(good, () => toolCallCompletion("calculate", '{"expression":"1+1"}'), seen));
   try {
     const data = await postJson("/v1/chat/completions", {
       model: "free:smart", stream: false,
@@ -794,12 +795,12 @@ test("a client declaration shadows a same-named built-in", async () => {
       tools: [{
         type: "function",
         function: {
-          name: "math_evaluate",
+          name: "calculate",
           description: "client-owned calculator",
           parameters: { type: "object", properties: { expression: { type: "string" } } },
         },
       }],
-      nokey_tools: ["json_query"],
+      nokey_tools: ["data"],
       messages: [{ role: "user", content: "go" }],
     });
     if (data.choices[0].finish_reason !== "tool_calls") throw new Error(`finish ${data.choices[0].finish_reason}`);
@@ -807,12 +808,12 @@ test("a client declaration shadows a same-named built-in", async () => {
     if (seen.length !== 1) throw new Error(`shadowed built-in was executed: ${seen.length} upstream calls`);
 
     const declared = (seen[0].tools ?? []).map((t: any) => t.function?.name);
-    if (declared.filter((n: string) => n === "math_evaluate").length !== 1) {
+    if (declared.filter((n: string) => n === "calculate").length !== 1) {
       throw new Error(`declaration not de-duplicated: ${JSON.stringify(declared)}`);
     }
-    const shadow = seen[0].tools.find((t: any) => t.function?.name === "math_evaluate");
+    const shadow = seen[0].tools.find((t: any) => t.function?.name === "calculate");
     if (shadow.function.description !== "client-owned calculator") throw new Error("built-in overwrote the client declaration");
-    if (!declared.includes("json_query")) throw new Error(`plane tool missing: ${JSON.stringify(declared)}`);
+    if (!declared.includes("data")) throw new Error(`plane tool missing: ${JSON.stringify(declared)}`);
   } finally {
     restoreMock();
   }
@@ -821,7 +822,7 @@ test("a client declaration shadows a same-named built-in", async () => {
 test("NOKEY_TOOL_ROUNDS=0 turns the plane into pure OpenAI passthrough", async () => {
   const good = await pickHealthyUrl();
   const seen: any[] = [];
-  installMock(scripted(good, () => toolCallCompletion("math_evaluate", '{"expression":"1+1"}'), seen));
+  installMock(scripted(good, () => toolCallCompletion("calculate", '{"expression":"1+1"}'), seen));
   try {
     await withEnv("NOKEY_TOOL_ROUNDS", "0", async () => {
       const data = await postJson("/v1/chat/completions", {
@@ -901,7 +902,7 @@ test("streaming drains a tool round quietly, reports it in-band, then streams th
       ? sseOf([{
         tool_calls: [{
           index: 0, id: "call_s1", type: "function",
-          function: { name: "math_evaluate", arguments: '{"expression":"6*7"}' },
+          function: { name: "calculate", arguments: '{"expression":"6*7"}' },
         }],
       }], "tool_calls")
       : sseOf([{ content: "The answer is 42." }], "stop"), seen));
@@ -922,7 +923,7 @@ test("streaming drains a tool round quietly, reports it in-band, then streams th
       throw new Error(`status frame carried choices: ${JSON.stringify(rounds[0].choices)}`);
     }
     if (rounds[0].nokey.round !== 1) throw new Error(`round ${rounds[0].nokey.round}`);
-    if (rounds[0].nokey.tools?.[0]?.name !== "math_evaluate" || rounds[0].nokey.tools[0].ok !== true) {
+    if (rounds[0].nokey.tools?.[0]?.name !== "calculate" || rounds[0].nokey.tools[0].ok !== true) {
       throw new Error(`tools ${JSON.stringify(rounds[0].nokey.tools)}`);
     }
     if (rounds[0].object !== "chat.completion.chunk") throw new Error(`status object ${rounds[0].object}`);
@@ -1021,13 +1022,13 @@ test("GET /health publishes the tool plane and a tool-ranked best-of list", asyn
   installMock(dead);
   try {
     const data = await getJson("/health");
-    if (data.tool_plane?.name !== "ASCK-T v1") throw new Error(`tool_plane ${JSON.stringify(data.tool_plane)}`);
+    if (data.tool_plane?.name !== "ASCK-T v2") throw new Error(`tool_plane ${JSON.stringify(data.tool_plane)}`);
     if (!(data.tool_plane.builtin_tools >= 19)) throw new Error(`builtin_tools ${data.tool_plane.builtin_tools}`);
     if (data.tool_plane.agent_rounds !== 3) throw new Error(`agent_rounds ${data.tool_plane.agent_rounds}`);
     if (data.tool_plane.auto_tools < 5) throw new Error(`auto_tools ${data.tool_plane.auto_tools}`);
     if (typeof data.tool_plane.learning !== "string") throw new Error("learning not described");
     if (!Array.isArray(data.current_best_tools)) throw new Error("missing current_best_tools");
-    if (typeof data.engine !== "string" || !data.engine.includes("toolplane")) throw new Error(`engine ${data.engine}`);
+    if (typeof data.engine !== "string" || !/toolbox|toolplane/.test(data.engine)) throw new Error(`engine ${data.engine}`);
 
     const models = await getJson("/v1/models");
     const ids = (models.data ?? []).map((m: any) => m.id);
@@ -1063,7 +1064,7 @@ test("chat traffic teaches the winning tuple's tool posterior", async () => {
   const seen: any[] = [];
   installMock(scripted(good, (_p, call) =>
     call % 2 === 0
-      ? toolCallCompletion("json_validate", '{"data":{"a":1},"schema":{"type":"object"}}', `call_v${call}`)
+      ? toolCallCompletion("data", '{"op":"validate","data":{"a":1},"schema":{"type":"object"}}', `call_v${call}`)
       : answerCompletion("valid"), seen));
   try {
     const first = await postJson("/v1/chat/completions", {
@@ -1076,9 +1077,9 @@ test("chat traffic teaches the winning tuple's tool posterior", async () => {
 
     // The tool itself is instrumented synchronously enough to poll.
     const skill = await until(
-      async () => (await getJson("/v1/tools")).skills?.json_validate,
+      async () => (await getJson("/v1/tools")).skills?.data,
       (s: any) => Boolean(s) && s.calls >= 1 && s.errors === 0,
-      "json_validate skill",
+      "data skill",
     );
     if (!(skill.competence > 0)) throw new Error(`competence never moved: ${JSON.stringify(skill)}`);
 
@@ -1109,7 +1110,7 @@ test("tool rounds and direct executions are traced inside the request trace", as
   const good = await pickHealthyUrl();
   const seen: any[] = [];
   installMock(scripted(good, (_p, call) =>
-    call === 0 ? toolCallCompletion("crypto_digest", '{"algorithm":"sha-256","data":"abc"}') : answerCompletion("hashed"), seen));
+    call === 0 ? toolCallCompletion("crypto", '{"op":"digest","algorithm":"sha-256","data":"abc"}') : answerCompletion("hashed"), seen));
   try {
     const data = await postJson("/v1/chat/completions", {
       model: "free:smart", stream: false, tools: "auto", messages: [{ role: "user", content: "hash abc" }],
@@ -1130,12 +1131,12 @@ test("tool rounds and direct executions are traced inside the request trace", as
 
     // An inbound traceparent is honoured, so a client can stitch its own trace.
     const exec = await execute(
-      { name: "time_convert", arguments: { value: "2026-11-04T12:00:00Z", to: "s" } },
+      { name: "time", arguments: { op: "convert", value: "2026-11-04T12:00:00Z" } },
       { traceparent: `00-${traceId}-0123456789abcdef-01` },
     );
     if (exec.results[0].ok !== true) throw new Error(JSON.stringify(exec.results[0]));
     if (exec.trace_id !== traceId) throw new Error(`inbound traceparent not honoured: ${exec.trace_id} != ${traceId}`);
-    if (exec.results[0].result.unix_s !== 1793793600) throw new Error(`unix_s ${exec.results[0].result.unix_s}`);
+    if (exec.results[0].result.epoch_s !== 1793793600) throw new Error(`epoch_s ${exec.results[0].result.epoch_s}`);
   } finally {
     restoreMock();
   }

@@ -1071,7 +1071,7 @@ dialog .row { margin-top: 4px; }
     <div class="kpis" id="tkpis"></div>
     <div class="row" style="margin-bottom:10px;align-items:stretch">
       <div style="display:grid;gap:6px;flex:1">
-        <input id="trname" placeholder="tool name, e.g. math_evaluate" aria-label="Tool name" spellcheck="false">
+        <input id="trname" placeholder="tool name, e.g. calculate" aria-label="Tool name" spellcheck="false">
         <textarea id="trargs" rows="4" spellcheck="false" aria-label="Tool arguments (JSON, or the mangled text a model produced)">{}</textarea>
       </div>
       <div style="display:grid;gap:6px;align-content:start">
@@ -2394,23 +2394,34 @@ enter.endpoints = () => { if (!endpoints.length) loadEndpoints(); };
 // TOOLS — the ASCK-T tool plane: registry, learned skill, live runner
 // =====================================================================
 let toolList = [], toolSkills = {}, toolTotals = {}, toolAgent = {}, toolWire = { flavor: "openai", tools: [] };
-let toolPlane = "asck-t-v1", toolEnabled = true, toolOpen = null, tsort = { k: "name", d: 1 };
+let toolPlane = "asck-t-v2", toolEnabled = true, toolOpen = null, tsort = { k: "name", d: 1 };
 
 // Seeds double as documentation: each one is a call that actually works.
 const TOOL_SEEDS = {
-  math_evaluate: { expression: "(23*19)+14" },
-  math_statistics: { values: [12, 15, 18, 22, 90], quantiles: [0.5, 0.95, 0.99] },
-  text_similarity: { query: "gpt-4o-mini", candidates: ["gpt-4o", "claude-3-5-sonnet", "gpt-4o-mini-2024"] },
-  text_extract: { text: "order 12345 shipped 2026-11-04", pattern: "\\d{4,}" },
-  json_query: { data: { a: { b: [10, 20, 30] } }, path: "$.a.b[1]" },
-  json_validate: { data: { n: "5" }, schema: { type: "object", properties: { n: { type: "integer" } }, required: ["n"] }, coerce: true },
-  json_transform: { data: { a: 1, b: null, c: [] }, compact: true, flatten: true },
-  time_convert: { now: true, to: "iso" },
-  crypto_digest: { data: "nokey-router", algorithm: "sha-256" },
-  crypto_id: { kind: "ulid", count: 2 },
-  encode_transform: { data: "hello \u2713", to: "base64" },
-  encode_jwt: { token: "eyJhbGciOiJub25lIn0.eyJzdWIiOiIxMjM0IiwiZXhwIjoxODAwMDAwMDAwfQ." },
-  random_sample: { count: 5, distribution: "normal", seed: "reproducible" },
+  calculate: { expression: "(23*19)+14" },
+  data: { op: "query", data: { a: { b: [10, 20, 30] } }, path: "$.a.b[1]" },
+  text: { op: "similarity", query: "gpt-4o-mini", candidates: ["gpt-4o", "claude-3-5-sonnet", "gpt-4o-mini-2024"] },
+  time: { op: "now" },
+  crypto: { op: "digest", algorithm: "sha-256", data: "nokey-router" },
+  web_search: { query: "deno kv", limit: 3 },
+  web_fetch: { url: "https://example.com" },
+  http_request: { method: "GET", url: "https://api.github.com/zen" },
+  fs_write: { path: "notes.md", content: "# Notes\nwritten by the tool plane\n" },
+  fs_read: { path: "notes.md" },
+  fs_list: { path: "" },
+  fs_grep: { pattern: "tool" },
+  fs_patch: { path: "notes.md", edits: [{ find: "plane", replace: "plane v2" }] },
+  fs_delete: { path: "notes.md" },
+  clipboard: { op: "set", slot: "draft", content: "hello clipboard" },
+  task: { op: "add", title: "ship ASCK-T v2", priority: "high" },
+  memory_write: { text: "The user prefers TypeScript.", tags: ["user"], importance: 0.8 },
+  memory_recall: { query: "what does the user prefer?", k: 3 },
+  memory_forget: { query: "typescript" },
+  memory_graph: { limit: 10 },
+  rag_index: { collection: "docs", docs: [{ id: "n", source: "notes", text: "The router fuses BM25 with dense vectors." }] },
+  rag_search: { collection: "docs", query: "how are vectors fused?", k: 3 },
+  rag_collections: { collection: "docs" },
+  embed: { text: "retrieval augmented generation" },
   router_capabilities: {},
   router_catalog: { mode: "tools", limit: 5 },
   router_health: { section: "tool_plane" },
