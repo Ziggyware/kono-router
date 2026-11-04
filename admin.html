@@ -1,0 +1,331 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>nokey-router · admin</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root { --bg:#08090a; --bg2:#0e1011; --line:#1f2326; --fg:#e8eadf; --dim:#6b6f63; --mid:#a3a79a; --acc:#d4ff00; --bad:#ff5c5c; }
+* { box-sizing:border-box; }
+html,body { margin:0; background:var(--bg); color:var(--fg); font:12px/1.45 "IBM Plex Mono",ui-monospace,monospace; }
+header { display:flex; gap:8px; align-items:center; padding:8px 12px; border-bottom:1px solid var(--line); flex-wrap:wrap; position:sticky; top:0; background:var(--bg); z-index:2; }
+nav { display:flex; }
+nav button { border:0; border-bottom:1px solid transparent; background:none; color:var(--dim); padding:4px 10px; font:inherit; cursor:pointer; text-transform:uppercase; letter-spacing:.08em; }
+nav button[aria-selected=true] { color:var(--acc); border-color:var(--acc); }
+input,select,button.act { background:var(--bg2); color:var(--fg); border:1px solid var(--line); font:inherit; padding:4px 8px; }
+input:focus,select:focus,button:focus-visible { outline:1px solid var(--acc); outline-offset:-1px; }
+button.act { cursor:pointer; color:var(--acc); text-transform:uppercase; letter-spacing:.06em; }
+button.act:disabled { color:var(--dim); cursor:wait; }
+a { color:var(--mid); }
+.grow { flex:1; }
+#status { color:var(--dim); min-width:16ch; text-align:right; }
+#status.bad { color:var(--bad); }
+main { padding:12px; }
+.view[hidden] { display:none; }
+.kpis { display:grid; grid-template-columns:repeat(auto-fill,minmax(150px,1fr)); border:1px solid var(--line); margin-bottom:12px; }
+.kpi { padding:8px 10px; border-right:1px solid var(--line); }
+.kpi b { display:block; font-size:18px; font-weight:500; color:var(--acc); font-variant-numeric:tabular-nums; }
+.kpi span { color:var(--dim); text-transform:uppercase; font-size:10px; letter-spacing:.08em; }
+.kpi i { font-style:normal; color:var(--mid); font-size:10px; margin-left:4px; }
+.lane { border:1px solid var(--line); margin-bottom:12px; }
+.lane h3 { margin:0; padding:6px 10px; border-bottom:1px solid var(--line); font-size:11px; font-weight:500; color:var(--acc); text-transform:uppercase; letter-spacing:.1em; }
+.lane .plots { display:grid; grid-template-columns:1fr 1fr; border-top:1px solid var(--line); }
+.lane canvas { width:100%; height:140px; display:block; }
+.lane canvas + canvas { border-left:1px solid var(--line); }
+table { width:100%; border-collapse:collapse; font-variant-numeric:tabular-nums; }
+th,td { padding:3px 8px; text-align:right; white-space:nowrap; border-bottom:1px solid var(--line); }
+th { color:var(--dim); font-weight:400; text-transform:uppercase; font-size:10px; letter-spacing:.06em; cursor:default; }
+th[data-k] { cursor:pointer; }
+td:first-child,th:first-child { text-align:left; }
+td.t { max-width:42ch; overflow:hidden; text-overflow:ellipsis; }
+tr.x td { white-space:normal; color:var(--mid); text-align:left; }
+tbody tr:hover td { background:var(--bg2); }
+.sw { display:inline-block; width:8px; height:8px; margin-right:6px; }
+.row { display:flex; gap:8px; align-items:center; margin-bottom:10px; flex-wrap:wrap; }
+pre { margin:0; padding:10px; border:1px solid var(--line); background:var(--bg2); overflow:auto; max-height:70vh; white-space:pre; tab-size:2; }
+pre.src { counter-reset:l; padding:0; }
+pre.src span { display:block; padding:0 10px; }
+pre.src span::before { counter-increment:l; content:counter(l); display:inline-block; width:6ch; margin-right:12px; color:var(--dim); text-align:right; }
+.ok { color:var(--acc); } .no { color:var(--bad); }
+@media (max-width:760px) { .lane .plots { grid-template-columns:1fr; } .lane canvas + canvas { border-left:0; border-top:1px solid var(--line); } }
+</style>
+</head>
+<body>
+<header>
+  <nav role="tablist">
+    <button role="tab" data-v="lanes" aria-selected="true">Lanes</button>
+    <button role="tab" data-v="endpoints">Endpoints</button>
+    <button role="tab" data-v="ops">Ops</button>
+    <button role="tab" data-v="source">Source</button>
+  </nav>
+  <span class="grow"></span>
+  <input id="key" type="password" autocomplete="off" aria-label="ROUTER_API_KEY" placeholder="ROUTER_API_KEY" size="18">
+  <input id="adm" type="password" autocomplete="off" aria-label="ADMIN_SECRET" placeholder="ADMIN_SECRET" size="18">
+  <select id="every" aria-label="Poll interval">
+    <option value="5000">5s</option><option value="15000" selected>15s</option><option value="60000">60s</option><option value="0">off</option>
+  </select>
+  <a href="/docs">api</a>
+  <span id="status" role="status"></span>
+</header>
+<main>
+  <section class="view" id="v-lanes"><div class="kpis" id="kpis"></div><div id="lanes"></div></section>
+  <section class="view" id="v-endpoints" hidden>
+    <div class="row"><input id="efilter" aria-label="Filter endpoints" size="32"><span id="ecount" class="grow"></span></div>
+    <table><thead><tr><th data-k="name">endpoint</th><th data-k="id">id</th><th data-k="catalog_tuples">tuples</th><th data-k="models">hints</th><th data-k="url">url</th></tr></thead><tbody id="etb"></tbody></table>
+  </section>
+  <section class="view" id="v-ops" hidden>
+    <div class="row">
+      <button class="act" data-op="probe">probe</button>
+      <button class="act" data-op="sync">sync</button>
+      <button class="act" data-op="resurrect">resurrect</button>
+      <input id="rlimit" type="number" min="1" max="200" value="6" aria-label="Resurrect limit" style="width:7ch">
+    </div>
+    <table id="otab"></table>
+    <pre id="oraw" hidden></pre>
+  </section>
+  <section class="view" id="v-source" hidden>
+    <div class="row">
+      <select id="sfile" aria-label="File"><option>main.ts</option><option>math.ts</option><option>index.html</option><option>CHANGES.md</option><option>services.json</option><option>deno.json</option></select>
+      <button class="act" id="sload">read</button><input id="sgrep" aria-label="Filter lines" size="28"><span id="smeta"></span>
+    </div>
+    <pre class="src" id="sout"></pre>
+  </section>
+</main>
+<script>
+"use strict";
+const $ = (s) => document.querySelector(s);
+const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+const store = { get(k) { try { return sessionStorage.getItem(k) || ""; } catch { return ""; } }, set(k, v) { try { sessionStorage.setItem(k, v); } catch {} } };
+const MODES = ["fast", "smart", "code", "reasoning"];
+const PAL = ["#d4ff00", "#7cc4ff", "#ff8a5c", "#c79bff", "#5cffc0"];
+const Z95 = 1.6448536269514722;
+const HMAX = 720;
+const hist = new Map(); // tupleId -> [{t, ttft, rel}]
+const kpiPrev = {};
+let health = null, endpoints = [], esort = { k: "catalog_tuples", d: -1 }, timer = 0, srcLines = [];
+
+for (const id of ["key", "adm"]) { const el = $("#" + id); el.value = store.get(id); el.oninput = () => store.set(id, el.value.trim()); }
+
+function headers(admin) {
+  const h = { "Content-Type": "application/json" };
+  const k = $("#key").value.trim(), a = $("#adm").value.trim();
+  if (k) h.Authorization = "Bearer " + k;
+  if (admin && a) h["x-admin-secret"] = a;
+  return h;
+}
+function status(msg, bad) { const s = $("#status"); s.textContent = msg; s.className = bad ? "bad" : ""; }
+async function call(path, { method = "GET", admin = false, body } = {}) {
+  const r = await fetch(path, { method, headers: headers(admin), body: body && JSON.stringify(body) });
+  const j = await r.json().catch(() => ({ error: { message: `HTTP ${r.status}` } }));
+  if (!r.ok) throw new Error(`${r.status} ${j?.error?.message ?? ""}`.trim());
+  return j;
+}
+
+const f = (n, d = 0) => Number.isFinite(n) ? n.toFixed(d) : "—";
+const ms = (n) => !Number.isFinite(n) ? "—" : n >= 1000 ? (n / 1000).toFixed(2) + "s" : n.toFixed(0) + "ms";
+const lnQ = (c, z) => Math.exp(c.logTtftMu + z * c.logTtftSigma);
+
+function record(h) {
+  const t = Date.now(), seen = new Set();
+  for (const m of MODES) for (const c of h["current_best_" + m] ?? []) {
+    if (seen.has(c.tupleId)) continue;
+    seen.add(c.tupleId);
+    const a = hist.get(c.tupleId) ?? [];
+    a.push({ t, ttft: c.ewmaTtftMs, rel: c.reliabilityDraw });
+    if (a.length > HMAX) a.shift();
+    hist.set(c.tupleId, a);
+  }
+}
+
+function kpis(h) {
+  const cv = h.coverage ?? {}, sec = h.security ?? {};
+  const items = [
+    ["endpoints", cv.configured_endpoints], ["registry", cv.registry_endpoints], ["tuples", cv.catalog_tuples],
+    ["sweep", cv.sweep_candidates], ["l1 cache", sec.l1_cache_entries],
+  ];
+  const flags = [["auth", sec.auth_enabled], ["admin guard", sec.admin_guard_enabled], ["openrouter", sec.openrouter_free_enabled], ["strict", h.control_kernel?.strict_errors]];
+  $("#kpis").innerHTML = items.map(([k, v]) => {
+    const d = Number.isFinite(kpiPrev[k]) && v !== kpiPrev[k] ? `<i>${v > kpiPrev[k] ? "+" : ""}${v - kpiPrev[k]}</i>` : "";
+    kpiPrev[k] = v;
+    return `<div class="kpi"><b>${esc(v ?? "—")}${d}</b><span>${k}</span></div>`;
+  }).join("") + flags.map(([k, v]) => `<div class="kpi"><b class="${v ? "ok" : "no"}">${v ? "on" : "off"}</b><span>${k}</span></div>`).join("")
+    + (sec.service_json_load_error ? `<div class="kpi"><b class="no">err</b><span>${esc(sec.service_json_load_error)}</span></div>` : "");
+}
+
+function lanes(h) {
+  const root = $("#lanes");
+  if (!root.children.length) root.innerHTML = MODES.map((m) => `<div class="lane" id="l-${m}"><h3>${m}</h3>
+    <table><thead><tr><th>tuple</th><th>iq</th><th>rel θ</th><th>p50</th><th>p95</th><th>σ ln</th><th>ewma ttft</th><th>tps</th><th>E[fast]</th><th>score</th><th>ctx</th><th>caps</th></tr></thead><tbody></tbody></table>
+    <div class="plots"><canvas class="pdf" aria-label="${m} TTFT log-normal densities"></canvas><canvas class="trk" aria-label="${m} EWMA TTFT history"></canvas></div></div>`).join("");
+  for (const m of MODES) {
+    const cs = h["current_best_" + m] ?? [], el = $("#l-" + m);
+    el.querySelector("tbody").innerHTML = cs.length ? cs.map((c, i) => `<tr>
+      <td class="t" title="${esc(c.tupleId)}"><span class="sw" style="background:${PAL[i % PAL.length]}"></span>${esc(c.tupleId)}</td>
+      <td>${f(c.iqEffective, 3)}</td><td>${f(c.reliabilityDraw, 3)}</td><td>${ms(lnQ(c, 0))}</td><td>${ms(lnQ(c, Z95))}</td><td>${f(c.logTtftSigma, 3)}</td>
+      <td>${ms(c.ewmaTtftMs)}</td><td>${f(c.ewmaTps, 1)}</td><td>${ms(c.expectedFastMs)}</td><td>${f(c.smartScore, 3)}</td>
+      <td>${c.contextWindow ? (c.contextWindow / 1000).toFixed(0) + "k" : "—"}</td>
+      <td>${[c.supportsReasoning && "R", c.supportsVision && "V", c.isCodingSpecialist && "C"].filter(Boolean).join("")}</td></tr>`).join("")
+      : `<tr><td colspan="12">—</td></tr>`;
+    drawPdf(el.querySelector(".pdf"), cs);
+    drawTrack(el.querySelector(".trk"), cs);
+  }
+}
+
+function canvas2d(cv) {
+  const r = cv.getBoundingClientRect(), dpr = devicePixelRatio || 1;
+  cv.width = Math.max(1, r.width * dpr); cv.height = Math.max(1, r.height * dpr);
+  const g = cv.getContext("2d"); g.setTransform(dpr, 0, 0, dpr, 0, 0);
+  g.clearRect(0, 0, r.width, r.height); g.font = '10px "IBM Plex Mono", monospace';
+  return [g, r.width, r.height];
+}
+// Shared log-time x/y axis: ticks at decades, hairline grid.
+function logAxis(g, W, H, lo, hi, horizontal) {
+  g.strokeStyle = "#1f2326"; g.fillStyle = "#6b6f63"; g.lineWidth = 1;
+  for (let e = Math.ceil(Math.log10(lo)); e <= Math.floor(Math.log10(hi)); e++) {
+    const v = 10 ** e, u = (Math.log(v) - Math.log(lo)) / (Math.log(hi) - Math.log(lo));
+    g.beginPath();
+    if (horizontal) { const x = 8 + u * (W - 16); g.moveTo(x, 4); g.lineTo(x, H - 14); g.stroke(); g.fillText(ms(v), Math.min(x + 2, W - g.measureText(ms(v)).width - 2), H - 3); }
+    else { const y = H - 14 - u * (H - 22); g.moveTo(0, y); g.lineTo(W, y); g.stroke(); g.fillText(ms(v), 4, y - 2); }
+  }
+}
+// Density of ln T ~ N(mu, sigma²); on a log-time axis this is the exact per-unit-ln(t) density.
+function drawPdf(cv, cs) {
+  const [g, W, H] = canvas2d(cv);
+  if (!cs.length) return;
+  let lo = Infinity, hi = 0;
+  for (const c of cs) { lo = Math.min(lo, lnQ(c, -3)); hi = Math.max(hi, lnQ(c, 3)); }
+  lo = Math.max(1, lo); hi = Math.max(hi, lo * 10);
+  logAxis(g, W, H, lo, hi, true);
+  const L0 = Math.log(lo), L1 = Math.log(hi), N = 240;
+  const peak = Math.max(...cs.map((c) => 1 / (Math.max(c.logTtftSigma, 1e-3) * Math.sqrt(2 * Math.PI))));
+  cs.forEach((c, i) => {
+    const s = Math.max(c.logTtftSigma, 1e-3);
+    g.strokeStyle = PAL[i % PAL.length]; g.lineWidth = i ? 1 : 1.5; g.beginPath();
+    for (let k = 0; k <= N; k++) {
+      const L = L0 + (k / N) * (L1 - L0), z = (L - c.logTtftMu) / s;
+      const p = Math.exp(-0.5 * z * z) / (s * Math.sqrt(2 * Math.PI));
+      const x = 8 + (k / N) * (W - 16), y = H - 14 - (p / peak) * (H - 22);
+      k ? g.lineTo(x, y) : g.moveTo(x, y);
+    }
+    g.stroke();
+  });
+}
+function drawTrack(cv, cs) {
+  const [g, W, H] = canvas2d(cv);
+  const series = cs.map((c) => hist.get(c.tupleId) ?? []).filter((a) => a.length);
+  if (!series.length) return;
+  const all = series.flat(), t0 = Math.min(...all.map((p) => p.t)), t1 = Math.max(t0 + 1, ...all.map((p) => p.t));
+  const vals = all.map((p) => p.ttft).filter((v) => v > 0);
+  if (!vals.length) return;
+  const lo = Math.max(1, Math.min(...vals) / 1.5), hi = Math.max(lo * 10, Math.max(...vals) * 1.5);
+  logAxis(g, W, H, lo, hi, false);
+  g.fillStyle = "#6b6f63"; g.fillText(`${Math.round((t1 - t0) / 60000)}m · ${all.length / series.length | 0}n`, W - 70, H - 3);
+  cs.forEach((c, i) => {
+    const a = hist.get(c.tupleId) ?? [];
+    if (!a.length) return;
+    g.strokeStyle = PAL[i % PAL.length]; g.fillStyle = g.strokeStyle; g.lineWidth = i ? 1 : 1.5; g.beginPath();
+    a.forEach((p, k) => {
+      const x = 40 + ((p.t - t0) / (t1 - t0)) * (W - 48);
+      const y = H - 14 - ((Math.log(Math.max(p.ttft, lo)) - Math.log(lo)) / (Math.log(hi) - Math.log(lo))) * (H - 22);
+      k ? g.lineTo(x, y) : g.moveTo(x, y);
+      if (a.length === 1) g.fillRect(x - 1.5, y - 1.5, 3, 3);
+    });
+    g.stroke();
+  });
+}
+
+async function pollHealth() {
+  try {
+    const t = performance.now();
+    health = await call("/health");
+    record(health); kpis(health); lanes(health);
+    status(`${new Date().toLocaleTimeString()} · ${Math.round(performance.now() - t)}ms`);
+  } catch (e) { status(e.message, true); }
+}
+function schedule() {
+  clearInterval(timer);
+  const ms = Number($("#every").value);
+  if (ms) timer = setInterval(() => { if (!document.hidden) pollHealth(); }, ms);
+}
+$("#every").onchange = schedule;
+
+async function loadEndpoints() {
+  try { const j = await call("/v1/endpoints"); endpoints = j.data ?? []; renderEndpoints(); if (j.error) status(j.error, true); }
+  catch (e) { status(e.message, true); }
+}
+function renderEndpoints() {
+  const q = $("#efilter").value.trim().toLowerCase();
+  const rows = endpoints.filter((e) => !q || [e.id, e.name, e.url, ...(e.models ?? [])].join(" ").toLowerCase().includes(q));
+  const { k, d } = esort, key = (e) => k === "models" ? (e.models ?? []).length : e[k];
+  rows.sort((a, b) => { const x = key(a), y = key(b); return (typeof x === "number" ? x - y : String(x).localeCompare(String(y))) * d; });
+  $("#ecount").textContent = `${rows.length}/${endpoints.length} · ${rows.reduce((s, e) => s + (e.catalog_tuples || 0), 0)} tuples`;
+  $("#etb").innerHTML = rows.map((e) => `<tr data-id="${esc(e.id)}"><td class="t">${esc(e.name)}</td><td class="t">${esc(e.id)}</td>
+    <td class="${e.catalog_tuples ? "" : "no"}">${e.catalog_tuples}</td><td>${(e.models ?? []).length}</td><td class="t" title="${esc(e.url)}">${esc(e.url)}</td></tr>`).join("");
+}
+$("#efilter").oninput = renderEndpoints;
+document.querySelectorAll("#v-endpoints th[data-k]").forEach((th) => th.onclick = () => {
+  esort = { k: th.dataset.k, d: esort.k === th.dataset.k ? -esort.d : (th.dataset.k === "catalog_tuples" || th.dataset.k === "models" ? -1 : 1) };
+  renderEndpoints();
+});
+$("#etb").onclick = (ev) => {
+  const tr = ev.target.closest("tr[data-id]");
+  if (!tr) return;
+  if (tr.nextElementSibling?.classList.contains("x")) { tr.nextElementSibling.remove(); return; }
+  const e = endpoints.find((x) => x.id === tr.dataset.id);
+  tr.insertAdjacentHTML("afterend", `<tr class="x"><td colspan="5">${(e.models ?? []).map(esc).join(" · ")}</td></tr>`);
+};
+
+document.querySelectorAll("[data-op]").forEach((b) => b.onclick = async () => {
+  const op = b.dataset.op, all = document.querySelectorAll("[data-op]");
+  all.forEach((x) => x.disabled = true);
+  status(op + "…");
+  const t = performance.now();
+  try {
+    const body = op === "resurrect" ? { limit: Math.max(1, Number($("#rlimit").value) || 6) } : undefined;
+    const j = await call("/v1/" + op, { method: "POST", admin: true, body });
+    const rs = j.results ?? [];
+    $("#otab").innerHTML = rs.length ? `<thead><tr><th>tuple</th><th>ok</th><th>passed</th><th>ttft</th><th>error</th></tr></thead><tbody>` +
+      rs.map((r) => `<tr><td class="t">${esc(r.tupleId)}</td><td class="${r.ok ? "ok" : "no"}">${r.ok ? "✓" : "✗"}</td>
+        <td>${r.passed === undefined ? "—" : r.passed ? "✓" : "✗"}</td><td>${ms(r.ms)}</td><td class="t" title="${esc(r.error)}">${esc(r.error ?? "")}</td></tr>`).join("") + "</tbody>" : "";
+    const raw = $("#oraw"); raw.hidden = false; raw.textContent = JSON.stringify(j, null, 2);
+    status(`${op} · ${Math.round(performance.now() - t)}ms`);
+    pollHealth();
+  } catch (e) { status(`${op}: ${e.message}`, true); }
+  all.forEach((x) => x.disabled = false);
+});
+
+async function loadSource() {
+  const file = $("#sfile").value;
+  status("read " + file + "…");
+  try {
+    const j = await call("/v1/source?file=" + encodeURIComponent(file), { admin: true });
+    srcLines = j.content.split("\n");
+    $("#smeta").textContent = `${j.lines} lines · ${(j.bytes / 1024).toFixed(1)} KiB`;
+    renderSource(); status(file);
+  } catch (e) { status(e.message, true); }
+}
+function renderSource() {
+  const q = $("#sgrep").value;
+  const out = $("#sout");
+  // Filtered view keeps true line numbers via explicit counter values.
+  out.innerHTML = srcLines.map((l, i) => (!q || l.includes(q)) ? `<span style="counter-set:l ${i}">${esc(l) || " "}</span>` : "").join("");
+}
+$("#sload").onclick = loadSource;
+$("#sgrep").oninput = renderSource;
+
+const loaded = new Set();
+document.querySelectorAll("nav button").forEach((b) => b.onclick = () => {
+  document.querySelectorAll("nav button").forEach((x) => x.setAttribute("aria-selected", x === b));
+  document.querySelectorAll(".view").forEach((v) => v.hidden = v.id !== "v-" + b.dataset.v);
+  if (b.dataset.v === "endpoints" && !loaded.has("e")) { loaded.add("e"); loadEndpoints(); }
+  if (b.dataset.v === "lanes" && health) lanes(health);
+});
+addEventListener("resize", () => health && lanes(health));
+document.addEventListener("visibilitychange", () => { if (!document.hidden && Number($("#every").value)) pollHealth(); });
+
+pollHealth(); schedule();
+</script>
+</body>
+</html>

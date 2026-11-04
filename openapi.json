@@ -1,0 +1,1232 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "nokey-router",
+    "version": "asck-v1",
+    "description": "OpenAI-compatible free-inference router. Chat and image routes never fail: after an exhaustive endpoint sweep they return 200 with `nokey.degraded=true` and `X-Nokey-Degraded: 1`."
+  },
+  "servers": [
+    {
+      "url": "https://nokey-router.ziggyware.deno.net"
+    }
+  ],
+  "tags": [
+    {
+      "name": "inference"
+    },
+    {
+      "name": "catalog"
+    },
+    {
+      "name": "admin"
+    },
+    {
+      "name": "system"
+    }
+  ],
+  "paths": {
+    "/health": {
+      "get": {
+        "tags": [
+          "system"
+        ],
+        "operationId": "health",
+        "summary": "Kernel state, coverage, top-5 per mode",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Health"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/models": {
+      "get": {
+        "tags": [
+          "catalog"
+        ],
+        "operationId": "listModels",
+        "summary": "Virtual aliases, image models, ranked catalog",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModelList"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid ROUTER_API_KEY",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Per-isolate rate limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/endpoints": {
+      "get": {
+        "tags": [
+          "catalog"
+        ],
+        "operationId": "listEndpoints",
+        "summary": "Every endpoint the exhaustive sweep attempts",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EndpointList"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid ROUTER_API_KEY",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Per-isolate rate limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/chat/completions": {
+      "post": {
+        "tags": [
+          "inference"
+        ],
+        "operationId": "chatCompletions",
+        "summary": "Chat completion (JSON or SSE)",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ChatRequest"
+              },
+              "example": {
+                "model": "free:auto",
+                "messages": [
+                  {
+                    "role": "user",
+                    "content": "ping"
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Completion; SSE when stream=true",
+            "headers": {
+              "X-Nokey-Attempts": {
+                "schema": {
+                  "type": "integer"
+                }
+              },
+              "X-Nokey-Endpoints": {
+                "schema": {
+                  "type": "integer"
+                }
+              },
+              "X-Nokey-Degraded": {
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "1"
+                  ]
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChatCompletion"
+                }
+              },
+              "text/event-stream": {
+                "schema": {
+                  "type": "string",
+                  "description": "`data: <chat.completion.chunk>` frames, terminated by `data: [DONE]`"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid ROUTER_API_KEY",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Per-isolate rate limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/images/generations": {
+      "post": {
+        "tags": [
+          "inference"
+        ],
+        "operationId": "imageGenerations",
+        "summary": "Image generation across all image backends",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ImageRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ImageResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid ROUTER_API_KEY",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Per-isolate rate limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/probe": {
+      "post": {
+        "tags": [
+          "admin"
+        ],
+        "operationId": "probe",
+        "summary": "Canary-probe top 4 candidates",
+        "security": [
+          {
+            "bearerAuth": [],
+            "adminSecret": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProbeResult"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid ROUTER_API_KEY",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Missing or invalid x-admin-secret",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Per-isolate rate limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/sync": {
+      "post": {
+        "tags": [
+          "admin"
+        ],
+        "operationId": "sync",
+        "summary": "Force catalog resync and L1 rehydrate",
+        "security": [
+          {
+            "bearerAuth": [],
+            "adminSecret": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "const": "catalog_synced"
+                    },
+                    "total_models": {
+                      "type": "integer"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid ROUTER_API_KEY",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Missing or invalid x-admin-secret",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Per-isolate rate limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/resurrect": {
+      "post": {
+        "tags": [
+          "admin"
+        ],
+        "operationId": "resurrect",
+        "summary": "Probe tail tuples; promote passers",
+        "security": [
+          {
+            "bearerAuth": [],
+            "adminSecret": []
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "limit": {
+                    "type": "number",
+                    "default": 6
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResurrectResult"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid ROUTER_API_KEY",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Missing or invalid x-admin-secret",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Per-isolate rate limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/source": {
+      "get": {
+        "tags": [
+          "admin"
+        ],
+        "operationId": "source",
+        "summary": "Read an allowlisted deployment file",
+        "security": [
+          {
+            "bearerAuth": [],
+            "adminSecret": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "file",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "main.ts",
+                "math.ts",
+                "index.html",
+                "CHANGES.md",
+                "services.json",
+                "deno.json"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "file": {
+                      "type": "string"
+                    },
+                    "bytes": {
+                      "type": "integer"
+                    },
+                    "lines": {
+                      "type": "integer"
+                    },
+                    "content": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "File not in allowlist",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid ROUTER_API_KEY",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Missing or invalid x-admin-secret",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "File absent from deployment",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Per-isolate rate limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "ROUTER_API_KEY"
+      },
+      "adminSecret": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "x-admin-secret",
+        "description": "ADMIN_SECRET"
+      }
+    },
+    "schemas": {
+      "Error": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "object",
+            "properties": {
+              "message": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      },
+      "Candidate": {
+        "type": "object",
+        "properties": {
+          "tupleId": {
+            "type": "string"
+          },
+          "providerId": {
+            "type": "string"
+          },
+          "modelId": {
+            "type": "string"
+          },
+          "iqEffective": {
+            "type": "number"
+          },
+          "supportsReasoning": {
+            "type": "boolean"
+          },
+          "supportsVision": {
+            "type": "boolean"
+          },
+          "isCodingSpecialist": {
+            "type": "boolean"
+          },
+          "contextWindow": {
+            "type": "integer"
+          },
+          "reliabilityDraw": {
+            "type": "number",
+            "description": "Thompson sample from discounted Beta posterior"
+          },
+          "ewmaTtftMs": {
+            "type": "number"
+          },
+          "ewmaTps": {
+            "type": "number"
+          },
+          "logTtftMu": {
+            "type": "number",
+            "description": "Kalman-filtered mean of ln(TTFT ms)"
+          },
+          "logTtftSigma": {
+            "type": "number",
+            "description": "Std-dev of ln(TTFT ms)"
+          },
+          "expectedFastMs": {
+            "type": "number"
+          },
+          "smartScore": {
+            "type": "number"
+          }
+        }
+      },
+      "Health": {
+        "type": "object",
+        "properties": {
+          "engine": {
+            "type": "string"
+          },
+          "runtime": {
+            "type": "string"
+          },
+          "control_kernel": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "ttft_model": {
+                "type": "string"
+              },
+              "reliability": {
+                "type": "string"
+              },
+              "exploration": {
+                "type": "string"
+              },
+              "hedging": {
+                "type": "string"
+              },
+              "dispatch_tiers": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "request_guarantee": {
+                "type": "string"
+              },
+              "strict_errors": {
+                "type": "boolean"
+              }
+            }
+          },
+          "security": {
+            "type": "object",
+            "properties": {
+              "auth_enabled": {
+                "type": "boolean"
+              },
+              "admin_guard_enabled": {
+                "type": "boolean"
+              },
+              "openrouter_free_enabled": {
+                "type": "boolean"
+              },
+              "l1_cache_entries": {
+                "type": "integer"
+              },
+              "service_json_load_error": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            }
+          },
+          "coverage": {
+            "$ref": "#/components/schemas/Coverage"
+          },
+          "current_best_fast": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Candidate"
+            }
+          },
+          "current_best_smart": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Candidate"
+            }
+          },
+          "current_best_code": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Candidate"
+            }
+          },
+          "current_best_reasoning": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Candidate"
+            }
+          }
+        }
+      },
+      "Coverage": {
+        "type": "object",
+        "properties": {
+          "configured_endpoints": {
+            "type": "integer"
+          },
+          "registry_endpoints": {
+            "type": "integer"
+          },
+          "catalog_tuples": {
+            "type": "integer"
+          },
+          "sweep_candidates": {
+            "type": "integer"
+          }
+        }
+      },
+      "EndpointList": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/Coverage"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "object": {
+                "const": "list"
+              },
+              "policy": {
+                "type": "string"
+              },
+              "error": {
+                "type": "string"
+              },
+              "data": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "name": {
+                      "type": "string"
+                    },
+                    "url": {
+                      "type": "string"
+                    },
+                    "catalog_tuples": {
+                      "type": "integer"
+                    },
+                    "models": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        ]
+      },
+      "ModelList": {
+        "type": "object",
+        "properties": {
+          "object": {
+            "const": "list"
+          },
+          "accepts_any_model": {
+            "const": true
+          },
+          "model_policy": {
+            "type": "string"
+          },
+          "data": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "id",
+                "object",
+                "owned_by"
+              ],
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "object": {
+                  "const": "model"
+                },
+                "created": {
+                  "type": "integer"
+                },
+                "owned_by": {
+                  "type": "string"
+                },
+                "tuple_id": {
+                  "type": "string"
+                },
+                "iq_effective": {
+                  "type": "number"
+                },
+                "supports_reasoning": {
+                  "type": "boolean"
+                },
+                "supports_vision": {
+                  "type": "boolean"
+                },
+                "is_coding_specialist": {
+                  "type": "boolean"
+                },
+                "context_window": {
+                  "type": "integer"
+                }
+              }
+            }
+          }
+        }
+      },
+      "ChatRequest": {
+        "type": "object",
+        "description": "Malformed bodies are normalised, never rejected. Any model id is accepted: free:* aliases select a mode, unknown ids route by trigram/Jaccard similarity.",
+        "properties": {
+          "model": {
+            "type": "string",
+            "default": "free:auto",
+            "examples": [
+              "free:auto",
+              "free:fast",
+              "free:smart",
+              "free:code",
+              "free:reasoning"
+            ]
+          },
+          "messages": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "role",
+                "content"
+              ],
+              "properties": {
+                "role": {
+                  "type": "string",
+                  "enum": [
+                    "system",
+                    "user",
+                    "assistant",
+                    "tool"
+                  ]
+                },
+                "content": {
+                  "oneOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "array",
+                      "items": {
+                        "type": "object"
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "prompt": {
+            "type": "string",
+            "description": "Used when messages is absent"
+          },
+          "stream": {
+            "type": "boolean",
+            "default": false
+          },
+          "temperature": {
+            "type": "number"
+          },
+          "top_p": {
+            "type": "number"
+          },
+          "max_tokens": {
+            "type": "integer"
+          },
+          "max_completion_tokens": {
+            "type": "integer"
+          },
+          "reasoning_effort": {
+            "type": "string"
+          },
+          "response_format": {
+            "type": "object"
+          },
+          "tools": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            }
+          },
+          "tool_choice": {}
+        }
+      },
+      "NokeyMeta": {
+        "type": "object",
+        "properties": {
+          "degraded": {
+            "type": "boolean"
+          },
+          "requested_model": {
+            "type": "string"
+          },
+          "endpoints_available": {
+            "type": "integer"
+          },
+          "endpoints_attempted": {
+            "type": "integer"
+          },
+          "attempts": {
+            "type": "integer"
+          },
+          "routing_kernel": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string"
+          }
+        }
+      },
+      "ChatCompletion": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "object": {
+            "const": "chat.completion"
+          },
+          "created": {
+            "type": "integer"
+          },
+          "model": {
+            "type": "string"
+          },
+          "nokey": {
+            "$ref": "#/components/schemas/NokeyMeta"
+          },
+          "telemetry": {
+            "type": "object",
+            "properties": {
+              "mode_selected": {
+                "type": "string",
+                "enum": [
+                  "fast",
+                  "smart",
+                  "code",
+                  "reasoning"
+                ]
+              },
+              "iq_effective": {
+                "type": "number"
+              },
+              "supports_reasoning": {
+                "type": "boolean"
+              },
+              "is_coding_specialist": {
+                "type": "boolean"
+              },
+              "reliability_draw": {
+                "type": "number"
+              },
+              "observed_ttft_ms": {
+                "type": "number"
+              },
+              "observed_total_ms": {
+                "type": "number"
+              },
+              "ewma_tps": {
+                "type": "number"
+              },
+              "attempts": {
+                "type": "integer"
+              }
+            }
+          },
+          "choices": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "index": {
+                  "type": "integer"
+                },
+                "message": {
+                  "type": "object"
+                },
+                "finish_reason": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
+              }
+            }
+          },
+          "usage": {
+            "type": "object"
+          }
+        }
+      },
+      "ImageRequest": {
+        "type": "object",
+        "properties": {
+          "prompt": {
+            "type": "string"
+          },
+          "model": {
+            "type": "string",
+            "enum": [
+              "nokey-image",
+              "nokey-image-flux",
+              "nokey-image-horde"
+            ],
+            "default": "nokey-image"
+          },
+          "size": {
+            "type": "string",
+            "enum": [
+              "512x512",
+              "1024x1024",
+              "1024x576",
+              "576x1024",
+              "1792x1024",
+              "1024x1792"
+            ],
+            "default": "1024x1024"
+          },
+          "n": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 4,
+            "default": 1
+          },
+          "response_format": {
+            "type": "string",
+            "enum": [
+              "url",
+              "b64_json"
+            ],
+            "default": "url"
+          }
+        }
+      },
+      "ImageResponse": {
+        "type": "object",
+        "properties": {
+          "created": {
+            "type": "integer"
+          },
+          "data": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "url": {
+                  "type": "string"
+                },
+                "b64_json": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "nokey": {
+            "type": "object",
+            "properties": {
+              "degraded": {
+                "type": "boolean"
+              },
+              "requested_model": {
+                "type": "string"
+              },
+              "backends_tried": {
+                "type": "integer"
+              },
+              "errors": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      },
+      "ProbeResult": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "const": "probe_complete"
+          },
+          "results": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "tupleId": {
+                  "type": "string"
+                },
+                "ok": {
+                  "type": "boolean"
+                },
+                "passed": {
+                  "type": "boolean"
+                },
+                "ms": {
+                  "type": "number"
+                },
+                "error": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      },
+      "ResurrectResult": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "const": "resurrection_complete"
+          },
+          "probed": {
+            "type": "integer"
+          },
+          "promoted": {
+            "type": "integer"
+          },
+          "results": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "tupleId": {
+                  "type": "string"
+                },
+                "ok": {
+                  "type": "boolean"
+                },
+                "passed": {
+                  "type": "boolean"
+                },
+                "error": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
