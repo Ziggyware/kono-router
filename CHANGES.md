@@ -1,3 +1,26 @@
+# Parallel runs with a judge pass — 2026-11-04
+
+Chat can now run one prompt on several models at once (the
+**parallel ×2/×3/×4** control next to the model selector). A panel
+above the composer shows every request live — model, running/done/
+failed, elapsed time — so concurrent work is visible instead of
+hidden behind one spinner.
+
+When all requests settle, a **judge pass** (a separate model call)
+scores the answers and returns a winner, a confidence and per-answer
+scores. The bar is the user's: only a **100%-confident** judge adopts
+its pick into the thread automatically (with the pick, confidence and
+reason noted on the message). Anything less — or a judge that fails —
+returns the candidates to the user in a chooser that fits the answer
+kind: apps get a sandbox **preview** button, code renders as a code
+block, prose as a readable card, each with the judge's score and a
+**Use this answer** button. If only one request finishes, it is
+adopted with a note that there was nothing to judge.
+
+Verified with the jsdom harness (new run5: confident-judge auto-adopt
+and unsure-judge chooser + preview + user pick, 16/16; spec run4
+19/19; deno task check + test 103/0).
+
 # App Builder: generation modes, compounding memory, workspace intelligence — 2026-11-04
 
 Implements the November 2026 app-builder specification on top of the

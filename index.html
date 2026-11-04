@@ -1086,6 +1086,20 @@ dialog .row { margin-top: 4px; }
 .quick-chips .chip:hover { border-color: var(--acc-line); color: var(--acc); background: var(--acc-soft); }
 .cmodel-wrap { margin-left: auto; display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--dim); flex-shrink: 0; }
 .cmodel-wrap input { width: 170px; font: 500 11.5px var(--mono); padding: 4px 8px; }
+.par-panel { border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; margin: 8px 0; display: grid; gap: 8px; }
+.par-panel[hidden] { display: none; }
+.par-head { display: flex; align-items: center; gap: 8px; }
+.par-job { display: flex; align-items: center; gap: 8px; font-size: 12px; padding: 3px 0; }
+.par-job .par-state { color: var(--dim); }
+.par-job.running .par-state { color: var(--acc); }
+.par-job.error .par-state { color: #e06c5f; }
+.par-letter { display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 20px; border-radius: 6px; background: var(--acc); color: #07120a; font: 700 11px var(--mono); flex-shrink: 0; }
+.par-model { font-family: var(--mono); font-size: 11.5px; }
+.par-card { border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px; display: grid; gap: 6px; }
+.par-card-h { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.par-code { max-height: 220px; overflow: auto; font: 11px/1.5 var(--mono); white-space: pre-wrap; margin: 0; }
+.par-text { max-height: 220px; overflow: auto; font-size: 12.5px; white-space: pre-wrap; }
+.par-note { font-size: 12.5px; }
 .input-container { position: relative; width: 100%; }
 .input-meta { position: absolute; bottom: 6px; right: 8px; font-size: 10.5px; color: var(--dim); pointer-events: none; font-family: var(--mono); }
 .composer.expanded {
@@ -1350,6 +1364,15 @@ select.tool-form-in { background: var(--bg-3); color: var(--fg); }
           <button data-p="Design a retry policy with decorrelated jitter for flaky upstream endpoints.">Design a retry policy</button>
         </div>
       </div>
+      <div id="par-panel" class="par-panel" hidden>
+        <div class="par-head">
+          <b id="par-title">Parallel run</b>
+          <span class="dim" id="par-status"></span>
+          <button class="btn q" id="par-close" style="margin-left:auto" aria-label="Close parallel panel">✕</button>
+        </div>
+        <div id="par-jobs"></div>
+        <div id="par-results" style="display:grid;gap:8px"></div>
+      </div>
       <div class="composer">
         <button id="jump" aria-label="Jump to latest message" title="Jump to latest"><svg aria-hidden="true"><use href="#i-down"/></svg></button>
         <div class="composer-toolbar" id="cquick-tools">
@@ -1363,6 +1386,11 @@ select.tool-form-in { background: var(--bg-3); color: var(--fg); }
             <button class="chip" data-quick-app="workspace" title="Durable workspace: files, conversations, GitHub">🗂 workspace</button>
           </div>
           <label class="cmodel-wrap" title="Model for this chat — the same setting as in Settings"><span>model</span><input id="cmodel" value="free:auto" list="modellist" autocomplete="off" spellcheck="false" aria-label="Model for this chat"></label>
+          <span class="cmodel-wrap" style="margin-left:8px" title="Run the same prompt on several models at once; a judge picks the winner, or you do">
+            <span>parallel</span>
+            <select id="cparallel-n" aria-label="How many models to run in parallel"><option value="2">×2</option><option value="3" selected>×3</option><option value="4">×4</option></select>
+            <button class="btn q" id="cparallel-run">run</button>
+          </span>
         </div>
         <div class="wrapc">
           <div style="width:100%">
@@ -2997,6 +3025,154 @@ async function sendChat() {
 }
 $("#csend").onclick = sendChat;
 $("#cstop").onclick = () => chatCtl?.abort();
+// ---- parallel runs + judge --------------------------------------------------
+// One prompt, several models at once. The panel shows every request
+// live; when all settle, a judge pass scores the answers. A 100%-
+// confident judge adopts its pick into the thread; anything less and
+// the candidates come back to the user, presented to fit their kind
+// (apps get a sandbox preview, code a code block, prose a readable card).
+let parRunning = false;
+
+function parallelModels(n) {
+  const base = $("#cmodel")?.value.trim() || "free:auto";
+  return [...new Set([base, "free:smart", "free:code", "free:reasoning"])].slice(0, n);
+}
+function parLetter(i) { return String.fromCharCode(65 + i); }
+
+async function parFetch(model, messages, rounds = 8) {
+  const body = { model, messages, stream: false, ...(rounds > 0 && $("#pauto")?.checked ? { tools: "auto", nokey_rounds: rounds } : {}) };
+  const d = await req("/v1/chat/completions", { method: "POST", body });
+  const text = d.choices?.[0]?.message?.content ?? "";
+  if (!String(text).trim()) throw new Error("empty answer");
+  return String(text);
+}
+
+function renderParJobs(jobs) {
+  const box = $("#par-jobs");
+  if (!box) return;
+  const running = jobs.filter((j) => j.status === "running").length;
+  $("#par-status").textContent = running ? `${running} of ${jobs.length} requests running…` : "all requests finished";
+  box.innerHTML = jobs.map((j, i) => `<div class="par-job ${j.status}">
+    <span class="par-letter">${parLetter(i)}</span>
+    <span class="par-model">${esc(j.model)}</span>
+    <span class="par-state">${j.status === "running" ? "running · " + Math.round((Date.now() - j.t0) / 1000) + "s" : j.status === "done" ? "done · " + (j.ms / 1000).toFixed(1) + "s" : "failed" + (j.error ? " · " + esc(j.error) : "")}</span>
+  </div>`).join("");
+}
+
+function parKind(text) {
+  if (/```html|<!doctype html|<html[\s>]/i.test(text)) return "html";
+  if (/```/.test(text)) return "code";
+  return "text";
+}
+function parHtmlCode(text) {
+  const m = text.match(/```html\n([\s\S]*?)```/);
+  return m ? m[1] : text.trim();
+}
+
+async function runParallel() {
+  if (parRunning) { toast("a parallel run is already going"); return; }
+  const prompt = $("#cinput").value.trim();
+  if (!prompt) { toast("type the prompt first, then run it in parallel", true); return; }
+  const models = parallelModels(Number($("#cparallel-n")?.value || 3));
+  parRunning = true;
+  // The prompt enters the thread once, exactly like a normal send.
+  conv.messages.push({ role: "user", content: prompt });
+  $("#cinput").value = ""; autosize($("#cinput"));
+  saveConv(); renderThread();
+  const panel = $("#par-panel");
+  panel.hidden = false;
+  $("#par-results").innerHTML = "";
+  $("#par-title").textContent = `Parallel run — ${models.length} models, one prompt`;
+  const jobs = models.map((model) => ({ model, status: "running", t0: Date.now(), ms: 0, content: "", error: "" }));
+  renderParJobs(jobs);
+  const timer = setInterval(() => renderParJobs(jobs), 500);
+  const sys = $("#psys").value.trim();
+  const messages = [...(sys ? [{ role: "system", content: sys }] : []), ...conv.messages.map(wire)];
+  await Promise.allSettled(jobs.map(async (j) => {
+    try { j.content = await parFetch(j.model, messages); j.status = "done"; }
+    catch (e) { j.status = "error"; j.error = e.message || String(e); }
+    j.ms = Date.now() - j.t0;
+    renderParJobs(jobs);
+  }));
+  clearInterval(timer);
+  renderParJobs(jobs);
+  parRunning = false;
+  const done = jobs.filter((j) => j.status === "done");
+  if (!done.length) {
+    $("#par-results").innerHTML = `<div class="par-note">Every request failed — nothing to judge. Check the connection and try again.</div>`;
+    return;
+  }
+  if (done.length === 1) { adoptParAnswer(done[0], jobs, "Only one request finished, so there was nothing to judge."); return; }
+  await judgeParAnswers(prompt, jobs, done);
+}
+
+async function judgeParAnswers(prompt, jobs, done) {
+  $("#par-status").textContent = "judging the answers…";
+  let verdict = null;
+  try {
+    const parts = done.map((j) => `--- ANSWER ${parLetter(jobs.indexOf(j))} (model ${j.model}) ---\n${j.content.slice(0, 5000)}`).join("\n\n");
+    const judgePrompt = [
+      "You are the judge. Several models answered the same user request. Pick the single best answer.",
+      "Judge on correctness, completeness, and how directly it satisfies the request. Do not reward length by itself.",
+      'Reply with ONLY a JSON object, no other text: {"winner": <answer number, counting only the answers shown, starting at 1>, "confidence": <0 to 1>, "reason": "<one sentence>", "scores": [<one 0-10 score per answer, in the order shown>]}',
+      "confidence is how sure you are that the winner is clearly the best. Use 1 only when it is not close.",
+      "", "USER REQUEST:", prompt, "", parts,
+    ].join("\n");
+    const raw = await parFetch("free:smart", [{ role: "user", content: judgePrompt }], 0);
+    const m = raw.match(/\{[\s\S]*\}/);
+    if (m) verdict = JSON.parse(m[0]);
+  } catch { verdict = null; }
+  const winnerJob = verdict ? done[Number(verdict.winner) - 1] : null;
+  const conf = verdict ? Number(verdict.confidence) : NaN;
+  if (winnerJob && conf >= 0.999) { adoptParAnswer(winnerJob, jobs, verdict.reason || "The judge was 100% confident.", verdict); return; }
+  presentParChoices(jobs, done, verdict);
+}
+
+function adoptParAnswer(job, jobs, note, verdict) {
+  const doneCount = jobs.filter((j) => j.status === "done").length;
+  const foot = verdict
+    ? `\n\n*⚖️ Judge's pick — answer ${parLetter(jobs.indexOf(job))} (${job.model}) from ${doneCount} parallel answers, confidence ${Math.round(Number(verdict.confidence) * 100)}%. ${verdict.reason || ""}*`
+    : `\n\n*⚖️ ${note}*`;
+  conv.messages.push({ role: "assistant", content: job.content + foot });
+  saveConv(); renderThread();
+  $("#par-status").textContent = "done — the judge's pick is in the thread";
+  $("#par-results").innerHTML = `<div class="par-note">⚖️ <b>Answer ${parLetter(jobs.indexOf(job))}</b> (${esc(job.model)}) was adopted into the thread. ${esc(note)}</div>`;
+}
+
+function presentParChoices(jobs, done, verdict) {
+  const lean = verdict && done[Number(verdict.winner) - 1] ? `the judge leaned ${parLetter(jobs.indexOf(done[Number(verdict.winner) - 1]))} but was only ${Math.round(Number(verdict.confidence) * 100)}% confident — your call` : "the judge couldn't decide — your call";
+  $("#par-status").textContent = lean;
+  const box = $("#par-results");
+  box.innerHTML = (verdict?.reason ? `<div class="par-note">Judge's note: ${esc(verdict.reason)}</div>` : "") + done.map((j) => {
+    const i = jobs.indexOf(j);
+    const kind = parKind(j.content);
+    const score = verdict?.scores?.[done.indexOf(j)];
+    const body = kind === "text"
+      ? `<div class="par-text">${esc(j.content.slice(0, 4000))}</div>`
+      : `<pre class="par-code">${esc(j.content.slice(0, 6000))}</pre>`;
+    return `<div class="par-card">
+      <div class="par-card-h"><span class="par-letter">${parLetter(i)}</span><b>${esc(j.model)}</b><span class="dim">${(j.ms / 1000).toFixed(1)}s${score != null ? " · judge score " + esc(String(score)) + "/10" : ""} · ${kind === "html" ? "app" : kind}</span>
+      <span style="margin-left:auto;display:flex;gap:6px">${kind === "html" ? `<button class="btn q" data-par-preview="${i}">▶ preview</button>` : ""}<button class="btn" data-par-use="${i}">Use this answer</button></span></div>
+      ${body}
+    </div>`;
+  }).join("");
+  box.querySelectorAll("[data-par-use]").forEach((b) => b.addEventListener("click", () => {
+    const idx = Number(b.dataset.parUse);
+    const job = jobs[idx];
+    conv.messages.push({ role: "assistant", content: job.content + `\n\n*⚖️ Your pick from ${done.length} parallel answers (answer ${parLetter(idx)}, ${job.model}).*` });
+    saveConv(); renderThread();
+    $("#par-results").innerHTML = `<div class="par-note">⚖️ Answer ${parLetter(idx)} is in the thread.</div>`;
+    $("#par-status").textContent = "done — your pick is in the thread";
+  }));
+  box.querySelectorAll("[data-par-preview]").forEach((b) => b.addEventListener("click", () => {
+    const idx = Number(b.dataset.parPreview);
+    launchAppSandbox(parHtmlCode(jobs[idx].content), "Parallel answer " + parLetter(idx));
+  }));
+}
+
+$("#cparallel-run")?.addEventListener("click", runParallel);
+$("#par-close")?.addEventListener("click", () => { $("#par-panel").hidden = true; });
+
 
 function updateInputStats(t) {
   const meta = $("#cinput-meta");
