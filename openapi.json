@@ -3,7 +3,7 @@
   "info": {
     "title": "nokey-router",
     "version": "asck-v1",
-    "description": "OpenAI-compatible free-inference router. Chat and image routes never fail: after an exhaustive endpoint sweep they return 200 with `nokey.degraded=true` and `X-Nokey-Degraded: 1`."
+    "description": "OpenAI-compatible free-inference router. Chat and image routes never fail: after an exhaustive endpoint sweep they return 200 with `nokey.degraded=true` (buffered responses also set `X-Nokey-Degraded: 1`; streams send headers before routing settles, so they signal it in-band). Every request is traced: `traceparent` is honoured inbound and returned outbound, spans are exported via OpenTelemetry and kept in a per-isolate ring under `/v1/traces`."
   },
   "servers": [
     {
@@ -172,8 +172,20 @@
         },
         "responses": {
           "200": {
-            "description": "Completion; SSE when stream=true",
+            "description": "Completion. With stream=true, headers and a `: trace <id>` comment are sent immediately, `: routing` heartbeats follow every 5 s until an upstream commits, then chunks stream in real time: `delta.reasoning_content` (including leading inline <think> blocks), `delta.content`, `delta.tool_calls` (stable index; id and type on each call's first chunk). The final chunk carries `nokey`.",
             "headers": {
+              "traceparent": {
+                "description": "W3C trace context of this request's root span",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Server-Timing": {
+                "description": "ttft and total milliseconds (buffered responses)",
+                "schema": {
+                  "type": "string"
+                }
+              },
               "X-Nokey-Attempts": {
                 "schema": {
                   "type": "integer"
@@ -261,10 +273,239 @@
                   "$ref": "#/components/schemas/ImageResponse"
                 }
               }
+            },
+            "headers": {
+              "traceparent": {
+                "description": "W3C trace context of this request's root span",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Server-Timing": {
+                "description": "ttft and total milliseconds (buffered responses)",
+                "schema": {
+                  "type": "string"
+                }
+              }
             }
           },
           "401": {
             "description": "Missing or invalid ROUTER_API_KEY",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Per-isolate rate limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/traces": {
+      "get": {
+        "tags": [
+          "admin"
+        ],
+        "operationId": "listTraces",
+        "summary": "Recent traces in this isolate",
+        "security": [
+          {
+            "bearerAuth": [],
+            "adminSecret": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 256,
+              "default": 100
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "object": {
+                      "const": "list"
+                    },
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/TraceSummary"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid ROUTER_API_KEY",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Missing or invalid x-admin-secret",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Per-isolate rate limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/traces/live": {
+      "get": {
+        "tags": [
+          "admin"
+        ],
+        "operationId": "traceTail",
+        "summary": "Live span tail (SSE)",
+        "security": [
+          {
+            "bearerAuth": [],
+            "adminSecret": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "`data: TraceEvent` per span start, event and end; `: hb` every 15 s",
+            "content": {
+              "text/event-stream": {
+                "schema": {
+                  "$ref": "#/components/schemas/TraceEvent"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid ROUTER_API_KEY",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Missing or invalid x-admin-secret",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Per-isolate rate limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/traces/{id}": {
+      "get": {
+        "tags": [
+          "admin"
+        ],
+        "operationId": "getTrace",
+        "summary": "Full span tree of one trace",
+        "security": [
+          {
+            "bearerAuth": [],
+            "adminSecret": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{32}$"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Trace"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid ROUTER_API_KEY",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Missing or invalid x-admin-secret",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not in this isolate's ring",
             "content": {
               "application/json": {
                 "schema": {
@@ -906,14 +1147,14 @@
             "items": {
               "type": "object",
               "required": [
-                "role",
-                "content"
+                "role"
               ],
               "properties": {
                 "role": {
                   "type": "string",
                   "enum": [
                     "system",
+                    "developer",
                     "user",
                     "assistant",
                     "tool"
@@ -929,8 +1170,23 @@
                       "items": {
                         "type": "object"
                       }
+                    },
+                    {
+                      "type": "null"
                     }
                   ]
+                },
+                "tool_calls": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ToolCall"
+                  }
+                },
+                "tool_call_id": {
+                  "type": "string"
+                },
+                "name": {
+                  "type": "string"
                 }
               }
             }
@@ -958,6 +1214,10 @@
           "reasoning_effort": {
             "type": "string"
           },
+          "reasoning": {
+            "type": "object",
+            "description": "Forwarded verbatim (OpenRouter-style reasoning config)"
+          },
           "response_format": {
             "type": "object"
           },
@@ -967,7 +1227,156 @@
               "type": "object"
             }
           },
-          "tool_choice": {}
+          "tool_choice": {},
+          "parallel_tool_calls": {
+            "type": "boolean"
+          }
+        }
+      },
+      "ToolCall": {
+        "type": "object",
+        "required": [
+          "id",
+          "type",
+          "function"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "type": {
+            "const": "function"
+          },
+          "function": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "arguments": {
+                "type": "string",
+                "description": "JSON text; object arguments from upstreams are serialised"
+              }
+            }
+          }
+        }
+      },
+      "SpanRec": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "parent": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "name": {
+            "type": "string",
+            "examples": [
+              "chat.completions",
+              "rank",
+              "tier",
+              "attempt"
+            ]
+          },
+          "start": {
+            "type": "number",
+            "description": "epoch ms"
+          },
+          "end": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "unset",
+              "ok",
+              "error"
+            ]
+          },
+          "attrs": {
+            "type": "object",
+            "additionalProperties": {
+              "type": [
+                "string",
+                "number",
+                "boolean"
+              ]
+            }
+          },
+          "events": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "t": {
+                  "type": "number"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "attrs": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        }
+      },
+      "Trace": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "spans": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SpanRec"
+            }
+          }
+        }
+      },
+      "TraceSummary": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "root": {
+            "$ref": "#/components/schemas/SpanRec"
+          },
+          "spans": {
+            "type": "integer"
+          },
+          "errors": {
+            "type": "integer"
+          }
+        }
+      },
+      "TraceEvent": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": [
+              "start",
+              "end",
+              "event"
+            ]
+          },
+          "trace": {
+            "type": "string"
+          },
+          "span": {
+            "$ref": "#/components/schemas/SpanRec"
+          }
         }
       },
       "NokeyMeta": {
@@ -977,6 +1386,12 @@
             "type": "boolean"
           },
           "requested_model": {
+            "type": "string"
+          },
+          "trace_id": {
+            "type": "string"
+          },
+          "tuple_id": {
             "type": "string"
           },
           "endpoints_available": {
@@ -1061,7 +1476,27 @@
                   "type": "integer"
                 },
                 "message": {
-                  "type": "object"
+                  "type": "object",
+                  "properties": {
+                    "role": {
+                      "const": "assistant"
+                    },
+                    "content": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "reasoning_content": {
+                      "type": "string"
+                    },
+                    "tool_calls": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/ToolCall"
+                      }
+                    }
+                  }
                 },
                 "finish_reason": {
                   "type": [
@@ -1157,6 +1592,9 @@
                 "items": {
                   "type": "string"
                 }
+              },
+              "trace_id": {
+                "type": "string"
               }
             }
           }

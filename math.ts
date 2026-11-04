@@ -56,7 +56,6 @@
  * ============================================================================
  */
 
-export const SQRT_2 = Math.SQRT2;
 export const INV_SQRT_2 = 1 / Math.SQRT2;
 export const SQRT_2PI = Math.sqrt(2 * Math.PI);
 

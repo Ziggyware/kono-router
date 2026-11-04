@@ -1,4 +1,5 @@
-import { Hono, type Context } from "hono";
+import { Hono, type Context, type MiddlewareHandler } from "hono";
+import { currentSpan, getTrace, listTraces, type Span, startTrace, subscribe } from "./trace.ts";
 import { cors } from "hono/cors";
 import { bodyLimit } from "hono/body-limit";
 import {
@@ -299,16 +300,6 @@ function computeShannonEntropy(str: string): number {
   return entropy;
 }
 
-function splitThinkBlock(raw: string): { content: string; reasoning: string | null } {
-  const thinkMatch = raw.match(/^[\s]*<think>([\s\S]*?)<\/think>([\s\S]*)$/i);
-  if (thinkMatch) {
-    const reasoning = thinkMatch[1].trim();
-    const content = thinkMatch[2].trim();
-    return { content: content || reasoning, reasoning: reasoning || null };
-  }
-  return { content: raw, reasoning: null };
-}
-
 function verifyCleanText(text: string): void {
   const trimmed = text.trim();
   if (!trimmed) throw new Error("POISON_EMPTY: Zero content tokens");
@@ -394,38 +385,15 @@ function classifyPromptIntent(
 // 5. LIVE UPSTREAM MODEL CATALOG DISCOVERY ADAPTERS (INCL. OPENROUTER :free)
 // ============================================================================
 
-// Provider-lookup helpers keyed by the services.json registry name.
-
-function providerList(): ProviderSpec[] {
-  // These built-in providers are kept explicit because their dispatch shape,
-  // auth, discovery quirks, and capability tiers are maintained by hand.
-  return PROVIDERS;
-}
-
 async function serviceJsonProviderList(): Promise<ProviderSpec[]> {
   try {
-    return await getServiceJsonBaselineProviders();
+    return await serviceJsonProviders();
   } catch (err) {
     console.error("service-json provider load promise rejected:", err);
     return [];
   }
 }
 
-async function resolveProviderByName(name: string): Promise<ProviderSpec | undefined> {
-  const normalized = name.trim();
-  if (!normalized) return undefined;
-
-  for (const p of providerList()) {
-    if (p && p.name.trim().toLowerCase() === normalized.toLowerCase()) return p;
-  }
-
-  for (const p of await serviceJsonProviderList()) {
-    if (p && p.name.trim().toLowerCase() === normalized.toLowerCase()) return p;
-  }
-  return undefined;
-}
-
-export const resolveProviderByNameAsync = resolveProviderByName;
 
 interface CompletionResult {
   content: string;
@@ -443,6 +411,8 @@ interface CompletionOptions {
   reasoning_effort?: string;
   tools?: unknown[];
   tool_choice?: unknown;
+  parallel_tool_calls?: boolean;
+  reasoning?: unknown;
   response_format?: unknown;
 }
 
@@ -504,11 +474,11 @@ function firstString(...xs: unknown[]): string | undefined {
 // Normalises the ~8 response shapes seen across the 100-endpoint keyless
 // registry: OpenAI chat completion, {response}, {content}, {output}, plain
 // {message:{content}}, arrays of chunks, and provider-specific wrappers.
-function extractJsonDelta(data: unknown, indexToolCalls = true): Delta | null {
+function extractJsonDelta(data: unknown): Delta | null {
   if (Array.isArray(data)) {
     let content = "";
     for (const item of data) {
-      const d = extractJsonDelta(item, indexToolCalls);
+      const d = extractJsonDelta(item);
       if (d?.content) content += d.content;
     }
     return content ? { content } : null;
@@ -526,13 +496,9 @@ function extractJsonDelta(data: unknown, indexToolCalls = true): Delta | null {
     obj.output, obj.output_text, obj.answer, obj.completion, obj.generated_text,
     obj.text, obj.data,
   );
-  const reasoning = firstString(msg.reasoning_content, msg.reasoning, obj.reasoning_content, obj.reasoning);
+  const reasoning = firstString(msg.reasoning_content, msg.reasoning, msg.thinking, obj.reasoning_content, obj.reasoning, obj.thinking);
   const rawTools = (msg.tool_calls ?? obj.tool_calls) as unknown;
-  const toolCalls = Array.isArray(rawTools) && rawTools.length > 0
-    ? (indexToolCalls
-      ? rawTools.map((t: Json, i: number) => ({ ...t, index: typeof t.index === "number" ? t.index : i }))
-      : rawTools as ToolCallDelta[])
-    : undefined;
+  const toolCalls = Array.isArray(rawTools) && rawTools.length > 0 ? rawTools as ToolCallDelta[] : undefined;
   const finish = typeof choice?.finish_reason === "string"
     ? choice.finish_reason
     : typeof obj.finish_reason === "string" ? obj.finish_reason : undefined;
@@ -551,7 +517,104 @@ function sseLineDelta(line: string): Delta | null {
     // Some keyless relays stream raw text behind a `data:` prefix rather than JSON.
     return { content: slice };
   }
-  return extractJsonDelta(parsed, false);
+  return extractJsonDelta(parsed);
+}
+
+const THINK_OPEN = "<think>";
+const THINK_CLOSE = "</think>";
+
+/** Length of the longest suffix of s that is a proper prefix of tag (a tag split across chunks). */
+function partialTagSuffix(s: string, tag: string): number {
+  for (let n = Math.min(s.length, tag.length - 1); n > 0; n--) {
+    if (tag.startsWith(s.slice(-n).toLowerCase())) return n;
+  }
+  return 0;
+}
+
+// Wire-level normalisation applied to every upstream, in real time:
+//  - a leading <think>…</think> block is routed to `reasoning` as it streams
+//    (tags may be split across chunks; only a leading block counts, so literal
+//    tags later in an answer stay content);
+//  - tool-call deltas get a stable `index` (relays that omit it would otherwise
+//    collapse parallel calls into one), plus `id`/`type` on first sight and
+//    string `arguments`, which OpenAI clients require to answer each call.
+async function* refineDeltas(src: AsyncIterable<Delta>): AsyncGenerator<Delta> {
+  let phase: "lead" | "think" | "body" = "lead";
+  let buf = "";
+  let trimNext = false;
+  let nextIndex = 0;
+  let lastIndex = -1;
+  const idToIndex = new Map<string, number>();
+  const seen = new Set<number>();
+
+  const tools = (calls: ToolCallDelta[]): ToolCallDelta[] =>
+    calls.map((t) => {
+      let index: number;
+      if (typeof t.index === "number") index = t.index;
+      else if (t.id && idToIndex.has(t.id)) index = idToIndex.get(t.id)!;
+      else if (t.id || t.function?.name || lastIndex < 0) index = nextIndex;
+      else index = lastIndex;
+      nextIndex = Math.max(nextIndex, index + 1);
+      lastIndex = index;
+      const out: ToolCallDelta = { ...t, index };
+      const args = t.function?.arguments;
+      if (t.function) out.function = { ...t.function, ...(args !== undefined && typeof args !== "string" ? { arguments: JSON.stringify(args) } : {}) };
+      if (!seen.has(index)) {
+        seen.add(index);
+        out.id = t.id || `call_${crypto.randomUUID().replace(/-/g, "").slice(0, 24)}`;
+        out.type = t.type || "function";
+      }
+      if (out.id) idToIndex.set(out.id, index);
+      return out;
+    });
+
+  for await (const d of src) {
+    const out: Delta = { ...d, ...(d.toolCalls ? { toolCalls: tools(d.toolCalls) } : {}) };
+    if (!d.content || (phase === "body" && !trimNext)) {
+      yield out;
+      continue;
+    }
+    let text = buf + d.content;
+    buf = "";
+    let reasoning = "";
+    let content = "";
+    if (phase === "lead") {
+      const t = text.trimStart();
+      const head = t.slice(0, THINK_OPEN.length).toLowerCase();
+      if (t.length < THINK_OPEN.length && THINK_OPEN.startsWith(head)) {
+        buf = text; // undecided: may still become <think>
+        text = "";
+      } else if (head === THINK_OPEN) {
+        phase = "think";
+        text = t.slice(THINK_OPEN.length);
+      } else {
+        phase = "body";
+      }
+    }
+    if (phase === "think") {
+      const i = text.toLowerCase().indexOf(THINK_CLOSE);
+      if (i >= 0) {
+        reasoning = text.slice(0, i);
+        text = text.slice(i + THINK_CLOSE.length);
+        phase = "body";
+        trimNext = true;
+      } else {
+        const keep = partialTagSuffix(text, THINK_CLOSE);
+        reasoning = text.slice(0, text.length - keep);
+        buf = text.slice(text.length - keep);
+        text = "";
+      }
+    }
+    if (phase === "body" && text) {
+      if (trimNext) text = text.trimStart();
+      if (text) trimNext = false;
+      content = text;
+    }
+    out.content = content || undefined;
+    out.reasoning = (out.reasoning ?? "") + reasoning || undefined;
+    if (out.content || out.reasoning || out.toolCalls || out.finish) yield out;
+  }
+  if (buf) yield phase === "think" ? { reasoning: buf } : { content: buf };
 }
 
 // Incremental, self-sniffing response decoder. It handles SSE, a single JSON
@@ -643,7 +706,7 @@ async function openUpstream(
     throw new Error(`HTTP_${res.status}: Upstream error`);
   }
 
-  const tail = parseDeltas(res.body);
+  const tail = refineDeltas(parseDeltas(res.body));
   const head: Delta[] = [];
   let ttftMs = 0;
   let content = "";
@@ -692,8 +755,12 @@ async function openUpstreamAdaptive(
 ): Promise<UpstreamStream> {
   const model = String(payload.model ?? "");
   const messages = payload.messages;
-  const minimal: Record<string, unknown> = { model, messages };
-  const alias: Record<string, unknown> = { model: UNIVERSAL_MODEL_ALIAS, messages };
+  // Tool fields are semantic, not optional tuning: simpler rungs keep them.
+  const toolFields = Object.fromEntries(
+    ["tools", "tool_choice", "parallel_tool_calls"].filter((k) => payload[k] !== undefined).map((k) => [k, payload[k]]),
+  );
+  const minimal: Record<string, unknown> = { model, messages, ...toolFields };
+  const alias: Record<string, unknown> = { model: UNIVERSAL_MODEL_ALIAS, messages, ...toolFields };
   const rungs: Array<{ p: Record<string, unknown>; stream: boolean }> = [
     { p: payload, stream: true },
     { p: minimal, stream: true },
@@ -709,6 +776,7 @@ async function openUpstreamAdaptive(
     } catch (e) {
       lastErr = e;
       if (!isNegotiableFailure(e) || signal.aborted || i === rungs.length - 1) throw e;
+      currentSpan()?.event("negotiate", { rung: i, stream: rungs[i].stream, error: errText(e).slice(0, 200) });
     }
   }
   throw lastErr ?? new Error("Upstream protocol negotiation exhausted");
@@ -730,12 +798,12 @@ function mergeToolCalls(acc: Map<number, ToolCallDelta>, deltas: ToolCallDelta[]
 
 // Drains a committed upstream into the buffered (non-stream) completion shape.
 async function collectUpstream(up: UpstreamStream): Promise<CompletionResult & { finish?: string }> {
-  let raw = "";
+  let content = "";
   let rawReasoning = "";
   let finish: string | undefined;
   const tools = new Map<number, ToolCallDelta>();
   const take = (d: Delta) => {
-    raw += d.content ?? "";
+    content += d.content ?? "";
     rawReasoning += d.reasoning ?? "";
     if (d.toolCalls) mergeToolCalls(tools, d.toolCalls);
     finish = d.finish ?? finish;
@@ -743,8 +811,8 @@ async function collectUpstream(up: UpstreamStream): Promise<CompletionResult & {
   up.head.forEach(take);
   for await (const d of up.tail) take(d);
 
-  const { content, reasoning } = splitThinkBlock(raw);
-  const reasoningContent = rawReasoning.trim() || reasoning || null;
+  content = content.trim();
+  const reasoningContent = rawReasoning.trim() || null;
   const toolCalls = tools.size > 0 ? [...tools.values()].sort((a, b) => a.index - b.index) : undefined;
   // Salvage: a reasoning model that spent its whole budget thinking still answered.
   let finalContent = content;
@@ -774,6 +842,8 @@ function buildOptionalParams(options?: CompletionOptions): Record<string, unknow
   if (options.reasoning_effort) extra.reasoning_effort = options.reasoning_effort;
   if (Array.isArray(options.tools) && options.tools.length > 0) extra.tools = options.tools;
   if (options.tool_choice !== undefined) extra.tool_choice = options.tool_choice;
+  if (typeof options.parallel_tool_calls === "boolean") extra.parallel_tool_calls = options.parallel_tool_calls;
+  if (options.reasoning !== undefined) extra.reasoning = options.reasoning;
   if (options.response_format !== undefined) extra.response_format = options.response_format;
   return extra;
 }
@@ -1232,17 +1302,11 @@ const PROVIDERS: ProviderSpec[] = [
 // 5c. MERGE SERVICES.JSON BACKED PROVIDERS INTO THE ACTIVE PROVIDER LIST
 // ============================================================================
 
-const MERGED_ACTIVE_PROVIDERS: ProviderSpec[] = PROVIDERS;
+let serviceJsonProvidersPromise: Promise<ProviderSpec[]> | null = null;
 
-function getServiceJsonBaselineProviders(): Promise<ProviderSpec[]> {
-  return getServiceJsonBaselineProvidersInternal();
-}
-
-let getServiceJsonBaselineProvidersInternalPromise: Promise<ProviderSpec[]> | null = null;
-
-function getServiceJsonBaselineProvidersInternal(): Promise<ProviderSpec[]> {
-  if (!getServiceJsonBaselineProvidersInternalPromise) {
-    getServiceJsonBaselineProvidersInternalPromise = (async () => {
+function serviceJsonProviders(): Promise<ProviderSpec[]> {
+  if (!serviceJsonProvidersPromise) {
+    serviceJsonProvidersPromise = (async () => {
       const registry = await loadServiceJsonRegistry();
       if (!registry) return [];
       const specs: ProviderSpec[] = [];
@@ -1258,24 +1322,19 @@ function getServiceJsonBaselineProvidersInternal(): Promise<ProviderSpec[]> {
       return specs;
     })();
   }
-  return getServiceJsonBaselineProvidersInternalPromise;
+  return serviceJsonProvidersPromise;
 }
 
 async function activeProviderList(): Promise<ProviderSpec[]> {
   try {
-    const native = MERGED_ACTIVE_PROVIDERS.filter((p) => p.isConfigured());
+    const native = PROVIDERS.filter((p) => p.isConfigured());
     const serviceJsonParts = await serviceJsonProviderList();
     const serviceJson = serviceJsonParts.filter((p) => p.isConfigured());
     return [...native, ...serviceJson];
   } catch (err) {
     console.error("active-provider-list rejected:", err);
-    return MERGED_ACTIVE_PROVIDERS.filter((p) => p.isConfigured());
+    return PROVIDERS.filter((p) => p.isConfigured());
   }
-}
-
-// Prefer the registry-backed resolve path when callers dispatch by router name.
-export function findProviderByName(name: string): Promise<ProviderSpec | undefined> {
-  return resolveProviderByName(name);
 }
 
 // Resolve a candidate's provider by id across BOTH provider universes
@@ -1408,11 +1467,7 @@ async function ensureCatalogSynced(force: boolean = false): Promise<void> {
 
 async function runCatalogSyncBody(force: boolean = false): Promise<void> {
 
-  const serviceJsonProviderList = (await getServiceJsonBaselineProvidersInternal().catch((err) => {
-    console.error("service-json provider load promise rejected:", err);
-    return [];
-  })) as ProviderSpec[];
-  const mergedProviders = [...MERGED_ACTIVE_PROVIDERS, ...serviceJsonProviderList];
+  const mergedProviders = [...PROVIDERS, ...await serviceJsonProviderList()];
 
   const syncMap = new Map<string, number>();
   const metaIter = kv.list<number>({ prefix: ["mesh_discovery_meta_v5_2"] });
@@ -1615,15 +1670,7 @@ async function getRankedCandidates(
   await ensureCatalogSynced(false);
   const now = Date.now();
 
-  const serviceJsonProviderList = await getServiceJsonBaselineProviders().catch((err) => {
-    console.error("service-json provider load promise rejected:", err);
-    return [];
-  });
-
-  const activeProviderIds = new Set([
-    ...PROVIDERS.filter((p) => p.isConfigured()).map((p) => p.id),
-    ...serviceJsonProviderList.filter((p) => p.isConfigured()).map((p) => p.id),
-  ]);
+  const activeProviderIds = new Set((await activeProviderList()).map((p) => p.id));
 
   if (!opts.includeCoolingDown && !opts.unrestricted) {
     for (const [pid, state] of PROVIDER_BREAKER) {
@@ -2085,6 +2132,7 @@ async function hedgedDispatch(
   master: AbortSignal,
   tried: Set<string>,
   maxAttempts: number,
+  span: Span,
   policyOverride?: HedgePolicy,
 ): Promise<Dispatched> {
   const policy = policyOverride ?? HEDGE[mode];
@@ -2134,20 +2182,32 @@ async function hedgedDispatch(
       hedgeDelayMs = Math.max(policy.hedgeMinMs, Math.min(plan.hedgeMs, altMedianMs));
       const killMs = plan.killMs;
       const killer = setTimeout(() => ctrl.abort(new Error(`TIMEOUT_FIRST_TOKEN: ${killMs}ms`)), killMs);
+      const attempt = span.child("attempt", {
+        tuple: cand.tupleId,
+        provider: cand.providerId,
+        model: cand.modelId,
+        hedge_ms: Math.round(hedgeDelayMs),
+        kill_ms: Math.round(killMs),
+        p50_ms: Math.round(Math.exp(cand.logTtftMu)),
+        reliability: cand.reliabilityDraw,
+      });
 
-      resolveProviderById(cand.providerId)
-        .then((p) => {
+      attempt.run(() =>
+        resolveProviderById(cand.providerId).then((p) => {
           if (!p || !p.isConfigured()) throw new Error(`Provider missing or unconfigured: ${cand.providerId}`);
           return p.executeCompletion(cand.modelId, messages, ctrl.signal, options);
         })
+      )
         .then((up) => {
           clearTimeout(killer);
           if (settled) {
+            attempt.end("unset", { outcome: "late", ttft_ms: up.ttftMs });
             ctrl.abort(new Error("HEDGE_LOST"));
             master.removeEventListener("abort", onMaster);
             return;
           }
           settled = true;
+          attempt.end("ok", { outcome: "won", ttft_ms: up.ttftMs });
           clearTimeout(hedgeTimer);
           for (const other of live) if (other !== ctrl) other.abort(new Error("HEDGE_LOST"));
           resolve({ cand, up });
@@ -2156,8 +2216,15 @@ async function hedgedDispatch(
           master.removeEventListener("abort", onMaster);
           live.delete(ctrl);
           busy.delete(cand.providerId);
-          if (settled || master.aborted) return;
+          if (settled || master.aborted) {
+            attempt.end("unset", { outcome: "cancelled" });
+            return;
+          }
           lastErr = ctrl.signal.aborted ? ctrl.signal.reason : err;
+          attempt.end("error", {
+            outcome: /TIMEOUT/.test(errText(lastErr)) ? "timeout" : "failed",
+            error: errText(lastErr).slice(0, 200),
+          });
           recordTupleFailure(cand.tupleId, errText(lastErr)).catch(logErr);
           launch();
         });
@@ -2214,7 +2281,18 @@ function normalizeMessages(raw: unknown, promptFallback?: unknown): Array<{ role
       if (content && typeof content === "object" && !Array.isArray(content)) {
         content = JSON.stringify(content);
       }
-      out.push({ role, content: typeof content === "string" ? content : content ?? "" });
+      const msg: { role: string; content: unknown } & Json = { role, content: typeof content === "string" ? content : content ?? "" };
+      // Tool round-trips: every tool result must still pair with its assistant call.
+      if (Array.isArray(m.tool_calls) && m.tool_calls.length > 0) {
+        msg.tool_calls = (m.tool_calls as Json[]).map((t) => {
+          const fn = (t.function ?? {}) as Json;
+          return { ...t, type: t.type ?? "function", function: { ...fn, arguments: typeof fn.arguments === "string" ? fn.arguments : JSON.stringify(fn.arguments ?? {}) } };
+        });
+        if (msg.content === "") msg.content = null;
+      }
+      if (typeof m.tool_call_id === "string") msg.tool_call_id = m.tool_call_id;
+      if (typeof m.name === "string") msg.name = m.name;
+      out.push(msg);
     }
   }
   if (out.length === 0) {
@@ -2242,33 +2320,24 @@ interface DegradedOpts {
   endpoints: number;
   lastErr: string;
   stream: boolean;
+  traceId: string;
 }
 
-function degradedCompletion(c: Context, o: DegradedOpts): Response {
-  const content = degradationMessage(o.attempts, o.endpoints, o.lastErr);
-  const meta = {
+function degradedMeta(o: DegradedOpts) {
+  return {
     degraded: true,
     endpoints_available: o.endpoints,
     endpoints_attempted: o.attempts,
     attempts: o.attempts,
     requested_model: o.requestedModel,
     reason: "all_upstreams_failed",
+    trace_id: o.traceId,
   };
-  if (!o.stream) {
-    return c.json({
-      id: o.id,
-      object: "chat.completion",
-      created: o.created,
-      model: o.requestedModel,
-      provider: "nokey-router",
-      nokey: meta,
-      choices: [{
-        index: 0,
-        message: { role: "assistant", content },
-        finish_reason: "stop",
-      }],
-    }, 200, { "X-Nokey-Degraded": "1" });
-  }
+}
+
+/** The degraded answer as SSE frames; also emitted in-band once a stream's headers are out. */
+function degradedSse(o: DegradedOpts): string {
+  const meta = degradedMeta(o);
   const frame = (delta: Record<string, unknown>, finish: string | null) =>
     `data: ${JSON.stringify({
       id: o.id,
@@ -2279,27 +2348,38 @@ function degradedCompletion(c: Context, o: DegradedOpts): Response {
       nokey: meta,
       choices: [{ index: 0, delta, finish_reason: finish }],
     })}\n\n`;
-  const body = frame({ role: "assistant" }, null) +
-    frame({ content }, null) +
+  return frame({ role: "assistant" }, null) +
+    frame({ content: degradationMessage(o.attempts, o.endpoints, o.lastErr) }, null) +
     frame({}, "stop") +
     "data: [DONE]\n\n";
-  return new Response(body, {
-    status: 200,
-    headers: {
-      "Content-Type": "text/event-stream; charset=utf-8",
-      "Cache-Control": "no-cache",
-      "Connection": "keep-alive",
-      "X-Nokey-Degraded": "1",
-    },
-  });
+}
+
+const SSE_HEADERS = { "Content-Type": "text/event-stream; charset=utf-8", "Cache-Control": "no-cache", "Connection": "keep-alive" };
+
+function degradedCompletion(c: Context, o: DegradedOpts, headers: Record<string, string>): Response {
+  if (o.stream) return new Response(degradedSse(o), { status: 200, headers: { ...SSE_HEADERS, ...headers, "X-Nokey-Degraded": "1" } });
+  return c.json({
+    id: o.id,
+    object: "chat.completion",
+    created: o.created,
+    model: o.requestedModel,
+    provider: "nokey-router",
+    nokey: degradedMeta(o),
+    choices: [{
+      index: 0,
+      message: { role: "assistant", content: degradationMessage(o.attempts, o.endpoints, o.lastErr) },
+      finish_reason: "stop",
+    }],
+  }, 200, { ...headers, "X-Nokey-Degraded": "1" });
 }
 
 const honoApp = new Hono();
-honoApp.use("*", cors());
+honoApp.use("*", cors({ origin: "*", exposeHeaders: ["traceparent", "Server-Timing", "X-Nokey-Attempts", "X-Nokey-Endpoints", "X-Nokey-Degraded"] }));
 honoApp.use("*", bodyLimit({ maxSize: 512 * 1024 }));
 
 honoApp.use("/v1/*", async (c, next) => {
-  const ip = c.req.header("cf-connecting-ip") || c.req.header("x-forwarded-for") || "anon";
+  const ip = c.req.header("cf-connecting-ip") || c.req.header("x-forwarded-for")?.split(",")[0].trim() ||
+    (c.env as Deno.ServeHandlerInfo<Deno.NetAddr> | undefined)?.remoteAddr?.hostname || "anon";
   if (!checkRateLimit(ip)) {
     return c.json({ error: { message: "Rate limit exceeded on edge isolate" } }, 429);
   }
@@ -2313,6 +2393,60 @@ honoApp.use("/v1/*", async (c, next) => {
     }
   }
   await next();
+});
+
+const requireAdmin: MiddlewareHandler = async (c, next) => {
+  const adminSecret = Deno.env.get("ADMIN_SECRET");
+  if (adminSecret) {
+    const provided = c.req.header("x-admin-secret") || "";
+    if (!provided || !timingSafeCompare(provided, adminSecret)) {
+      return c.json({ error: { message: "Forbidden: Invalid x-admin-secret" } }, 403);
+    }
+  }
+  await next();
+};
+
+// Isolate-local trace ring (Deno Deploy's OTel view aggregates all isolates).
+honoApp.get("/v1/traces", requireAdmin, (c) => {
+  const limit = Math.round(clampNum(Number(c.req.query("limit")) || 100, 1, 256));
+  return c.json({ object: "list", data: listTraces(limit) });
+});
+
+// Live tail: every span start/event/end as SSE. fetch()-readable (EventSource cannot send auth headers).
+honoApp.get("/v1/traces/live", requireAdmin, (c) => {
+  const enc = new TextEncoder();
+  let stop = () => {};
+  const body = new ReadableStream<Uint8Array>({
+    start(ctrl) {
+      const send = (s: string) => {
+        try {
+          ctrl.enqueue(enc.encode(s));
+        } catch {
+          stop();
+        }
+      };
+      send(": live\n\n");
+      const unsubscribe = subscribe((e) => send(`data: ${JSON.stringify(e)}\n\n`));
+      const hb = setInterval(() => send(": hb\n\n"), 15_000);
+      stop = () => {
+        clearInterval(hb);
+        unsubscribe();
+      };
+      c.req.raw.signal.addEventListener("abort", () => {
+        stop();
+        try {
+          ctrl.close();
+        } catch { /* already closed */ }
+      }, { once: true });
+    },
+    cancel: () => stop(),
+  });
+  return new Response(body, { headers: SSE_HEADERS });
+});
+
+honoApp.get("/v1/traces/:id", requireAdmin, (c) => {
+  const t = getTrace(c.req.param("id"));
+  return t ? c.json(t) : c.json({ error: { message: "Trace not in this isolate's ring" } }, 404);
 });
 
 honoApp.get("/", (_c) => {
@@ -2453,14 +2587,7 @@ honoApp.get("/v1/models", async (c) => {
   });
 });
 
-honoApp.post("/v1/probe", async (c) => {
-  const adminSecret = Deno.env.get("ADMIN_SECRET");
-  if (adminSecret) {
-    const provided = c.req.header("x-admin-secret") || "";
-    if (!provided || !timingSafeCompare(provided, adminSecret)) {
-      return c.json({ error: { message: "Forbidden: Invalid x-admin-secret" } }, 403);
-    }
-  }
+honoApp.post("/v1/probe", requireAdmin, async (c) => {
   const probeResults = await runCanaryProbeOnTopCandidates(4);
   const results = probeResults
     .map((r) => {
@@ -2477,27 +2604,13 @@ honoApp.post("/v1/probe", async (c) => {
   return c.json({ status: "probe_complete", results });
 });
 
-honoApp.post("/v1/sync", async (c) => {
-  const adminSecret = Deno.env.get("ADMIN_SECRET");
-  if (adminSecret) {
-    const provided = c.req.header("x-admin-secret") || "";
-    if (!provided || !timingSafeCompare(provided, adminSecret)) {
-      return c.json({ error: { message: "Forbidden: Invalid x-admin-secret" } }, 403);
-    }
-  }
+honoApp.post("/v1/sync", requireAdmin, async (c) => {
   await ensureCatalogSynced(true);
   await hydrateL1Cache(true);
   return c.json({ status: "catalog_synced", total_models: L1_CACHE.size });
 });
 
-honoApp.post("/v1/resurrect", async (c) => {
-  const adminSecret = Deno.env.get("ADMIN_SECRET");
-  if (adminSecret) {
-    const provided = c.req.header("x-admin-secret") || "";
-    if (!provided || !timingSafeCompare(provided, adminSecret)) {
-      return c.json({ error: { message: "Forbidden: Invalid x-admin-secret" } }, 403);
-    }
-  }
+honoApp.post("/v1/resurrect", requireAdmin, async (c) => {
   let limit = 6;
   try {
     const b = await c.req.json();
@@ -2516,14 +2629,7 @@ honoApp.post("/v1/resurrect", async (c) => {
 
 // System source reader: lets the dashboard's Architect agent read the
 // code it operates on. Allowlisted files only, admin-guarded like /v1/probe.
-honoApp.get("/v1/source", (c) => {
-  const adminSecret = Deno.env.get("ADMIN_SECRET");
-  if (adminSecret) {
-    const provided = c.req.header("x-admin-secret") || "";
-    if (!provided || !timingSafeCompare(provided, adminSecret)) {
-      return c.json({ error: { message: "Forbidden: Invalid x-admin-secret" } }, 403);
-    }
-  }
+honoApp.get("/v1/source", requireAdmin, (c) => {
   const file = c.req.query("file") || "";
   const ALLOWED = new Set(["main.ts", "math.ts", "index.html", "CHANGES.md", "services.json", "deno.json"]);
   if (!ALLOWED.has(file)) {
@@ -2536,17 +2642,22 @@ honoApp.get("/v1/source", (c) => {
   return c.json({ file, bytes: content.length, lines: content.split("\n").length, content });
 });
 
+// Comment frames keep proxies and clients alive while the race is still routing.
+const HEARTBEAT_MS = 5_000;
+
 honoApp.post("/v1/chat/completions", async (c) => {
   const completionId = `chatcmpl-${crypto.randomUUID()}`;
   const created = Math.floor(Date.now() / 1000);
   const tried = new Set<string>();
+  const root = startTrace("chat.completions", {}, c.req.header("traceparent"));
+  const traceHeaders = { traceparent: root.traceparent };
   let reqModel = "free:auto";
   let wantsStream = false;
   let endpointsAvailable = 0;
   let lastErr: unknown = null;
   let globalTimeout: ReturnType<typeof setTimeout> | undefined;
 
-  const degraded = (err: unknown) => degradedCompletion(c, {
+  const degradedOpts = (err: unknown): DegradedOpts => ({
     id: completionId,
     created,
     requestedModel: reqModel,
@@ -2554,7 +2665,12 @@ honoApp.post("/v1/chat/completions", async (c) => {
     endpoints: endpointsAvailable,
     lastErr: errText(err),
     stream: wantsStream,
+    traceId: root.traceId,
   });
+  const endDegraded = (err: unknown) => {
+    console.error(`[chat] exhausted all tiers (${tried.size} attempts across ${endpointsAvailable} endpoints):`, errText(err));
+    root.end("error", { degraded: true, attempts: tried.size, error: errText(err).slice(0, 300) });
+  };
 
   try {
     // Never 400 on a malformed body: normalise it and keep routing.
@@ -2583,6 +2699,8 @@ honoApp.post("/v1/chat/completions", async (c) => {
       reasoning_effort: typeof body.reasoning_effort === "string" ? body.reasoning_effort : undefined,
       tools: hasTools ? (body.tools as unknown[]) : undefined,
       tool_choice: body.tool_choice,
+      parallel_tool_calls: typeof body.parallel_tool_calls === "boolean" ? body.parallel_tool_calls : undefined,
+      reasoning: body.reasoning,
       response_format: body.response_format,
     };
 
@@ -2596,6 +2714,17 @@ honoApp.post("/v1/chat/completions", async (c) => {
       ? "reasoning"
       : "smart";
 
+    root.set({
+      "model.requested": reqModel,
+      mode,
+      stream: wantsStream,
+      messages: messages.length,
+      tools: hasTools ? (body.tools as unknown[]).length : 0,
+      parallel_tool_calls: completionOptions.parallel_tool_calls,
+      vision: hasVisionPayload,
+      endpoints: endpointsAvailable,
+    });
+
     const safeRanked = async (m: RoutingMode, o: RankOptions = {}): Promise<ScoredCandidate[]> => {
       try {
         return await getRankedCandidates(m, false, false, o);
@@ -2605,6 +2734,7 @@ honoApp.post("/v1/chat/completions", async (c) => {
       }
     };
 
+    const rankSpan = root.child("rank", { mode });
     let ranked = await safeRanked(mode, {});
     // Vision lanes must not filter themselves into an empty pool.
     if (ranked.length === 0 && hasVisionPayload) ranked = await getRankedCandidates(mode, false, hasVisionPayload).catch(() => []);
@@ -2615,6 +2745,7 @@ honoApp.post("/v1/chat/completions", async (c) => {
     // request. Exact/near matches (trigram-Dice + token-Jaccard similarity) are
     // tried first; everything else keeps its Bayesian rank order as fallback.
     const isVirtualModel = reqModelLower.startsWith("free:") || reqModelLower.startsWith("nokey-image");
+    let nearMatches = 0;
     if (!isVirtualModel && ranked.length > 1) {
       const scored = ranked.map((cand, i) => ({
         cand,
@@ -2628,8 +2759,10 @@ honoApp.post("/v1/chat/completions", async (c) => {
         .sort((a, b) => b.sim - a.sim || a.i - b.i)
         .map((x) => x.cand);
       const rest = scored.filter((x) => x.sim < 0.30).map((x) => x.cand);
+      nearMatches = near.length;
       ranked = [...near, ...rest];
     }
+    rankSpan.end("ok", { candidates: ranked.length, near_matches: nearMatches, head: ranked[0]?.tupleId });
 
     // Total budget covers full generations; first-token latency is governed by the hedge policy.
     const timeoutMs = mode === "reasoning" ? 1800000 : mode === "fast" ? 450000 : 1200000;
@@ -2716,9 +2849,6 @@ honoApp.post("/v1/chat/completions", async (c) => {
           continue;
         }
         if (candidates.length === 0) continue;
-        if (i > 0) {
-          console.log(`[race] tier ${i + 1} (${tier.label}): ${candidates.length} candidates, ${tried.size} already tried`);
-        }
         // The sweep intentionally re-attempts tuples tried in earlier tiers
         // (transient errors + fresh protocol negotiation), tracked separately.
         const tierTried = tier.allowRetried ? new Set<string>() : tried;
@@ -2730,26 +2860,38 @@ honoApp.post("/v1/chat/completions", async (c) => {
           () => tierCtrl.abort(new Error(`TIER_BUDGET: ${tier.label} exceeded ${tier.budgetMs}ms`)),
           tier.budgetMs,
         );
+        const tierSpan = root.child("tier", { tier: i + 1, label: tier.label, candidates: candidates.length, budget_ms: tier.budgetMs });
         try {
           const won = await hedgedDispatch(
             candidates, mode, messages, completionOptions, tierSignal,
-            tierTried, tier.cap, tier.policy,
+            tierTried, tier.cap, tierSpan, tier.policy,
           );
           clearTimeout(tierDeadline);
           if (tier.allowRetried) for (const id of tierTried) tried.add(id);
-          if (i > 0) console.log(`[race] request rescued at tier ${i + 1} (${tier.label}) by ${won.cand.tupleId}`);
+          tierSpan.end("ok", { winner: won.cand.tupleId, attempted: tierTried.size });
           return won;
         } catch (e) {
           clearTimeout(tierDeadline);
           if (tier.allowRetried) for (const id of tierTried) tried.add(id);
           err = e;
           lastErr = e;
+          tierSpan.end("error", { attempted: tierTried.size, error: errText(e).slice(0, 200) });
           console.warn(`[race] tier ${i + 1} (${tier.label}) exhausted: ${errText(e)}`);
           if (master.signal.aborted) break;
         }
       }
       throw err ?? new Error("All configured endpoints exhausted");
     };
+
+    const meta = (cand: ScoredCandidate) => ({
+      degraded: false,
+      requested_model: reqModel,
+      endpoints_available: endpointsAvailable,
+      attempts: tried.size,
+      routing_kernel: "asck-v1",
+      tuple_id: cand.tupleId,
+      trace_id: root.traceId,
+    });
 
     if (!wantsStream) {
       try {
@@ -2759,19 +2901,24 @@ honoApp.post("/v1/chat/completions", async (c) => {
           try {
             const res = await collectUpstream(up);
             recordTupleSuccess(cand.tupleId, res.ttftMs, res.totalMs, res.estTokens).catch(logErr);
+            root.end("ok", {
+              tuple: cand.tupleId,
+              provider: cand.providerId,
+              ttft_ms: res.ttftMs,
+              total_ms: res.totalMs,
+              attempts: tried.size,
+              finish: res.finish ?? (res.toolCalls ? "tool_calls" : "stop"),
+              tool_calls: res.toolCalls?.length ?? 0,
+              content_chars: res.content.length,
+              reasoning_chars: res.reasoningContent?.length ?? 0,
+            });
             return c.json({
               id: completionId,
               object: "chat.completion",
               created,
               model: cand.modelId,
               provider: cand.providerId,
-              nokey: {
-                degraded: false,
-                requested_model: reqModel,
-                endpoints_available: endpointsAvailable,
-                attempts: tried.size,
-                routing_kernel: "asck-v1",
-              },
+              nokey: meta(cand),
               telemetry: {
                 mode_selected: mode,
                 iq_effective: cand.iqEffective,
@@ -2788,7 +2935,7 @@ honoApp.post("/v1/chat/completions", async (c) => {
                   index: 0,
                   message: {
                     role: "assistant",
-                    content: res.content,
+                    content: res.toolCalls && !res.content ? null : res.content,
                     ...(res.reasoningContent ? { reasoning_content: res.reasoningContent } : {}),
                     ...(res.toolCalls ? { tool_calls: res.toolCalls } : {}),
                   },
@@ -2796,12 +2943,15 @@ honoApp.post("/v1/chat/completions", async (c) => {
                 },
               ],
             }, 200, {
+              ...traceHeaders,
+              "Server-Timing": `ttft;dur=${res.ttftMs}, total;dur=${Math.round(root.ms)}`,
               "X-Nokey-Attempts": String(tried.size),
               "X-Nokey-Endpoints": String(endpointsAvailable),
             });
           } catch (e) {
             if (master.signal.aborted) break;
             lastErr = e;
+            root.event("generation_failed", { tuple: cand.tupleId, error: errText(e).slice(0, 200) });
             recordTupleFailure(cand.tupleId, errText(e)).catch(logErr);
           }
         }
@@ -2811,92 +2961,117 @@ honoApp.post("/v1/chat/completions", async (c) => {
       }
     }
 
-    let dispatched: Dispatched;
-    try {
-      dispatched = await dispatch();
-    } catch (e) {
-      clearTimeout(globalTimeout);
-      throw e;
-    }
-    const { cand, up } = dispatched;
-    const frame = (delta: Record<string, unknown>, finish: string | null) =>
-      `data: ${
-        JSON.stringify({
-          id: completionId,
-          object: "chat.completion.chunk",
-          created,
-          model: cand.modelId,
-          provider: cand.providerId,
-          choices: [{ index: 0, delta, finish_reason: finish }],
-        })
-      }\n\n`;
-
-    // Committed winner is piped token-by-token; post-commit failover is impossible once bytes are sent.
+    // Headers leave immediately; routing proceeds behind heartbeat comments and the
+    // committed winner is piped token-by-token (post-commit failover is impossible).
     const sse = async function* (): AsyncGenerator<string> {
-      let first = true;
-      let sawTools = false;
-      let sawContent = false;
-      let reasoning = "";
-      let chars = 0;
-      let finish: string | undefined;
       let ok = false;
-      const wire = (d: Delta): string | null => {
-        const out: Record<string, unknown> = {};
-        if (d.reasoning) out.reasoning_content = d.reasoning;
-        if (d.content) out.content = d.content;
-        if (d.toolCalls) out.tool_calls = d.toolCalls;
-        sawTools ||= Boolean(d.toolCalls);
-        sawContent ||= Boolean(d.content?.trim());
-        reasoning += d.reasoning ?? "";
-        chars += (d.content?.length ?? 0) + (d.reasoning?.length ?? 0);
-        finish = d.finish ?? finish;
-        if (Object.keys(out).length === 0) return null;
-        if (first) out.role = "assistant";
-        first = false;
-        return frame(out, null);
-      };
       try {
-        for (const d of up.head) {
-          const f = wire(d);
-          if (f) yield f;
+        yield `: trace ${root.traceId}\n\n`;
+        const settled = dispatch().then((v) => ({ v }), (e: unknown) => ({ e }));
+        let r: { v: Dispatched } | { e: unknown } | undefined;
+        while (true) {
+          let hb: ReturnType<typeof setTimeout> | undefined;
+          r = await Promise.race([settled, new Promise<undefined>((res) => hb = setTimeout(() => res(undefined), HEARTBEAT_MS))]);
+          clearTimeout(hb);
+          if (r) break;
+          yield `: routing attempts=${tried.size}\n\n`;
         }
-        for await (const d of up.tail) {
-          const f = wire(d);
-          if (f) yield f;
+        if ("e" in r) {
+          endDegraded(r.e);
+          ok = true;
+          if (Deno.env.get("NOKEY_STRICT_ERRORS") === "1") {
+            yield `data: ${JSON.stringify({ error: { message: errText(r.e) } })}\n\ndata: [DONE]\n\n`;
+          } else {
+            yield degradedSse(degradedOpts(r.e));
+          }
+          return;
         }
-        // Salvage parity with the buffered path: a reasoning-only stream also surfaces as content.
-        if (!sawContent && !sawTools && reasoning.trim()) yield frame({ content: reasoning.trim() }, null);
-        ok = true;
-        yield frame({}, finish ?? (sawTools ? "tool_calls" : "stop"));
-        const totalMs = Math.max(up.ttftMs + 1, Math.round(performance.now() - up.t0));
-        recordTupleSuccess(cand.tupleId, up.ttftMs, totalMs, Math.max(1, Math.ceil(chars / 4))).catch(logErr);
-      } catch (e) {
-        if (!master.signal.aborted) recordTupleFailure(cand.tupleId, errText(e)).catch(logErr);
-        yield `data: ${JSON.stringify({ error: { message: errText(e) } })}\n\n`;
+        const { cand, up } = r.v;
+        root.event("first_token", { tuple: cand.tupleId, ttft_ms: up.ttftMs });
+        const chunk = (delta: Record<string, unknown>, finish: string | null, extra: Json = {}) =>
+          `data: ${JSON.stringify({
+            id: completionId,
+            object: "chat.completion.chunk",
+            created,
+            model: cand.modelId,
+            provider: cand.providerId,
+            ...extra,
+            choices: [{ index: 0, delta, finish_reason: finish }],
+          })}\n\n`;
+        let first = true;
+        const toolCalls = new Set<number>();
+        let contentChars = 0;
+        let reasoning = "";
+        let finish: string | undefined;
+        const wire = (d: Delta): string | null => {
+          const out: Record<string, unknown> = {};
+          if (d.reasoning) out.reasoning_content = d.reasoning;
+          if (d.content) out.content = d.content;
+          if (d.toolCalls) {
+            out.tool_calls = d.toolCalls;
+            for (const t of d.toolCalls) toolCalls.add(t.index);
+          }
+          contentChars += d.content?.trim() ? d.content.length : 0;
+          reasoning += d.reasoning ?? "";
+          finish = d.finish ?? finish;
+          if (Object.keys(out).length === 0) return null;
+          if (first) out.role = "assistant";
+          first = false;
+          return chunk(out, null);
+        };
+        try {
+          for (const d of up.head) {
+            const f = wire(d);
+            if (f) yield f;
+          }
+          for await (const d of up.tail) {
+            const f = wire(d);
+            if (f) yield f;
+          }
+          // Salvage parity with the buffered path: a reasoning-only stream also surfaces as content.
+          if (!contentChars && !toolCalls.size && reasoning.trim()) yield chunk({ content: reasoning.trim() }, null);
+          ok = true;
+          const fin = finish ?? (toolCalls.size ? "tool_calls" : "stop");
+          yield chunk({}, fin, { nokey: meta(cand) });
+          const totalMs = Math.max(up.ttftMs + 1, Math.round(performance.now() - up.t0));
+          recordTupleSuccess(cand.tupleId, up.ttftMs, totalMs, Math.max(1, Math.ceil((contentChars + reasoning.length) / 4))).catch(logErr);
+          root.end("ok", {
+            tuple: cand.tupleId,
+            provider: cand.providerId,
+            ttft_ms: up.ttftMs,
+            total_ms: totalMs,
+            attempts: tried.size,
+            finish: fin,
+            tool_calls: toolCalls.size,
+            content_chars: contentChars,
+            reasoning_chars: reasoning.length,
+          });
+        } catch (e) {
+          if (!master.signal.aborted) recordTupleFailure(cand.tupleId, errText(e)).catch(logErr);
+          root.end("error", { tuple: cand.tupleId, error: errText(e).slice(0, 300), content_chars: contentChars });
+          yield `data: ${JSON.stringify({ error: { message: errText(e) } })}\n\n`;
+        }
+        yield "data: [DONE]\n\n";
       } finally {
         clearTimeout(globalTimeout);
-        if (!ok) master.abort(new Error("STREAM_CLOSED"));
+        if (!ok) {
+          master.abort(new Error("STREAM_CLOSED"));
+          root.end("error", { error: "stream closed before completion" });
+        }
       }
-      yield "data: [DONE]\n\n";
     };
 
     return new Response(ReadableStream.from(sse()).pipeThrough(new TextEncoderStream()), {
-      headers: {
-        "Content-Type": "text/event-stream; charset=utf-8",
-        "Cache-Control": "no-cache",
-        "Connection": "keep-alive",
-        "X-Nokey-Attempts": String(tried.size),
-        "X-Nokey-Endpoints": String(endpointsAvailable),
-      },
+      headers: { ...SSE_HEADERS, ...traceHeaders, "X-Nokey-Endpoints": String(endpointsAvailable) },
     });
   } catch (err: unknown) {
     clearTimeout(globalTimeout);
-    console.error(`[chat] exhausted all tiers (${tried.size} attempts across ${endpointsAvailable} endpoints):`, errText(err));
+    endDegraded(err);
     // Opt-out for operators who prefer the legacy hard failure while debugging.
     if (Deno.env.get("NOKEY_STRICT_ERRORS") === "1") {
-      return c.json({ error: { message: errText(err) } }, 502);
+      return c.json({ error: { message: errText(err) } }, 502, traceHeaders);
     }
-    return degraded(err);
+    return degradedCompletion(c, degradedOpts(err), traceHeaders);
   }
 });
 
@@ -3037,6 +3212,7 @@ honoApp.post("/v1/images/generations", async (c) => {
   const { width, height } = parseImageSize(body.size);
   const n = Math.round(clampNum(Number(body.n || 1) || 1, 1, 4));
   const wantB64 = String(body.response_format || "url") === "b64_json";
+  const root = startTrace("images.generations", { "model.requested": requestedModel, n, width, height, b64: wantB64 }, c.req.header("traceparent"));
 
   // Every available backend is tried, in "requested model first" order, for
   // ANY requested model id. Only a locally generated placeholder can end the
@@ -3049,15 +3225,18 @@ honoApp.post("/v1/images/generations", async (c) => {
   for (let i = 0; i < n; i++) {
     let url: string | null = null;
     for (const variant of chain) {
+      const attempt = root.child("attempt", { backend: variant.id, provider: variant.provider, image: i });
       try {
         if (variant.provider === "horde") {
-          url = await generateViaHorde(prompt, width, height);
+          url = await attempt.run(() => generateViaHorde(prompt, width, height));
         } else {
           const seed = Math.floor(Math.random() * 1000000) + i;
-          url = await generateViaPollinations(prompt, width, height, variant.upstreamModel, seed);
+          url = await attempt.run(() => generateViaPollinations(prompt, width, height, variant.upstreamModel, seed));
         }
+        attempt.end("ok", { outcome: "won" });
         break;
       } catch (err) {
+        attempt.end("error", { outcome: "failed", error: errText(err).slice(0, 200) });
         errors.push(`${variant.id}: ${errText(err)}`);
         console.warn(`[image] ${variant.id} failed: ${errText(err)}`);
       }
@@ -3088,6 +3267,7 @@ honoApp.post("/v1/images/generations", async (c) => {
     }
   }
 
+  root.end(degraded ? "error" : "ok", { degraded, images: data.length, backend_errors: errors.length });
   return c.json({
     created: Math.floor(Date.now() / 1000),
     data,
@@ -3096,8 +3276,13 @@ honoApp.post("/v1/images/generations", async (c) => {
       requested_model: requestedModel,
       backends_tried: errors.length + data.length,
       errors: errors.slice(0, 8),
+      trace_id: root.traceId,
     },
-  }, 200, degraded ? { "X-Nokey-Degraded": "1" } : undefined);
+  }, 200, {
+    traceparent: root.traceparent,
+    "Server-Timing": `total;dur=${Math.round(root.ms)}`,
+    ...(degraded ? { "X-Nokey-Degraded": "1" } : {}),
+  });
 });
 
 // Fresh 2.0 (@fresh/core) compatibility shim in case Deno Deploy executes `/app/src/_fresh/server.js`

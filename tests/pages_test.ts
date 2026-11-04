@@ -22,7 +22,7 @@ Deno.test("openapi paths match registered routes", async () => {
   const registered = new Set(
     (app as unknown as { routes: Array<{ method: string; path: string }> }).routes
       .filter((r) => r.method !== "ALL" && r.path !== "/" && !["/admin", "/docs", "/openapi.json"].includes(r.path))
-      .map((r) => `${r.method} ${r.path}`),
+      .map((r) => `${r.method} ${r.path.replace(/:(\w+)/g, "{$1}")}`),
   );
   const documented = new Set(
     Object.entries(spec.paths as Record<string, Record<string, unknown>>)

@@ -17,6 +17,7 @@
     "jsr:@std/path@^1.1.1": "1.1.2",
     "jsr:@std/semver@1": "1.0.5",
     "jsr:@std/uuid@^1.0.7": "1.0.9",
+    "npm:@opentelemetry/api@1.9.0": "1.9.0",
     "npm:@opentelemetry/api@^1.9.0": "1.9.0",
     "npm:esbuild-wasm@0.25.7": "0.25.7",
     "npm:esbuild@0.25.7": "0.25.7",
@@ -269,6 +270,7 @@
   },
   "workspace": {
     "dependencies": [
+      "npm:@opentelemetry/api@1.9.0",
       "npm:hono@4.6.14"
     ]
   }
