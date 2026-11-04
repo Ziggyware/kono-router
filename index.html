@@ -1745,7 +1745,7 @@ select.tool-form-in { background: var(--bg-3); color: var(--fg); }
   <section class="view" id="v-traces" hidden>
     <div class="row" style="margin-bottom:10px">
       <button class="btn" id="tlive" aria-pressed="false">live</button><button class="btn q" id="tload">load</button>
-      <input id="tfilter" size="28" aria-label="Filter traces">
+      <input id="trfilter" size="28" aria-label="Filter traces">
       <label class="row" style="gap:4px"><input type="checkbox" id="terr"><span class="mid">errors</span></label>
       <span class="grow"></span><span class="dim" id="tcount"></span>
     </div>
@@ -4521,7 +4521,7 @@ let currentSandboxDoc = "";    // full document actually loaded (wrapped + conso
 // errors to the parent, where they land in the Sandbox Console panel. The
 // iframe is sandboxed without allow-same-origin, so postMessage is the
 // only channel; the parent checks e.source against the frame.
-const SBX_BRIDGE = `<script>(function(){
+const SBX_BRIDGE = `<scr${"ipt"}>(function(){
   function fmt(a){ if (typeof a === "string") return a; if (a instanceof Error) return a.message; try { return JSON.stringify(a); } catch { try { return String(a); } catch { return "[object]"; } } }
   function send(level, args){ try { parent.postMessage({ __sbx: 1, level, text: [...args].map(fmt).join(" ") }, "*"); } catch {} }
   for (const k of ["log","info","warn","error","debug"]) { const orig = console[k] ? console[k].bind(console) : () => {}; console[k] = (...a) => { send(k === "debug" ? "log" : k, a); orig(...a); }; }
@@ -4555,7 +4555,7 @@ function sbxBlockInfo(block) {
   if (lang === "css") kind = "css";
   else if (lang === "js" || lang === "javascript" || lang === "mjs") kind = "js";
   else if (lang === "html" || /<!doctype html|<html[\s>]/i.test(code) || (/<(div|section|main|canvas|button|input|form|svg)[\s>]/i.test(code) && lang !== "css")) kind = "html";
-  const fm = code.split("\n", 3).join("\n").match(/(?:\/\/|<!--|\/\*)\s*([A-Za-z0-9._-]+\.(?:html?|css|m?js))\b/i);
+  const fm = code.split("\n", 3).join("\n").match(/(?:\/\/|<!-{2}|\/\*)\s*([A-Za-z0-9._-]+\.(?:html?|css|m?js))\b/i);
   return { code, lang, kind, name: fm ? fm[1].toLowerCase() : null, el: block };
 }
 
@@ -4571,7 +4571,7 @@ function sbxAssemble(clicked) {
   const js = infos.filter((i) => i.kind === "js");
   if (!css.length && !js.length) return base.code;
   const styleTag = (c) => `<style data-sbx="${c.name || "style.css"}">\n${c.code}\n</style>`;
-  const scriptTag = (j) => `<script data-sbx="${j.name || "app.js"}">\n${j.code.replace(/<\/script/gi, "<\\/script")}\n<\/script>`;
+  const scriptTag = (j) => `<scr${"ipt"} data-sbx="${j.name || "app.js"}">\n${j.code.replace(/<\/script/gi, "<\\/script")}\n<\/script>`;
   let doc = base.code;
   if (!/<!doctype html|<html[\s>]/i.test(doc)) {
     return `<!DOCTYPE html><html><head><meta charset="utf-8">${css.map(styleTag).join("\n")}</head><body>${doc}\n${js.map(scriptTag).join("\n")}</body></html>`;
@@ -4583,7 +4583,7 @@ function sbxAssemble(clicked) {
     usedCss.add(f);
     return styleTag(f);
   });
-  doc = doc.replace(/<script[^>]*src=["']([^"']+)["'][^>]*>\s*<\/script>/gi, (tag, srcAttr) => {
+  doc = doc.replace(/<[s]cript[^>]*src=["']([^"']+)["'][^>]*>\s*<\/script>/gi, (tag, srcAttr) => {
     const f = js.find((j) => j.name && srcAttr.toLowerCase().endsWith(j.name));
     if (!f) return tag;
     usedJs.add(f);
@@ -4956,7 +4956,7 @@ function upsert(id, span) {
 function rootOf(t) { for (const s of t.values()) if (!t.has(s.parent)) return s; }
 function renderTraces() {
   tdirty = false;
-  const q = $("#tfilter").value.trim().toLowerCase(), errOnly = $("#terr").checked;
+  const q = $("#trfilter").value.trim().toLowerCase(), errOnly = $("#terr").checked;
   const rows = [];
   for (const [id, t] of [...traces].reverse()) {
     const r = rootOf(t); if (!r) continue;
@@ -5021,7 +5021,7 @@ function openTrace(id) {
 }
 $("#tlive").onclick = toggleLive;
 $("#tload").onclick = loadTraces;
-$("#tfilter").oninput = renderTraces;
+$("#trfilter").oninput = renderTraces;
 $("#terr").onchange = renderTraces;
 $("#tlist").onclick = (ev) => { const it = ev.target.closest("[data-id]"); if (it) { tsel = it.dataset.id; $("#tattrs").hidden = true; renderTraces(); } };
 $("#wf").onclick = (ev) => { const r = ev.target.closest("[data-sid]"); if (!r) return; const pre = $("#tattrs"); pre.hidden = false; pre.textContent = JSON.stringify(traces.get(tsel)?.get(r.dataset.sid), null, 2); };
