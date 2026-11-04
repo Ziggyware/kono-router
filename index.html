@@ -693,6 +693,7 @@ dialog {
 }
 dialog::backdrop { background: rgba(3, 4, 6, .62); backdrop-filter: blur(6px); }
 dialog[open] { animation: pop .2s cubic-bezier(.22, 1, .36, 1); }
+dialog.form-modal .sheet-h::before { display: none; }
 dialog form { display: grid; gap: 13px; padding: 20px; }
 dialog h2 { margin: 0; font: 600 15px/1.2 var(--sans); letter-spacing: -.01em; }
 dialog label { display: grid; gap: 5px; }
@@ -1066,6 +1067,8 @@ dialog .row { margin-top: 4px; }
 .quick-chips { display: flex; align-items: center; gap: 6px; overflow-x: auto; padding: 2px 0; }
 .quick-chips .chip { padding: 3px 9px; font-size: 11px; cursor: pointer; white-space: nowrap; }
 .quick-chips .chip:hover { border-color: var(--acc-line); color: var(--acc); background: var(--acc-soft); }
+.cmodel-wrap { margin-left: auto; display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--dim); flex-shrink: 0; }
+.cmodel-wrap input { width: 170px; font: 500 11.5px var(--mono); padding: 4px 8px; }
 .input-container { position: relative; width: 100%; }
 .input-meta { position: absolute; bottom: 6px; right: 8px; font-size: 10.5px; color: var(--dim); pointer-events: none; font-family: var(--mono); }
 .composer.expanded {
@@ -1340,7 +1343,9 @@ select.tool-form-in { background: var(--bg-3); color: var(--fg); }
             <button class="chip" data-quick-tool="fs_read" title="Quick file read tool">📁 read</button>
             <button class="chip" data-quick-tool="memory_recall" title="Quick memory recall tool">🧠 recall</button>
             <button class="chip" data-quick-app="app-builder" title="Open App Builder Studio">🔨 app builder</button>
+            <button class="chip" data-quick-app="workspace" title="Durable workspace: files, conversations, GitHub">🗂 workspace</button>
           </div>
+          <label class="cmodel-wrap" title="Model for this chat — the same setting as in Settings"><span>model</span><input id="cmodel" value="free:auto" list="modellist" autocomplete="off" spellcheck="false" aria-label="Model for this chat"></label>
         </div>
         <div class="wrapc">
           <div style="width:100%">
@@ -1357,6 +1362,7 @@ select.tool-form-in { background: var(--bg-3); color: var(--fg); }
             <button class="btn q" id="cattach" title="Attach images" aria-label="Attach images"><svg aria-hidden="true"><use href="#i-img"/></svg><span class="btxt">img</span></button>
             <button class="btn q" id="ctools-btn" title="Use or insert tools in chat" aria-label="Tools"><svg aria-hidden="true"><use href="#i-tool"/></svg><span class="btxt">tools</span></button>
             <button class="btn q" id="cappbuilder-btn" title="Build Application with Tech Stack" aria-label="Build App"><svg aria-hidden="true"><use href="#i-sparkles"/></svg><span class="btxt">build</span></button>
+            <button class="btn q" id="cworkspace-btn" title="Workspace — durable files, conversations, GitHub" aria-label="Workspace"><svg aria-hidden="true"><use href="#i-file"/></svg><span class="btxt">files</span></button>
             <button class="btn q" id="cexpand" title="Expand / contract editor mode" aria-label="Expand editor"><svg aria-hidden="true"><use href="#i-expand"/></svg></button>
             <button class="btn q" id="cside" title="Settings" aria-label="Open settings"><svg aria-hidden="true"><use href="#i-sliders"/></svg><span class="btxt">settings</span></button>
             <button class="btn" id="csend" aria-label="Send"><span class="btxt">send</span><svg aria-hidden="true"><use href="#i-up"/></svg></button>
@@ -1435,7 +1441,7 @@ select.tool-form-in { background: var(--bg-3); color: var(--fg); }
       <div id="athread" style="flex:1;overflow:auto;padding:16px 0 24px" aria-live="polite"></div>
       <div class="composer"><div class="wrapc">
         <textarea id="ainput" rows="1" aria-label="Instruction for the Architect" style="width:100%;min-height:42px;resize:none;padding:10px 12px"></textarea>
-        <div class="row" style="flex-wrap:nowrap"><span class="dim" id="aarm"></span><button class="btn q" id="areset">reset</button><button class="btn" id="asend">dispatch</button><button class="btn" id="astop" hidden>stop</button></div>
+        <div class="row" style="flex-wrap:nowrap"><label class="cmodel-wrap" style="margin-left:0" title="Model for the Architect"><span>model</span><input id="amodel" value="free:smart" list="modellist" autocomplete="off" spellcheck="false" aria-label="Model for the Architect"></label><span class="dim" id="aarm"></span><button class="btn q" id="areset">reset</button><button class="btn" id="asend">dispatch</button><button class="btn" id="astop" hidden>stop</button></div>
       </div></div>
     </div>
   </section>
@@ -1805,20 +1811,10 @@ return { words: t.split(/\s+/).filter(Boolean).length, chars: t.length };</texta
             <div class="toggle"><input type="checkbox" id="pstream" checked><div class="thumb"></div></div>
           </div>
           <div class="setrow">
-            <div><div class="lbl">Parallel tools</div><div class="dim">Run independent tool calls together</div></div>
-            <div class="toggle"><input type="checkbox" id="pparallel" checked><div class="thumb"></div></div>
-          </div>
-          <div class="setrow">
-            <div><div class="lbl">Router tools</div><div class="dim">On by default: the router's full tool plane — web, files, vector memory + RAG, forge — run in a deep agent loop</div></div>
+            <div><div class="lbl">Router tools</div><div class="dim">Tools are supplied by the router behind the scenes — its full tool plane (web, files, vector memory + RAG, forge) runs in a server-side agent loop. Nothing to paste, prompt or hand-feed.</div></div>
             <div class="toggle"><input type="checkbox" id="pauto" checked><div class="thumb"></div></div>
           </div>
-          <div class="setrow">
-            <div><div class="lbl">Tools (JSON)</div><div class="dim">Tool definitions forwarded with each message</div></div>
-            <textarea id="ptools" rows="6" spellcheck="false"></textarea>
-          </div>
           <div class="row" style="gap:8px">
-            <button class="btn q" id="ppreset">tools preset</button>
-            <button class="btn q" id="pclear">clear tools</button>
             <button class="btn q" id="cnew" style="margin-left:auto">new chat</button>
             <button class="btn q" id="cexport">export chat</button>
           </div>
@@ -2036,6 +2032,76 @@ return { words: t.split(/\s+/).filter(Boolean).length, chars: t.length };</texta
     </div>
   </div>
 </dialog>
+<dialog id="workspace-drawer" class="sheet" style="max-width:680px" aria-label="Workspace">
+  <div class="sheet-h">
+    <h2>🗂 Workspace</h2>
+    <span class="grow"></span>
+    <button class="btn q" id="ws-open-builder" style="font-size:11px;padding:3px 9px">⚡ App Builder</button>
+    <button class="icon-btn" data-close aria-label="Close workspace"><svg aria-hidden="true"><use href="#i-x"/></svg></button>
+  </div>
+  <div class="sheet-b">
+    <div style="display:flex;flex-direction:column;gap:16px">
+      <div class="dim" style="font-size:12.5px">The durable workspace lives on the router (per-session, through the fs tools) — files the AI writes while building stay here between chats. Open one to edit it, run HTML in the sandbox, sync to GitHub, or download everything for local development.</div>
+      <div>
+        <div class="row" style="justify-content:space-between;margin-bottom:6px">
+          <span class="lbl">Durable files</span>
+          <button class="btn q" id="ws-refresh" style="font-size:10.5px;padding:2px 8px">↻ Refresh</button>
+        </div>
+        <div id="ws-files" style="display:flex;flex-direction:column;gap:4px"></div>
+        <div class="row" style="gap:6px;margin-top:8px">
+          <input id="ws-new-name" class="tool-form-in grow" placeholder="new file name — e.g. app/index.html" spellcheck="false" aria-label="New file name">
+          <button class="btn q" id="ws-new-btn">+ New file</button>
+        </div>
+        <div id="ws-editor-wrap" hidden style="margin-top:10px">
+          <div class="row" style="gap:6px;margin-bottom:6px">
+            <b id="ws-cur-path" style="font:600 12px var(--mono)"></b>
+            <span class="grow"></span>
+            <button class="btn q" id="ws-run" style="font-size:10.5px;padding:2px 8px">▶ Run</button>
+            <button class="btn q" id="ws-dl" style="font-size:10.5px;padding:2px 8px">Download</button>
+            <button class="btn q" id="ws-del" style="font-size:10.5px;padding:2px 8px">Delete</button>
+          </div>
+          <textarea id="ws-editor" class="tool-form-in" rows="12" spellcheck="false" style="width:100%;font-family:var(--mono);line-height:1.5" aria-label="Workspace file editor"></textarea>
+          <div class="row" style="gap:8px;margin-top:6px">
+            <button class="btn" id="ws-save">Save to workspace</button>
+            <span class="dim" id="ws-stat" style="font-size:11.5px"></span>
+          </div>
+        </div>
+      </div>
+      <div>
+        <div class="row" style="justify-content:space-between;margin-bottom:6px">
+          <span class="lbl">Conversations</span>
+          <button class="btn q" id="ws-save-conv" style="font-size:10.5px;padding:2px 8px">Save current conversation</button>
+        </div>
+        <div id="ws-convs" style="display:flex;flex-direction:column;gap:4px"></div>
+        <div class="dim" style="font-size:11.5px;margin-top:5px">The chat keeps one live conversation. Snapshots saved here let you keep several projects' chats and switch between them.</div>
+      </div>
+      <div>
+        <div class="row" style="margin-bottom:6px"><span class="lbl">GitHub</span></div>
+        <div style="display:grid;gap:6px">
+          <input id="gh-repo" class="tool-form-in" placeholder="owner/repo — e.g. Ziggyware/my-app" spellcheck="false" aria-label="GitHub repository">
+          <div class="row" style="gap:6px">
+            <input id="gh-branch" class="tool-form-in" placeholder="branch" value="main" spellcheck="false" style="max-width:140px" aria-label="GitHub branch">
+            <input id="gh-token" class="tool-form-in grow" type="password" placeholder="personal access token (stored only in this browser)" autocomplete="off" aria-label="GitHub token">
+          </div>
+          <div class="row" style="gap:8px">
+            <button class="btn q" id="gh-push">↑ Push files to GitHub</button>
+            <button class="btn q" id="gh-pull">↓ Pull files from GitHub</button>
+            <span class="dim" id="gh-stat" style="font-size:11.5px"></span>
+          </div>
+        </div>
+      </div>
+      <div>
+        <div class="row" style="margin-bottom:6px"><span class="lbl">Local development</span></div>
+        <div class="row" style="gap:8px">
+          <button class="btn q" id="ws-zip">Download workspace (.zip)</button>
+          <button class="btn q" id="ws-import-btn">Import files…</button>
+          <input type="file" id="ws-import" multiple hidden>
+        </div>
+        <div class="dim" style="font-size:11.5px;margin-top:5px">Download the zip to develop locally, then import edited files back — or keep everything in sync through GitHub instead.</div>
+      </div>
+    </div>
+  </div>
+</dialog>
 <dialog id="app-sandbox-modal" class="sandbox-modal" aria-label="Application Sandbox">
   <div class="sandbox-header">
     <div class="row" style="gap:8px">
@@ -2060,7 +2126,7 @@ return { words: t.split(/\s+/).filter(Boolean).length, chars: t.length };</texta
   </div>
   <div id="sb-resize" class="sandbox-resize" title="Drag to resize preview"></div>
 </dialog>
-<dialog id="custom-technique-modal" class="sheet" style="max-width:480px" aria-label="New Build Technique">
+<dialog id="custom-technique-modal" class="form-modal" style="max-width:480px" aria-label="New Build Technique">
   <div class="sheet-h">
     <h2>New Build Technique</h2>
     <span class="grow"></span>
@@ -2079,7 +2145,7 @@ return { words: t.split(/\s+/).filter(Boolean).length, chars: t.length };</texta
     </form>
   </div>
 </dialog>
-<dialog id="custom-technology-modal" class="sheet" style="max-width:480px" aria-label="New Technology">
+<dialog id="custom-technology-modal" class="form-modal" style="max-width:480px" aria-label="New Technology">
   <div class="sheet-h">
     <h2>New Technology / Stack</h2>
     <span class="grow"></span>
@@ -2099,7 +2165,7 @@ return { words: t.split(/\s+/).filter(Boolean).length, chars: t.length };</texta
     </form>
   </div>
 </dialog>
-<dialog id="comm-channel-modal" class="sheet" style="max-width:380px" aria-label="Add Channel">
+<dialog id="comm-channel-modal" class="form-modal" style="max-width:380px" aria-label="Add Channel">
   <div class="sheet-h">
     <h2>New Community Channel</h2>
     <span class="grow"></span>
@@ -2512,7 +2578,7 @@ enter.inspector = renderInspector;
 const conv = store.get("chat", { messages: [] });
 let attachments = [];
 let chatCtl = null;
-const PARAMS = ["pmodel", "ptemp", "pmax", "peffort", "psys", "pstream", "pparallel", "ptools"];
+const PARAMS = ["pmodel", "ptemp", "pmax", "peffort", "psys", "pstream"];
 let accentPref = store.get("accent") || "theme";
 let densityPref = store.get("density") || "comfortable";
 let reducedPref = Boolean(store.get("reduced"));
@@ -2608,20 +2674,6 @@ function openChangelog() {
   $("#ptempv").textContent = $("#ptemp").value;
   if (innerWidth <= 860 || store.get("side") === false) $("#side").hidden = true;
 })();
-// One-time cleanup: the demo tools preset (get_weather / get_time) is a
-// client-tools example, but once saved into params it followed every chat
-// and made models believe those were their only tools — while nothing
-// executes client tools at all. Clear it if the saved value is exactly
-// the preset; anything the user wrote, or deliberately re-adds, stays.
-(function clearDemoPreset() {
-  if (store.get("preset_cleared_v1")) return;
-  store.set("preset_cleared_v1", true);
-  try {
-    const t = JSON.parse($("#ptools").value || "[]");
-    const names = Array.isArray(t) ? t.map((x) => x?.function?.name ?? x?.name).filter(Boolean).sort() : [];
-    if (names.join(",") === "get_time,get_weather") { $("#ptools").value = ""; saveParams(); }
-  } catch { /* not JSON: the user's own content — leave it alone */ }
-})();
 function saveParams() {
   const p = {};
   for (const id of PARAMS) { const el = $("#" + id); p[id] = el.type === "checkbox" ? el.checked : el.value; }
@@ -2630,12 +2682,6 @@ function saveParams() {
 for (const id of PARAMS) $("#" + id).addEventListener("input", saveParams);
 $("#ptemp").addEventListener("input", () => $("#ptempv").textContent = $("#ptemp").value);
 $("#cside").onclick = () => { go("chat"); openSettings(); };
-const TOOL_PRESET = [
-  { type: "function", function: { name: "get_weather", description: "Current weather for a city", parameters: { type: "object", properties: { city: { type: "string" } }, required: ["city"] } } },
-  { type: "function", function: { name: "get_time", description: "Current time in an IANA timezone", parameters: { type: "object", properties: { tz: { type: "string" } }, required: ["tz"] } } },
-];
-$("#ppreset").onclick = () => { $("#ptools").value = JSON.stringify(TOOL_PRESET, null, 2); $("#pparallel").checked = true; saveParams(); };
-$("#pclear").onclick = () => { $("#ptools").value = ""; saveParams(); };
 
 function saveConv() {
   if (store.set("chat", conv)) return;
@@ -2787,19 +2833,10 @@ thread.onclick = async (e) => {
 };
 
 // ---- completion ----
-function tools() {
-  const raw = $("#ptools").value.trim();
-  if (!raw) return undefined;
-  const t = JSON.parse(raw);
-  if (!Array.isArray(t)) throw new Error("tools must be a JSON array");
-  return t;
-}
 function busy(on) { $("#csend").hidden = on; $("#cstop").hidden = !on; }
 async function complete() {
   const max = $("#pmax").value.trim();
   if (max && (!Number.isSafeInteger(Number(max)) || Number(max) < 1)) { toast("max tokens must be a positive whole number", true); return; }
-  let toolList;
-  try { toolList = tools(); } catch (e) { toast("tools: " + e.message, true); return; }
   const m = { role: "assistant", content: "", _m: { live: true } };
   const i = conv.messages.push(m) - 1;
   const el = msgEl(m, i);
@@ -2814,10 +2851,11 @@ async function complete() {
     max_tokens: chatTokenBudget(conv.messages.slice(0, i), sys),
     stream,
     ...($("#peffort").value ? { reasoning_effort: $("#peffort").value } : {}),
-    ...(toolList ? { tools: toolList, parallel_tool_calls: $("#pparallel").checked } : {}),
-    // "Router tools" attaches the plane's own built-ins and lets the router run
-    // the agent loop; with client tools present it adds to them instead.
-    ...($("#pauto").checked ? { nokey_rounds: 16, ...(toolList ? { nokey_tools: true } : { tools: "auto" }) } : {}),
+    // Tools are supplied behind the scenes: tools:"auto" attaches the
+    // router's own tool plane and the router runs the agent loop server-
+    // side. The dashboard never forwards client tool definitions and never
+    // asks the user to hand-feed tool results into the prompt.
+    ...($("#pauto").checked ? { tools: "auto", nokey_rounds: 16 } : {}),
   };
   const k = m._m, t0 = performance.now();
   let frame = 0;
@@ -2960,7 +2998,7 @@ $("#cquick-tools")?.addEventListener("click", (e) => {
   const btn = e.target.closest("button[data-quick-tool]");
   if (btn) { openChatToolsDrawer(btn.dataset.quickTool); return; }
   const appBtn = e.target.closest("button[data-quick-app]");
-  if (appBtn) { openAppBuilder(); return; }
+  if (appBtn) { if (appBtn.dataset.quickApp === "workspace") openWorkspace(); else openAppBuilder(); return; }
 });
 $("#ctools-btn").onclick = () => openChatToolsDrawer();
 $("#cappbuilder-btn").onclick = () => openAppBuilder();
@@ -2993,7 +3031,6 @@ $("#set-export").onclick = exportChat;
 enter.chat = () => { if (!thread.childElementCount && conv.messages.length) renderThread(); if (innerWidth > 860) $("#cinput").focus(); };
 cmd("new chat", () => { go("chat"); newChat(); });
 cmd("toggle settings", () => { go("chat"); openSettings(); }, "chat");
-cmd("load parallel tools preset", () => { go("chat"); $("#ppreset").click(); });
 
 // =====================================================================
 // ARCHITECT — tool-using agent; one fenced ```action JSON per reply, max 8 rounds
@@ -3176,7 +3213,7 @@ async function sendArch() {
   try {
     for (rounds = 1; rounds <= 8; rounds++) {
       const working = line(`<span class="dim">round ${rounds} · thinking</span>`);
-      const res = await req("/v1/chat/completions", { method: "POST", signal: arch.ctl.signal, body: { model: "free:smart", temperature: 0.2, messages: [{ role: "system", content: ARCH_PROMPT }, ...arch.history] } });
+      const res = await req("/v1/chat/completions", { method: "POST", signal: arch.ctl.signal, body: { model: $("#amodel")?.value.trim() || "free:smart", temperature: 0.2, messages: [{ role: "system", content: ARCH_PROMPT }, ...arch.history] } });
       const reply = res.choices?.[0]?.message?.content ?? "";
       const tr = res.nokey?.trace_id ?? "";
       working.remove();
@@ -3513,12 +3550,13 @@ function automaticBudget(context, estimatedInput) {
 function chatTokenBudget(messages, system) {
   const raw = $("#pmax").value.trim();
   if (raw) return Number(raw);
-  return automaticBudget(modelContext(catalog, $("#pmodel").value.trim()), estimatePromptTokens(messages, system, $("#ptools").value));
+  return automaticBudget(modelContext(catalog, $("#pmodel").value.trim()), estimatePromptTokens(messages, system, ""));
 }
 function updateModelHint() {
   const id = $("#pmodel").value.trim(), context = modelContext(catalog, id);
+  const cm = $("#cmodel"); if (cm && cm.value !== $("#pmodel").value) cm.value = $("#pmodel").value;
   const draft = $("#cinput").value.trim();
-  const estimated = estimatePromptTokens(draft ? [...conv.messages, { role: "user", content: draft }] : conv.messages, $("#psys").value, $("#ptools").value);
+  const estimated = estimatePromptTokens(draft ? [...conv.messages, { role: "user", content: draft }] : conv.messages, $("#psys").value, "");
   const budget = automaticBudget(context, estimated);
   $("#model-hint").textContent = context ? `Estimated context: ${kfmt(context)} tokens · capabilities and context may vary by provider.` : "Context unknown for this ID or lane. Capability metadata is estimated.";
   const raw = $("#pmax").value.trim();
@@ -3569,7 +3607,7 @@ modelResults.addEventListener("click", (e) => { const option = e.target.closest(
 for (const id of ["model-cap", "model-context"]) $("#" + id).addEventListener("change", () => showModelResults());
 document.addEventListener("click", (e) => { if (!e.target.closest(".model-picker")) closeModelResults(); });
 $(".model-picker").addEventListener("focusout", () => setTimeout(() => { if (!$(".model-picker").contains(document.activeElement)) closeModelResults(); }, 0));
-for (const id of ["pmax", "psys", "ptools", "cinput"]) $("#" + id).addEventListener("input", updateModelHint);
+for (const id of ["pmax", "psys", "cinput"]) $("#" + id).addEventListener("input", updateModelHint);
 updateModelHint();
 function renderCatalog() {
   const q = $("#cfilter").value.trim().toLowerCase();
@@ -4097,6 +4135,11 @@ function buildToolFormControls(t) {
   }
 
   const propKeys = Object.keys(props);
+  // The JSON view's AI tab gets this tool's real context (name, purpose,
+  // parameter list) so answers are about THIS tool, not tools in general.
+  const trargsEl = $("#trargs");
+  trargsEl.dataset.notchLabel = `Tool arguments (JSON) — ${t.name}`;
+  trargsEl.dataset.notchContext = `The raw JSON arguments for the router tool "${t.name}" — ${t.description || "a router tool"}. Parameters: ${propKeys.map((k2) => { const p2 = props[k2]; const ty = Array.isArray(p2.type) ? p2.type[0] : (p2.type || "string"); return k2 + " (" + ty + (required.has(k2) ? ", required" : "") + ")"; }).join(", ") || "none — an empty object {} is correct"}. The JSON must parse and match that schema. The form controls above and this JSON stay in sync. Ask the AI to build arguments from a plain-words goal, explain a parameter, or fix a JSON syntax error.`;
   if (!propKeys.length) {
     container.innerHTML = `<div class="dim" style="font-size:12px;padding:8px">This tool requires no input parameters. Click <b>Execute Tool</b> to run.</div>`;
     $("#trargs").value = "{}";
@@ -4190,6 +4233,14 @@ function buildToolFormControls(t) {
     if (inputEl) {
       inputEl.dataset.field = k;
       inputEl.dataset.type = type;
+      // AI tab on every generated control, with the tool + parameter
+      // context baked in. Applying an answer fires input/change, which
+      // syncs the JSON view too. (Checkboxes carry no editable content.)
+      if (inputEl.type !== "checkbox") {
+        inputEl.dataset.notch = "";
+        inputEl.dataset.notchLabel = `${t.name} — ${k}`;
+        inputEl.dataset.notchContext = `Argument "${k}" of the router tool "${t.name}" — ${t.description || "a router tool"}. Type: ${type}${isReq ? " (required)" : " (optional)"}.${p.description ? " " + p.description : ""}${Array.isArray(p.enum) ? " Must be one of: " + p.enum.join(", ") + "." : ""} This control and the Arguments JSON view stay in sync — applying an AI answer here updates both, and the workbench validates the call against the tool schema when it runs.`;
+      }
       inputEl.addEventListener("input", syncToArgs);
       inputEl.addEventListener("change", syncToArgs);
     }
@@ -4199,6 +4250,7 @@ function buildToolFormControls(t) {
 
   // initial sync
   syncToArgsFromForm(t);
+  mountNotches();
 }
 
 function syncToArgsFromForm(t) {
@@ -4614,9 +4666,21 @@ $("#btn-generate-app")?.addEventListener("click", () => {
   sendChat();
 });
 
+// Form modals (New Technique / New Technology / New Channel) are REAL
+// dialogs. They used to carry the .sheet class, whose CSS parks the element
+// off-screen (translateY(102%), visibility:hidden) until an .open class
+// lands — so showModal() produced an invisible modal whose backdrop blocked
+// every click: the whole page froze. Keep them sheet-free, guard re-entry,
+// and wire their close buttons to dialog.close().
+function openFormModal(sel) { const d = $(sel); if (d && !d.open) d.showModal(); }
+for (const sel of ["#custom-technique-modal", "#custom-technology-modal", "#comm-channel-modal"]) {
+  const d = $(sel);
+  d?.querySelector("[data-close]")?.addEventListener("click", () => d.close());
+}
+
 // Custom Technique modal
 $("#btn-add-technique")?.addEventListener("click", () => {
-  $("#custom-technique-modal").showModal();
+  openFormModal("#custom-technique-modal");
 });
 $("#btn-save-technique")?.addEventListener("click", (e) => {
   e.preventDefault();
@@ -4637,7 +4701,7 @@ $("#btn-save-technique")?.addEventListener("click", (e) => {
 
 // Custom Technology modal
 $("#btn-add-tech")?.addEventListener("click", () => {
-  $("#custom-technology-modal").showModal();
+  openFormModal("#custom-technology-modal");
 });
 $("#btn-save-tech")?.addEventListener("click", (e) => {
   e.preventDefault();
@@ -5078,7 +5142,7 @@ $("#comm-channels")?.addEventListener("click", (e) => {
 });
 
 $("#comm-add-channel")?.addEventListener("click", () => {
-  $("#comm-channel-modal").showModal();
+  openFormModal("#comm-channel-modal");
 });
 $("#btn-create-channel")?.addEventListener("click", (e) => {
   e.preventDefault();
@@ -5643,6 +5707,297 @@ $("#anp-apply").onclick = () => {
   $("#anp-apply-row").hidden = true;
 };
 mountNotches();
+
+// ---- durable workspace ------------------------------------------------------
+// One panel for application building: the router-side durable files (the fs
+// tools' namespace for this browser session), a conversation library (the
+// dashboard otherwise keeps exactly one live chat), GitHub sync through the
+// Contents API (the token lives only in this browser's local storage and is
+// only ever sent to api.github.com), and local development via zip export /
+// file import.
+const wsDrawer = $("#workspace-drawer");
+let wsFiles = [], wsCur = null;
+
+async function wsExec(name, args) {
+  const d = await req("/v1/tools/execute", { method: "POST", admin: true, body: { name, arguments: args } });
+  const r = d.results?.[0] ?? {};
+  if (!r.ok) throw new Error(r.error || r.code || (name + " failed"));
+  return r.result;
+}
+
+function renderWsFiles() {
+  const box = $("#ws-files");
+  if (!wsFiles.length) {
+    box.innerHTML = `<div class="dim" style="font-size:12px">No files yet — ask the chat to build something (the agent writes here with its fs tools), create a file below, pull from GitHub, or import.</div>`;
+    return;
+  }
+  box.innerHTML = wsFiles.map((file) => `<button class="btn q" data-ws-open="${esc(file.path)}" style="justify-content:flex-start;font-size:11.5px;${file.path === wsCur ? "border-color:var(--acc-line);color:var(--acc)" : ""}"><span style="font-family:var(--mono)">${esc(file.path)}</span><span class="dim" style="margin-left:auto">${file.bytes} B</span></button>`).join("");
+}
+
+async function wsRefresh() {
+  const box = $("#ws-files");
+  box.innerHTML = `<div class="dim" style="font-size:12px">loading…</div>`;
+  try {
+    const r = await wsExec("fs_list", { limit: 200 });
+    wsFiles = r.files ?? [];
+    renderWsFiles();
+  } catch (e) {
+    wsFiles = [];
+    box.innerHTML = `<div class="dim" style="font-size:12px">Could not list the workspace: ${esc(e.message)}</div>`;
+  }
+}
+
+async function wsOpen(path) {
+  wsCur = path;
+  $("#ws-editor-wrap").hidden = false;
+  $("#ws-cur-path").textContent = path;
+  $("#ws-stat").textContent = "loading…";
+  try {
+    const read = await wsExec("fs_read", { path });
+    if (read.binary) {
+      $("#ws-editor").value = "";
+      $("#ws-editor").disabled = true;
+      $("#ws-stat").textContent = `binary file (${read.bytes} B) — not editable here`;
+    } else {
+      $("#ws-editor").disabled = false;
+      $("#ws-editor").value = read.content ?? "";
+      $("#ws-stat").textContent = `${read.bytes} B`;
+    }
+  } catch (e) { $("#ws-stat").textContent = "open failed: " + e.message; }
+  renderWsFiles();
+}
+
+$("#ws-files")?.addEventListener("click", (e) => {
+  const b = e.target.closest("[data-ws-open]");
+  if (b) wsOpen(b.dataset.wsOpen);
+});
+$("#ws-refresh")?.addEventListener("click", wsRefresh);
+$("#ws-new-btn")?.addEventListener("click", async () => {
+  const name = $("#ws-new-name").value.trim().replace(/^\/+/, "");
+  if (!name) { toast("name the new file first", true); return; }
+  try {
+    await wsExec("fs_write", { path: name, content: "" });
+    $("#ws-new-name").value = "";
+    await wsRefresh();
+    wsOpen(name);
+  } catch (e) { toast("create failed: " + e.message, true); }
+});
+$("#ws-save")?.addEventListener("click", async () => {
+  if (!wsCur) return;
+  $("#ws-stat").textContent = "saving…";
+  try {
+    const r = await wsExec("fs_write", { path: wsCur, content: $("#ws-editor").value });
+    $("#ws-stat").textContent = `saved · ${r.bytes} B`;
+    wsRefresh();
+  } catch (e) { $("#ws-stat").textContent = "save failed: " + e.message; }
+});
+$("#ws-run")?.addEventListener("click", () => { if (wsCur) launchAppSandbox($("#ws-editor").value, wsCur); });
+$("#ws-dl")?.addEventListener("click", () => {
+  if (!wsCur) return;
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([$("#ws-editor").value], { type: "text/plain" }));
+  a.download = wsCur.split("/").pop() || "file.txt";
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+});
+$("#ws-del")?.addEventListener("click", async () => {
+  if (!wsCur) return;
+  try {
+    await wsExec("fs_delete", { path: wsCur });
+    toast(`deleted ${wsCur}`);
+    wsCur = null;
+    $("#ws-editor-wrap").hidden = true;
+    wsRefresh();
+  } catch (e) { toast("delete failed: " + e.message, true); }
+});
+
+// conversation library: named snapshots of the one live conversation
+function renderWsConvs() {
+  const box = $("#ws-convs");
+  const lib = store.get("chat_library", []);
+  if (!lib.length) { box.innerHTML = `<div class="dim" style="font-size:12px">No saved conversations yet.</div>`; return; }
+  box.innerHTML = lib.map((c) => `<div class="row" style="gap:6px;border:1px solid var(--line);border-radius:10px;padding:7px 9px">
+    <div style="min-width:0"><div style="font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(c.title || "Conversation")}</div>
+    <div class="dim" style="font-size:10.5px">${(c.messages ?? []).length} messages · ${esc(new Date(c.saved || 0).toLocaleString())}</div></div>
+    <span class="grow"></span>
+    <button class="btn q" data-conv-load="${esc(c.id)}" style="font-size:10.5px;padding:2px 8px">Load</button>
+    <button class="btn q" data-conv-del="${esc(c.id)}" style="font-size:10.5px;padding:2px 8px">Delete</button>
+  </div>`).join("");
+}
+$("#ws-save-conv")?.addEventListener("click", () => {
+  if (!conv.messages.length) { toast("the current conversation is empty", true); return; }
+  const first = conv.messages.find((m) => m.role === "user");
+  const title = (typeof first?.content === "string" ? first.content : "Conversation").slice(0, 60) || "Conversation";
+  const lib = store.get("chat_library", []);
+  lib.unshift({ id: "c" + Date.now().toString(36), title, saved: Date.now(), messages: JSON.parse(JSON.stringify(conv.messages)) });
+  store.set("chat_library", lib.slice(0, 30));
+  renderWsConvs();
+  toast("conversation saved to the library");
+});
+$("#ws-convs")?.addEventListener("click", (e) => {
+  const lib = store.get("chat_library", []);
+  const load = e.target.closest("[data-conv-load]");
+  if (load) {
+    const item = lib.find((c) => c.id === load.dataset.convLoad);
+    if (!item) return;
+    conv.messages = JSON.parse(JSON.stringify(item.messages ?? []));
+    saveConv(); renderThread(); updateModelHint();
+    closeSheets(); go("chat");
+    toast("conversation loaded");
+    return;
+  }
+  const del = e.target.closest("[data-conv-del]");
+  if (del) {
+    store.set("chat_library", lib.filter((c) => c.id !== del.dataset.convDel));
+    renderWsConvs();
+  }
+});
+
+// GitHub sync (Contents API; token stays in this browser)
+function ghCfg() { return store.get("gh", { repo: "", branch: "main", token: "" }); }
+function ghSave() { store.set("gh", { repo: $("#gh-repo").value.trim(), branch: $("#gh-branch").value.trim() || "main", token: $("#gh-token").value }); }
+function ghLoad() { const c = ghCfg(); $("#gh-repo").value = c.repo || ""; $("#gh-branch").value = c.branch || "main"; $("#gh-token").value = c.token || ""; }
+for (const id of ["#gh-repo", "#gh-branch", "#gh-token"]) $(id)?.addEventListener("change", ghSave);
+const ghPath = (path) => path.split("/").map(encodeURIComponent).join("/");
+async function ghApi(path, opts = {}) {
+  const { token } = ghCfg();
+  const res = await fetch("https://api.github.com" + path, { ...opts, headers: { Accept: "application/vnd.github+json", ...(token ? { Authorization: "Bearer " + token } : {}), ...(opts.body ? { "Content-Type": "application/json" } : {}) } });
+  if (!res.ok) throw new Error(`GitHub ${res.status}: ${(await res.text()).slice(0, 160)}`);
+  return res.status === 204 ? null : res.json();
+}
+function b64encodeText(str) { const bytes = new TextEncoder().encode(str); let bin = ""; for (let i = 0; i < bytes.length; i += 32768) bin += String.fromCharCode(...bytes.subarray(i, i + 32768)); return btoa(bin); }
+function b64decodeText(b) { const bin = atob(String(b).replace(/\s/g, "")); return new TextDecoder().decode(Uint8Array.from(bin, (c) => c.charCodeAt(0))); }
+
+$("#gh-push")?.addEventListener("click", async () => {
+  ghSave();
+  const { repo, branch } = ghCfg();
+  const stat = $("#gh-stat");
+  if (!repo.includes("/")) { stat.textContent = "set owner/repo first"; return; }
+  stat.textContent = "pushing…";
+  try {
+    const list = await wsExec("fs_list", { limit: 200 });
+    let done = 0, skipped = 0;
+    for (const file of list.files ?? []) {
+      if (file.bytes > 900000) { skipped++; continue; }
+      const read = await wsExec("fs_read", { path: file.path });
+      if (read.binary) { skipped++; continue; }
+      let sha;
+      try { sha = (await ghApi(`/repos/${repo}/contents/${ghPath(file.path)}?ref=${encodeURIComponent(branch)}`)).sha; } catch { /* new file */ }
+      await ghApi(`/repos/${repo}/contents/${ghPath(file.path)}`, { method: "PUT", body: JSON.stringify({ message: "sync from nokey workspace", branch, content: b64encodeText(read.content ?? ""), ...(sha ? { sha } : {}) }) });
+      done++;
+      stat.textContent = `pushing… ${done}`;
+    }
+    stat.textContent = `pushed ${done} file(s)${skipped ? `, skipped ${skipped} (binary or too large)` : ""}`;
+    toast("workspace pushed to GitHub");
+  } catch (e) { stat.textContent = "push failed: " + e.message; }
+});
+$("#gh-pull")?.addEventListener("click", async () => {
+  ghSave();
+  const { repo, branch } = ghCfg();
+  const stat = $("#gh-stat");
+  if (!repo.includes("/")) { stat.textContent = "set owner/repo first"; return; }
+  stat.textContent = "pulling…";
+  try {
+    const tree = await ghApi(`/repos/${repo}/git/trees/${encodeURIComponent(branch)}?recursive=1`);
+    const blobs = (tree.tree ?? []).filter((n) => n.type === "blob").slice(0, 100);
+    let done = 0, skipped = 0;
+    for (const node of blobs) {
+      if ((node.size ?? 0) > 512000) { skipped++; continue; }
+      const file = await ghApi(`/repos/${repo}/contents/${ghPath(node.path)}?ref=${encodeURIComponent(branch)}`);
+      if (file.encoding !== "base64" || typeof file.content !== "string") { skipped++; continue; }
+      await wsExec("fs_write", { path: node.path, content: b64decodeText(file.content) });
+      done++;
+      stat.textContent = `pulling… ${done}`;
+    }
+    stat.textContent = `pulled ${done} file(s)${skipped ? `, skipped ${skipped}` : ""}`;
+    wsRefresh();
+    toast("workspace pulled from GitHub");
+  } catch (e) { stat.textContent = "pull failed: " + e.message; }
+});
+
+// local development: zip export (store-only, no compression library needed)
+function crc32(bytes) {
+  let t = crc32.t;
+  if (!t) { t = crc32.t = []; for (let n = 0; n < 256; n++) { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xEDB88320 ^ (c >>> 1) : c >>> 1; t.push(c >>> 0); } }
+  let c = ~0;
+  for (const b of bytes) c = t[(c ^ b) & 255] ^ (c >>> 8);
+  return (~c) >>> 0;
+}
+function zipStore(files) {
+  const enc = new TextEncoder();
+  const parts = [], central = [];
+  let offset = 0;
+  const push = (u8) => { parts.push(u8); offset += u8.length; };
+  const u16 = (n) => new Uint8Array([n & 255, (n >>> 8) & 255]);
+  const u32 = (n) => new Uint8Array([n & 255, (n >>> 8) & 255, (n >>> 16) & 255, (n >>> 24) & 255]);
+  const cat = (...arrs) => { const out = new Uint8Array(arrs.reduce((a, x) => a + x.length, 0)); let o = 0; for (const a of arrs) { out.set(a, o); o += a.length; } return out; };
+  for (const file of files) {
+    const name = enc.encode(file.name);
+    const crc = crc32(file.bytes);
+    const localOffset = offset;
+    push(cat(u32(0x04034b50), u16(20), u16(0x0800), u16(0), u16(0), u16(0x21), u32(crc), u32(file.bytes.length), u32(file.bytes.length), u16(name.length), u16(0), name));
+    push(file.bytes);
+    central.push(cat(u32(0x02014b50), u16(20), u16(20), u16(0x0800), u16(0), u16(0), u16(0x21), u32(crc), u32(file.bytes.length), u32(file.bytes.length), u16(name.length), u16(0), u16(0), u16(0), u16(0), u32(0), u32(localOffset), name));
+  }
+  const cdStart = offset;
+  for (const c of central) push(c);
+  push(cat(u32(0x06054b50), u16(0), u16(0), u16(central.length), u16(central.length), u32(offset - cdStart), u32(cdStart), u16(0)));
+  return new Blob(parts, { type: "application/zip" });
+}
+$("#ws-zip")?.addEventListener("click", async () => {
+  try {
+    const list = await wsExec("fs_list", { limit: 200 });
+    const files = [];
+    for (const file of list.files ?? []) {
+      const read = await wsExec("fs_read", { path: file.path });
+      if (read.binary) continue;
+      files.push({ name: file.path, bytes: new TextEncoder().encode(read.content ?? "") });
+    }
+    if (!files.length) { toast("workspace is empty", true); return; }
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(zipStore(files));
+    a.download = "nokey-workspace.zip";
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+    toast(`downloaded ${files.length} file(s)`);
+  } catch (e) { toast("zip failed: " + e.message, true); }
+});
+$("#ws-import-btn")?.addEventListener("click", () => $("#ws-import").click());
+$("#ws-import")?.addEventListener("change", async (e) => {
+  const files = [...(e.target.files ?? [])];
+  e.target.value = "";
+  let done = 0;
+  for (const file of files) {
+    try { await wsExec("fs_write", { path: file.name, content: await file.text() }); done++; } catch { /* counted below */ }
+  }
+  toast(done ? `imported ${done} file(s) into the workspace` : "nothing imported", !done);
+  wsRefresh();
+});
+
+function openWorkspace() {
+  ghLoad();
+  renderWsConvs();
+  openSheet(wsDrawer);
+  wsRefresh();
+}
+$("#cworkspace-btn")?.addEventListener("click", openWorkspace);
+wsDrawer?.addEventListener("click", (e) => { if (e.target.closest("[data-close]")) closeSheets(); });
+$("#ws-open-builder")?.addEventListener("click", () => openAppBuilder());
+cmd("workspace", () => openWorkspace(), "builder");
+
+// Model selector in the chat tab itself, two-way synced with Settings.
+const cmodelEl = $("#cmodel");
+if (cmodelEl) {
+  cmodelEl.value = $("#pmodel").value;
+  cmodelEl.addEventListener("input", () => { $("#pmodel").value = cmodelEl.value; saveParams(); });
+  cmodelEl.addEventListener("change", () => { if (!cmodelEl.value.trim()) cmodelEl.value = "free:auto"; $("#pmodel").value = cmodelEl.value; saveParams(); updateModelHint(); });
+  $("#pmodel").addEventListener("input", () => { if (cmodelEl.value !== $("#pmodel").value) cmodelEl.value = $("#pmodel").value; });
+}
+const amodelEl = $("#amodel");
+if (amodelEl) {
+  amodelEl.value = store.get("amodel", "free:smart");
+  amodelEl.addEventListener("change", () => store.set("amodel", amodelEl.value.trim() || "free:smart"));
+}
 
 // ---- forge a tool (Tools view) ----------------------------------------------
 $("#fg-go").onclick = async () => {

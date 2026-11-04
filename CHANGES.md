@@ -1,3 +1,27 @@
+# Dashboard: builder freeze fix, workspace, tools behind the scenes — 2026-11-04
+
+- **Freeze fix.** The New Technique / New Technology / New Channel modals
+  were `<dialog class="sheet">` elements opened with `showModal()`. Sheet
+  CSS parks an element off-screen (translateY(102%), visibility:hidden)
+  until an `.open` class lands, so the modal opened invisible while its
+  backdrop blocked every click — the page froze. The three modals are now
+  real dialogs (`.form-modal`), with guarded openers and close buttons
+  wired to `dialog.close()`.
+- **Tools behind the scenes.** Chat no longer forwards client tool
+  definitions and no longer asks the user to hand-feed tool results: the
+  Tools (JSON) field, the demo preset and the parallel-tools toggle are
+  gone from Settings, and chat requests carry `tools: "auto"` so the
+  router's tool plane runs server-side in the agent loop.
+- **Workspace drawer in chat.** Durable workspace files (fs tools) with an
+  editor and sandbox Run, a conversation library (named snapshots of the
+  live chat), GitHub push/pull via the Contents API (token stays in the
+  browser), and zip download / file import for local development.
+- **Model selector in the chat tab** (two-way synced with Settings), plus
+  one in the Architect composer.
+- **AI tabs on the Tools workbench**: every generated argument control
+  carries a notch whose context names the tool, the parameter, its type
+  and description; the JSON view's notch context is rebuilt per tool.
+
 # Learning loop (ASCK-L) — 2026-11-04
 
 The router already learned "did this tuple answer, and how fast". ASCK-L
