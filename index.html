@@ -749,6 +749,37 @@ dialog .row { margin-top: 4px; }
 .model-filter { display: flex; gap: 6px; margin-top: 6px; }
 .model-filter > * { flex: 1; width: 50%; }
 /* ---------- responsive ---------- */
+/* ---------- AI field notches ---------- */
+.notch-host { position: relative; }
+.ai-notch {
+  position: absolute; top: -9px; right: 10px; z-index: 6;
+  font: 600 10px/1 var(--sans); letter-spacing: .02em;
+  padding: 4px 8px; border-radius: 99px; cursor: pointer;
+  border: 1px solid var(--acc-line); background: var(--bg-2); color: var(--acc);
+  box-shadow: var(--shadow-lg);
+}
+.ai-notch:hover { background: var(--acc-soft); }
+#ai-notch-panel {
+  position: fixed; right: 16px; bottom: 16px; z-index: 90;
+  width: min(392px, calc(100vw - 32px)); max-height: min(72dvh, 640px); overflow: auto;
+  background: var(--bg-2); border: 1px solid var(--line-2); border-radius: 16px;
+  box-shadow: var(--shadow-lg); padding: 14px 14px 12px;
+  display: flex; flex-direction: column; gap: 8px;
+}
+#ai-notch-panel[hidden] { display: none; }
+.anp-h { display: flex; align-items: center; gap: 8px; font: 600 13px/1.2 var(--sans); }
+.anp-ctx { font-size: 12px; color: var(--dim); line-height: 1.45; }
+.anp-cur {
+  margin: 0; max-height: 130px; overflow: auto; white-space: pre-wrap; word-break: break-word;
+  font: 11px/1.5 var(--mono); background: var(--bg-3); border: 1px solid var(--line);
+  border-radius: 10px; padding: 8px 10px;
+}
+.anp-ans {
+  font-size: 12.5px; line-height: 1.55; white-space: pre-wrap; word-break: break-word;
+  background: var(--bg-3); border: 1px solid var(--line); border-radius: 10px; padding: 9px 11px;
+  max-height: 220px; overflow: auto;
+}
+
 @media (max-width: 1180px) {
   #nav button { padding: 8px 9px; font-size: 12px; }
   .side { width: 276px; }
@@ -1446,6 +1477,41 @@ select.tool-form-in { background: var(--bg-3); color: var(--fg); }
 
     <div class="kpis" id="tkpis"></div>
 
+    <!-- Forge a tool: the router creates its own tools on the fly (admin) -->
+    <div class="examples-card" id="forge-card" style="margin-bottom:12px">
+      <div class="examples-card-head">
+        <span class="lbl">🔨 Forge a tool</span>
+        <span class="dim" id="fg-stat" style="font-size:11px"></span>
+      </div>
+      <div style="display:grid;gap:10px;padding:12px">
+        <div class="notch-host">
+          <input id="fg-name" class="tool-form-in" style="width:100%" placeholder="tool name — lowercase, digits, underscores (e.g. word_count)" spellcheck="false" aria-label="New tool name" data-notch data-notch-label="Forge tool — name" data-notch-context="The canonical name of a new router tool. Lowercase letters, digits and underscores only, up to 64 characters. It must not collide with a built-in tool. Models call the tool by this exact name.">
+        </div>
+        <div class="notch-host">
+          <input id="fg-desc" class="tool-form-in" style="width:100%" placeholder="description — what the tool does; models read this to decide when to call it" spellcheck="false" aria-label="New tool description" data-notch data-notch-label="Forge tool — description" data-notch-context="A one or two sentence description of what the tool does and when a model should call it. This text is the main signal models use to pick tools, so be concrete about inputs, outputs and purpose.">
+        </div>
+        <div class="notch-host">
+          <textarea id="fg-params" rows="5" class="tool-form-in" style="width:100%;font-family:var(--mono);line-height:1.5" spellcheck="false" aria-label="New tool parameters JSON Schema" data-notch data-notch-label="Forge tool — parameters (JSON Schema)" data-notch-context="A JSON Schema object describing the tool arguments: type object with a properties map, per-property types and descriptions, and a required array. The router validates every call against this schema before the code runs. Ask the AI to draft a schema for the arguments you describe, or to fix one that fails.">{
+  "type": "object",
+  "properties": {
+    "text": { "type": "string", "description": "The text to process" }
+  },
+  "required": ["text"]
+}</textarea>
+        </div>
+        <div class="notch-host">
+          <textarea id="fg-code" rows="7" class="tool-form-in" style="width:100%;font-family:var(--mono);line-height:1.5" spellcheck="false" aria-label="New tool code (JavaScript function body)" data-notch data-notch-label="Forge tool — code (JavaScript body)" data-notch-context="The JavaScript function body of the tool. It receives args (the schema-validated arguments object) and api ({ fetch, kv, namespace, signal, now, locals }). Returning a value makes it the tool result. Deno, process and globalThis are not available inside the body. Keep it small and pure where possible.">// args is validated against the parameters schema before this runs.
+const t = String(args.text ?? "");
+return { words: t.split(/\s+/).filter(Boolean).length, chars: t.length };</textarea>
+        </div>
+        <div class="row" style="gap:8px;align-items:center">
+          <button class="btn" id="fg-go">🔨 Forge tool</button>
+          <span class="dim" style="font-size:11.5px">Forging needs the admin secret from connection settings. The tool goes live in the registry immediately and persists. The ✦ AI notch on each field can explain it, draft it, or fix it.</span>
+        </div>
+      </div>
+    </div>
+
+
     <!-- Master-Detail Modern Workbench -->
     <div class="tools-layout">
       <!-- Left: Tools Explorer Sidebar -->
@@ -1504,7 +1570,7 @@ select.tool-form-in { background: var(--bg-3); color: var(--fg); }
               <span class="dim" id="json-valid-stat" style="font-size:11px">Valid JSON</span>
             </div>
             <input id="trname" placeholder="tool name, e.g. calculate" aria-label="Tool name" spellcheck="false" hidden>
-            <textarea id="trargs" rows="6" spellcheck="false" class="tool-form-in" style="font-family:var(--mono);line-height:1.5" aria-label="Tool arguments (JSON)">{}</textarea>
+            <textarea id="trargs" data-notch data-notch-label="Tool arguments (JSON)" data-notch-context="The JSON arguments object for the tool selected in the workbench. It must be valid JSON and match the tool parameter schema shown above. Ask the AI to build arguments for a goal in plain words, or to fix a JSON syntax error." rows="6" spellcheck="false" class="tool-form-in" style="font-family:var(--mono);line-height:1.5" aria-label="Tool arguments (JSON)">{}</textarea>
           </div>
         </div>
 
@@ -1573,9 +1639,9 @@ select.tool-form-in { background: var(--bg-3); color: var(--fg); }
 
   <section class="view" id="v-harvester" hidden>
     <div class="row" style="margin-bottom:12px;align-items:stretch">
-      <textarea id="hurls" class="grow" rows="4" spellcheck="false" aria-label="Endpoint URLs, one per line"></textarea>
+      <textarea id="hurls" data-notch data-notch-label="Harvester — endpoint URLs" data-notch-context="One endpoint base URL per line. The harvester probes each candidate — health endpoint, models list, then a tiny chat request — and turns the reachable ones into services.json registry entries for the router catalog. Include the scheme, e.g. https://api.example.com/v1 on its own line." class="grow" rows="4" spellcheck="false" aria-label="Endpoint URLs, one per line"></textarea>
       <div style="display:grid;gap:6px;align-content:start">
-        <input id="hkey" type="password" autocomplete="off" aria-label="Bearer key for these endpoints">
+        <input id="hkey" data-notch data-notch-label="Harvester — bearer key" data-notch-context="An optional bearer or API key sent to the harvested endpoints while verifying them. Leave it empty for keyless endpoints. It is used only for the harvest probe requests and is not stored." type="password" autocomplete="off" aria-label="Bearer key for these endpoints">
         <button class="btn" id="hgo">verify</button>
         <button class="btn q" id="hcopy" disabled>copy entries</button>
       </div>
@@ -1761,6 +1827,10 @@ select.tool-form-in { background: var(--bg-3); color: var(--fg); }
             <span class="grow"></span><span class="dim">2026-11-04</span>
           </div>
           <div class="setrow">
+            <div><div class="lbl">Unlimited requests</div><div class="dim">$5/month — the free tier is 50 requests/day without a key</div></div>
+            <span class="grow"></span><a class="chip" href="/pricing" target="_blank" rel="noopener">Pricing</a>
+          </div>
+          <div class="setrow">
             <div><div class="lbl">API reference</div><div class="dim">Open the OpenAPI docs</div></div>
             <button class="chip" id="set-docs">Open <svg class="chev" aria-hidden="true"><use href="#i-up"/></svg></button>
           </div>
@@ -1794,6 +1864,24 @@ select.tool-form-in { background: var(--bg-3); color: var(--fg); }
     <div class="phint"><span><kbd>&uarr;</kbd> <kbd>&darr;</kbd> navigate</span><span><kbd>&crarr;</kbd> run</span><span><kbd>esc</kbd> close</span></div>
   </div>
 </div>
+<div id="ai-notch-panel" hidden role="dialog" aria-label="Ask AI about this field">
+  <div class="anp-h"><span id="anp-title">✦ Ask AI</span><span class="grow"></span><button class="icon-btn" id="anp-close" aria-label="Close AI panel"><svg aria-hidden="true"><use href="#i-x"/></svg></button></div>
+  <div class="anp-ctx" id="anp-ctx"></div>
+  <div>
+    <div class="lbl" style="margin-bottom:4px">Current contents</div>
+    <pre class="anp-cur" id="anp-cur"></pre>
+  </div>
+  <div class="row" style="gap:6px">
+    <input id="anp-q" class="tool-form-in grow" placeholder="Ask about this field, or say how to change it…" aria-label="Question for the AI about this field">
+    <button class="btn" id="anp-ask">Ask</button>
+  </div>
+  <div class="anp-ans" id="anp-ans" hidden></div>
+  <div class="row" id="anp-apply-row" hidden style="gap:8px;align-items:center">
+    <button class="btn q" id="anp-apply">Apply the AI's version</button>
+    <span class="dim" id="anp-note" style="font-size:11px"></span>
+  </div>
+</div>
+
 <dialog id="dconn" aria-label="Connection">
   <form method="dialog">
     <label><span class="lbl">router url</span><input id="curl" autocomplete="off"></label>
@@ -5366,6 +5454,130 @@ cmd("people chat", () => go("community"), "community");
 cmd("app builder studio", () => openAppBuilder(), "builder");
 cmd("tools workbench", () => go("tools"), "tools");
 cmd("all views", () => openSheet(moreSheet), "nav");
+
+// ---- AI field notches -------------------------------------------------------
+// A small ✦ AI tab pinned to a field's top-right corner. Clicking it opens a
+// panel that knows the field's label, its purpose (data-notch-context) and
+// its current contents, so the user can ask about what is in the field — or
+// have the AI rewrite the contents and apply the result back to the field.
+let notchField = null, notchReplacement = null;
+
+function notchHostFor(field) {
+  const existing = field.closest(".notch-host");
+  if (existing) return existing;
+  const host = document.createElement("div");
+  host.className = "notch-host";
+  if (field.classList.contains("grow")) { host.style.display = "flex"; host.style.flex = "1"; }
+  field.parentNode.insertBefore(host, field);
+  host.appendChild(field);
+  field.style.flex = "1";
+  field.style.width = "100%";
+  return host;
+}
+
+function mountNotches() {
+  for (const field of $$("[data-notch]")) {
+    if (field.dataset.notchMounted) continue;
+    field.dataset.notchMounted = "1";
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "ai-notch";
+    btn.textContent = "✦ AI";
+    btn.title = "Ask AI about this field";
+    btn.setAttribute("aria-label", "Ask AI about this field");
+    btn.onclick = (e) => { e.preventDefault(); e.stopPropagation(); openNotch(field); };
+    notchHostFor(field).appendChild(btn);
+  }
+}
+
+function notchLabel(field) {
+  return field.dataset.notchLabel || field.getAttribute("aria-label") || field.id || "field";
+}
+
+function openNotch(field) {
+  notchField = field;
+  notchReplacement = null;
+  $("#anp-title").textContent = "✦ Ask AI — " + notchLabel(field);
+  $("#anp-ctx").textContent = field.dataset.notchContext || "";
+  const val = field.value ?? "";
+  $("#anp-cur").textContent = val ? val.slice(0, 900) : "(empty)";
+  $("#anp-ans").hidden = true;
+  $("#anp-ans").textContent = "";
+  $("#anp-apply-row").hidden = true;
+  $("#ai-notch-panel").hidden = false;
+  $("#anp-q").focus();
+}
+
+function closeNotch() {
+  $("#ai-notch-panel").hidden = true;
+  notchField = null;
+}
+
+async function askNotch() {
+  if (!notchField) return;
+  const q = $("#anp-q").value.trim();
+  if (!q) return;
+  const field = notchField;
+  const btn = $("#anp-ask");
+  btn.disabled = true;
+  btn.textContent = "asking…";
+  const ans = $("#anp-ans");
+  ans.hidden = false;
+  ans.textContent = "…";
+  try {
+    const sys = "You are an inline assistant inside the nokey-router dashboard, helping the user with ONE form field.\n"
+      + "Field: " + notchLabel(field) + "\n"
+      + "What it is: " + (field.dataset.notchContext || "") + "\n"
+      + "Current contents:\n" + (field.value || "(empty)") + "\n\n"
+      + "Answer questions about this field and its contents briefly and concretely. If the user asks you to write, draft, fix or change the contents, output the COMPLETE new contents inside a single triple-backtick code block (no other code blocks), with at most one short sentence outside it.";
+    const j = await req("/v1/chat/completions", { method: "POST", body: { model: $("#pmodel")?.value || "free:auto", messages: [{ role: "system", content: sys }, { role: "user", content: q }] } });
+    const text = j?.choices?.[0]?.message?.content ?? "(no answer)";
+    ans.textContent = text;
+    const m = text.match(/```[a-zA-Z0-9_-]*\n([\s\S]*?)```/);
+    notchReplacement = m ? m[1].replace(/\n$/, "") : null;
+    $("#anp-apply-row").hidden = !notchReplacement;
+    if (notchReplacement) $("#anp-note").textContent = "The AI proposed new contents — Apply replaces the field value.";
+  } catch (e) {
+    ans.textContent = "AI request failed: " + e.message;
+  }
+  btn.disabled = false;
+  btn.textContent = "Ask";
+}
+
+$("#anp-ask").onclick = askNotch;
+$("#anp-q").addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); askNotch(); } });
+$("#anp-close").onclick = closeNotch;
+$("#anp-apply").onclick = () => {
+  if (!notchField || notchReplacement === null) return;
+  notchField.value = notchReplacement;
+  notchField.dispatchEvent(new Event("input", { bubbles: true }));
+  notchField.dispatchEvent(new Event("change", { bubbles: true }));
+  $("#anp-cur").textContent = notchReplacement.slice(0, 900);
+  $("#anp-note").textContent = "Applied to the field.";
+  $("#anp-apply-row").hidden = true;
+};
+mountNotches();
+
+// ---- forge a tool (Tools view) ----------------------------------------------
+$("#fg-go").onclick = async () => {
+  const stat = $("#fg-stat");
+  const fail = (msg) => { stat.textContent = msg; stat.style.color = "var(--bad, #e5484d)"; };
+  const name = $("#fg-name").value.trim();
+  const description = $("#fg-desc").value.trim();
+  const code = $("#fg-code").value;
+  let parameters;
+  try { parameters = JSON.parse($("#fg-params").value || "{}"); }
+  catch (e) { fail("parameters: " + e.message); return; }
+  if (!name || !description || !code.trim()) { fail("name, description and code are all required"); return; }
+  stat.textContent = "forging…";
+  stat.style.color = "";
+  try {
+    const j = await req("/v1/tools/forge", { method: "POST", admin: true, body: { name, description, parameters, code } });
+    stat.textContent = "forged: " + j.forged + " — live in the registry now";
+    stat.style.color = "var(--ok)";
+    loadTools();
+  } catch (e) { fail("forge failed: " + e.message); }
+};
 
 // ---- boot the shell ----
 $("#thm").onclick = cycleTheme;

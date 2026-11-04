@@ -3152,8 +3152,30 @@ function degradedCompletion(c: Context, o: DegradedOpts, headers: Record<string,
 }
 
 const honoApp = new Hono();
-honoApp.use("*", cors({ origin: "*", exposeHeaders: ["traceparent", "Server-Timing", "X-Nokey-Attempts", "X-Nokey-Endpoints", "X-Nokey-Degraded"] }));
+honoApp.use("*", cors({ origin: "*", exposeHeaders: ["traceparent", "Server-Timing", "X-Nokey-Attempts", "X-Nokey-Endpoints", "X-Nokey-Degraded", "X-Nokey-Free-Tier"] }));
 honoApp.use("*", bodyLimit({ maxSize: 512 * 1024 }));
+
+
+// ---------------------------------------------------------------------------
+// FREE TIER — no API key, no problem: 50 requests per day per IP, counted
+// in Deno KV (UTC day buckets; entries expire after 48h so old days clean
+// themselves up). A request carrying a WRONG key still 401s — the free
+// tier is for having no key, not for guessing one. Unlimited is $5/month:
+// see /pricing. A KV hiccup never fails a request (consume fails open).
+// ---------------------------------------------------------------------------
+const FREE_TIER_DAILY = 50;
+
+async function freeTierConsume(ip: string): Promise<number> {
+  const key = ["free_tier_v1", ip, new Date().toISOString().slice(0, 10)];
+  let used = 0;
+  for (let attempt = 0; attempt < 4; attempt++) {
+    const entry = await kv.get(key);
+    used = (typeof entry.value === "number" ? entry.value : 0) + 1;
+    const res = await kv.atomic().check(entry).set(key, used, { expireIn: 48 * 3600 * 1000 }).commit();
+    if (res.ok) return used;
+  }
+  return used;
+}
 
 honoApp.use("/v1/*", async (c, next) => {
   const ip = c.req.header("cf-connecting-ip") || c.req.header("x-forwarded-for")?.split(",")[0].trim() ||
@@ -3166,9 +3188,27 @@ honoApp.use("/v1/*", async (c, next) => {
   if (requiredKey) {
     const authHeader = c.req.header("authorization") || "";
     const token = authHeader.startsWith("Bearer ") ? authHeader.slice(7).trim() : "";
-    if (!token || !timingSafeCompare(token, requiredKey)) {
+    if (token && timingSafeCompare(token, requiredKey)) {
+      await next();
+      return;
+    }
+    if (token) {
       return c.json({ error: { message: "Unauthorized: Invalid ROUTER_API_KEY" } }, 401);
     }
+    // No key at all → free tier: 50 requests/day per IP, then a 429 that
+    // explains how to go unlimited.
+    const used = await freeTierConsume(ip).catch(() => 0);
+    if (used > FREE_TIER_DAILY) {
+      return c.json({
+        error: {
+          message: "Free tier exhausted: 50 requests per day without an API key. Unlimited requests are $5/month — see /pricing or contact Michael Morton at ziggyware@gmail.com or +1-979-661-2553.",
+          type: "free_tier_exhausted",
+          limit: FREE_TIER_DAILY,
+          pricing: "/pricing",
+        },
+      }, 429);
+    }
+    c.header("X-Nokey-Free-Tier", `${FREE_TIER_DAILY - used} requests left today`);
   }
   await next();
 });
@@ -3225,6 +3265,75 @@ honoApp.get("/v1/traces/live", requireAdmin, (c) => {
 honoApp.get("/v1/traces/:id", requireAdmin, (c) => {
   const t = getTrace(c.req.param("id"));
   return t ? c.json(t) : c.json({ error: { message: "Trace not in this isolate's ring" } }, 404);
+});
+
+
+const PRICING_HTML = `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>nokey-router — Pricing</title>
+<style>
+  :root { color-scheme: dark; }
+  body { margin: 0; font: 15px/1.6 -apple-system, "Segoe UI", Roboto, sans-serif; background: #0a0c10; color: #e8eaf0; }
+  main { max-width: 680px; margin: 0 auto; padding: 48px 20px 64px; }
+  h1 { font-size: 26px; margin: 0 0 6px; letter-spacing: -.02em; }
+  .sub { color: #9aa3b2; margin: 0 0 32px; }
+  .card { background: #12151c; border: 1px solid #232833; border-radius: 16px; padding: 22px 24px; margin: 0 0 16px; }
+  .card.hot { border-color: #b6f09c55; }
+  .price { font-size: 30px; font-weight: 700; letter-spacing: -.02em; }
+  .per { color: #9aa3b2; font-size: 14px; font-weight: 400; }
+  h2 { font-size: 16px; margin: 0 0 8px; }
+  ul { margin: 8px 0 0; padding-left: 20px; color: #c6ccd8; }
+  a { color: #b6f09c; }
+  .contact { font-size: 17px; line-height: 2; }
+  .back { display: inline-block; margin-top: 24px; color: #9aa3b2; }
+</style>
+</head>
+<body>
+<main>
+  <h1>nokey-router — pricing</h1>
+  <p class="sub">One router for open models: chat, tools, images. No keys, no sign-up to start.</p>
+
+  <div class="card">
+    <div class="price">$0</div>
+    <h2>Free tier</h2>
+    <ul>
+      <li>50 requests per day, per IP address</li>
+      <li>No API key and no account — just call the API</li>
+      <li>Every lane (fast, smart, code, reasoning) and the tool plane included</li>
+    </ul>
+  </div>
+
+  <div class="card hot">
+    <div class="price">$5 <span class="per">USD / month</span></div>
+    <h2>Unlimited</h2>
+    <ul>
+      <li>Unlimited requests with your own API key — no daily cap</li>
+      <li>Same lanes, tools and forged tools, no per-IP counting</li>
+      <li>Cancel anytime by simply not renewing</li>
+    </ul>
+  </div>
+
+  <div class="card">
+    <h2>How to pay</h2>
+    <p>Unlimited is activated personally — there is no checkout form. Contact Michael Morton, say you want <b>nokey-router unlimited ($5/month)</b>, and you will get payment instructions and your API key in reply:</p>
+    <p class="contact">
+      Email: <a href="mailto:ziggyware@gmail.com">ziggyware@gmail.com</a><br>
+      Phone: <a href="tel:+19796612553">+1-979-661-2553</a>
+    </p>
+  </div>
+
+  <a class="back" href="/">← back to the router</a>
+</main>
+</body>
+</html>`;
+
+honoApp.get("/pricing", (_c) => {
+  return new Response(PRICING_HTML, {
+    headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-cache" },
+  });
 });
 
 honoApp.get("/", (_c) => {
