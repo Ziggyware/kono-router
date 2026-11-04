@@ -16,7 +16,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,400..700&family=JetBrains+Mono:wght@400..600&display=swap" rel="stylesheet">
-<script>try{const t=JSON.parse(localStorage.getItem("nk.theme")||'"auto"');if(t==="light"||(t==="auto"&&matchMedia("(prefers-color-scheme: light)").matches))document.documentElement.dataset.theme="light"}catch{}</script>
+<script>try{const t=JSON.parse(localStorage.getItem("nk.theme")||'"auto"');if(["light","ocean","violet"].includes(t))document.documentElement.dataset.theme=t;else if(t==="auto"&&matchMedia("(prefers-color-scheme: light)").matches)document.documentElement.dataset.theme="light"}catch{}</script>
 <style>
 /* =====================================================================
    nokey-router · design system v2
@@ -55,6 +55,8 @@
   --nav: 62px;
   --tap: 34px;
 }
+[data-theme="ocean"] { --bg:#07111b; --bg-2:#0d1c2b; --bg-3:#13283a; --acc:#66e4f1; --acc-ink:#032027; --acc-soft:rgba(102,228,241,.12); --acc-line:rgba(102,228,241,.34); }
+[data-theme="violet"] { --bg:#100c19; --bg-2:#1a1426; --bg-3:#241b34; --acc:#d3b0ff; --acc-ink:#1b0d2b; --acc-soft:rgba(211,176,255,.12); --acc-line:rgba(211,176,255,.34); }
 [data-theme="light"] {
   color-scheme: light;
   --bg: #f5f7fa;
@@ -531,7 +533,8 @@ pre.src span::before {
   background: rgba(3, 4, 6, .55); backdrop-filter: blur(3px);
   opacity: 0; pointer-events: none; transition: opacity .25s ease;
 }
-#scrim.open { opacity: 1; pointer-events: auto; }
+#scrim:not(.open) { visibility: hidden; backdrop-filter: none; -webkit-backdrop-filter: none; }
+#scrim.open { opacity: 1; pointer-events: auto; visibility: visible; }
 
 .sheet {
   position: fixed; left: 0; right: 0; bottom: 0; z-index: 41;
@@ -654,6 +657,17 @@ dialog .row { margin-top: 4px; }
 /* mobile tab bar */
 #bnav { display: none; }
 
+/* Searchable model picker */
+.model-picker { position: relative; }
+.model-picker .row { flex-wrap: wrap; }
+.model-picker input, .model-picker select { min-width: 0; }
+.model-results { max-height: 240px; overflow: auto; border: 1px solid var(--line-2); border-radius: 12px; background: var(--bg-3); margin-top: 6px; }
+.model-option { display: block; width: 100%; border: 0; border-bottom: 1px solid var(--line); padding: 9px 11px; background: transparent; color: var(--fg); text-align: left; cursor: pointer; overflow-wrap: anywhere; }
+.model-option:hover, .model-option[aria-selected="true"] { background: var(--acc-soft); }
+.model-option small { display: block; color: var(--mid); margin-top: 2px; }
+.model-hint { color: var(--dim); font-size: 11px; line-height: 1.45; }
+.model-filter { display: flex; gap: 6px; margin-top: 6px; }
+.model-filter > * { flex: 1; width: 50%; }
 /* ---------- responsive ---------- */
 @media (max-width: 1180px) {
   #nav button { padding: 8px 9px; font-size: 12px; }
@@ -990,12 +1004,18 @@ dialog .row { margin-top: 4px; }
       </div>
     </div>
     <aside class="side" id="side" aria-label="Chat parameters">
-      <label><span class="lbl">model</span><input id="pmodel" list="modellist" value="free:auto"></label>
+      <div class="model-picker">
+        <label><span class="lbl">model · type a name or browse</span><input id="pmodel" value="free:auto" autocomplete="off" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="model-results"></label>
+        <div class="model-filter"><select id="model-cap" aria-label="Filter by capability"><option value="">Any capability</option><option value="reasoning">Reasoning</option><option value="vision">Vision</option><option value="code">Code</option></select><select id="model-context" aria-label="Minimum context window"><option value="0">Any context</option><option value="8192">8k+ context</option><option value="32768">32k+ context</option><option value="65536">64k+ context</option><option value="128000">128k+ context</option></select></div>
+        <div id="model-results" class="model-results" role="listbox" aria-label="Matching models" hidden></div>
+        <div id="model-hint" class="model-hint">Choose a model or enter any router-compatible ID. Capability and context metadata are estimates.</div>
+      </div>
       <datalist id="modellist"><option value="free:auto"><option value="free:fast"><option value="free:smart"><option value="free:code"><option value="free:reasoning"></datalist>
       <div class="row">
         <label class="grow"><span class="lbl">temperature <b id="ptempv" class="acc">0.7</b></span><input id="ptemp" type="range" min="0" max="2" step="0.05" value="0.7"></label>
-        <label style="width:96px"><span class="lbl">max tokens</span><input id="pmax" type="number" min="1" value="4096"></label>
+        <label style="width:110px"><span class="lbl">max tokens</span><input id="pmax" type="number" min="1" step="1" placeholder="auto" aria-describedby="token-hint"></label>
       </div>
+      <div id="token-hint" class="model-hint" aria-live="polite">Auto uses a conservative budget when context is known; otherwise the provider decides. Output limits vary.</div>
       <label><span class="lbl">reasoning effort</span>
         <select id="peffort"><option value="">default</option><option>low</option><option>medium</option><option>high</option></select></label>
       <label><span class="lbl">system</span><textarea id="psys" rows="3"></textarea></label>
@@ -1408,7 +1428,7 @@ const PARAMS = ["pmodel", "ptemp", "pmax", "peffort", "psys", "pstream", "pparal
   const p = store.get("params", {});
   for (const id of PARAMS) if (p[id] !== undefined) { const el = $("#" + id); el.type === "checkbox" ? el.checked = p[id] : el.value = p[id]; }
   $("#ptempv").textContent = $("#ptemp").value;
-  if (store.get("side") === false || (store.get("side") === null && innerWidth < 860)) $("#side").hidden = true;
+  if (innerWidth <= 860 || store.get("side") === false) $("#side").hidden = true;
 })();
 function saveParams() {
   const p = {};
@@ -1543,6 +1563,8 @@ function tools() {
 }
 function busy(on) { $("#csend").hidden = on; $("#cstop").hidden = !on; }
 async function complete() {
+  const max = $("#pmax").value.trim();
+  if (max && (!Number.isSafeInteger(Number(max)) || Number(max) < 1)) { toast("max tokens must be a positive whole number", true); return; }
   let toolList;
   try { toolList = tools(); } catch (e) { toast("tools: " + e.message, true); return; }
   const m = { role: "assistant", content: "", _m: { live: true } };
@@ -1556,7 +1578,7 @@ async function complete() {
     model: $("#pmodel").value.trim() || "free:auto",
     messages: [...(sys ? [{ role: "system", content: sys }] : []), ...conv.messages.slice(0, i).map(wire)],
     temperature: Number($("#ptemp").value),
-    max_tokens: Number($("#pmax").value) || undefined,
+    max_tokens: chatTokenBudget(conv.messages.slice(0, i), sys),
     stream,
     ...($("#peffort").value ? { reasoning_effort: $("#peffort").value } : {}),
     ...(toolList ? { tools: toolList, parallel_tool_calls: $("#pparallel").checked } : {}),
@@ -1624,16 +1646,18 @@ async function complete() {
   const stick = nearBottom();
   paint(el, m, i);
   if (stick) thread.scrollTop = thread.scrollHeight;
-  saveConv();
+  saveConv(); updateModelHint();
   if (k.degraded) toast("every upstream endpoint failed — router returned its status message", true);
 }
 async function sendChat() {
   if (chatCtl) return;
   const text = $("#cinput").value.trim();
   if (!text && !attachments.length) return;
+  const max = $("#pmax").value.trim();
+  if (max && (!Number.isSafeInteger(Number(max)) || Number(max) < 1)) { toast("max tokens must be a positive whole number", true); return; }
   const content = attachments.length ? [{ type: "text", text }, ...attachments.map((url) => ({ type: "image_url", image_url: { url } }))] : text;
   conv.messages.push({ role: "user", content });
-  $("#cinput").value = ""; autosize($("#cinput"));
+  $("#cinput").value = ""; store.del("draft"); autosize($("#cinput"));
   attachments = []; renderAttach();
   saveConv();
   // Full re-render: a pending tool-call card above drops its inputs once the user moves on.
@@ -1643,7 +1667,9 @@ async function sendChat() {
 $("#csend").onclick = sendChat;
 $("#cstop").onclick = () => chatCtl?.abort();
 function autosize(t) { t.style.height = "auto"; t.style.height = Math.min(t.scrollHeight + 2, innerHeight * 0.4) + "px"; }
-$("#cinput").addEventListener("input", (e) => autosize(e.target));
+$("#cinput").value = store.get("draft", "");
+autosize($("#cinput"));
+$("#cinput").addEventListener("input", (e) => { autosize(e.target); store.set("draft", e.target.value); });
 $("#cinput").addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); sendChat(); } });
 
 // ---- attachments ----
@@ -1667,13 +1693,13 @@ chatView.addEventListener("dragover", (e) => { if ([...e.dataTransfer.types].inc
 chatView.addEventListener("dragleave", (e) => { if (e.target === chatView || !chatView.contains(e.relatedTarget)) chatView.classList.remove("drop"); });
 chatView.addEventListener("drop", (e) => { e.preventDefault(); chatView.classList.remove("drop"); addFiles(e.dataTransfer.files); });
 
-function newChat() { if (chatCtl) chatCtl.abort(); conv.messages = []; saveConv(); renderThread(); $("#cinput").focus(); }
+function newChat() { if (chatCtl) chatCtl.abort(); conv.messages = []; saveConv(); renderThread(); updateModelHint(); $("#cinput").focus(); }
 $("#cnew").onclick = newChat;
 $("#cexport").onclick = () => {
   const blob = new Blob([JSON.stringify({ model: $("#pmodel").value, system: $("#psys").value, messages: conv.messages.map((m) => ({ ...wire(m), ...(m.reasoning_content ? { reasoning_content: m.reasoning_content } : {}) })) }, null, 2)], { type: "application/json" });
   const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = `nokey-chat-${Date.now()}.json`; a.click(); URL.revokeObjectURL(a.href);
 };
-enter.chat = () => { if (!thread.childElementCount && conv.messages.length) renderThread(); $("#cinput").focus(); };
+enter.chat = () => { if (!thread.childElementCount && conv.messages.length) renderThread(); if (innerWidth > 860) $("#cinput").focus(); };
 cmd("new chat", () => { go("chat"); newChat(); });
 cmd("toggle chat parameters", () => { go("chat"); $("#cside").click(); });
 cmd("load parallel tools preset", () => { go("chat"); $("#ppreset").click(); });
@@ -2174,9 +2200,86 @@ async function loadCatalog() {
   try {
     catalog = (await req("/v1/models")).data ?? [];
     renderModelList(catalog);
+    updateModelHint();
     renderCatalog();
   } catch (e) { toast("catalog: " + e.message, true); }
 }
+// Metadata in the mesh is heuristic and may vary by upstream tuple. Keep the
+// smallest advertised context for an exact ID rather than promising a limit.
+function modelContext(models, id) {
+  const contexts = models.filter((m) => m.id === id).map((m) => Number(m.context_window)).filter((n) => Number.isFinite(n) && n > 0);
+  return contexts.length ? Math.min(...contexts) : null;
+}
+function estimatePromptTokens(messages, system, toolsText = "") {
+  // Byte-based approximation, not a tokenizer. Images have unknown cost.
+  const text = JSON.stringify({ system, tools: toolsText, messages: messages.map((m) => ({ ...wire(m), content: textOf(m.content) })) });
+  return Math.ceil(new TextEncoder().encode(text).length / 3) + 32 * messages.length;
+}
+function automaticBudget(context, estimatedInput) {
+  if (!context) return undefined;
+  return Math.max(1, Math.min(4096, Math.floor(context - estimatedInput - Math.max(512, context * .05))));
+}
+function chatTokenBudget(messages, system) {
+  const raw = $("#pmax").value.trim();
+  if (raw) return Number(raw);
+  return automaticBudget(modelContext(catalog, $("#pmodel").value.trim()), estimatePromptTokens(messages, system, $("#ptools").value));
+}
+function updateModelHint() {
+  const id = $("#pmodel").value.trim(), context = modelContext(catalog, id);
+  const draft = $("#cinput").value.trim();
+  const estimated = estimatePromptTokens(draft ? [...conv.messages, { role: "user", content: draft }] : conv.messages, $("#psys").value, $("#ptools").value);
+  const budget = automaticBudget(context, estimated);
+  $("#model-hint").textContent = context ? `Estimated context: ${kfmt(context)} tokens · capabilities and context may vary by provider.` : "Context unknown for this ID or lane. Capability metadata is estimated.";
+  const raw = $("#pmax").value.trim();
+  let note = raw ? `Manual output limit: ${raw} tokens.` : budget ? `Auto output budget: up to ${budget} tokens.` : "Auto: provider decides the output limit.";
+  if (context && estimated + (raw ? Number(raw) || 0 : budget || 0) > context) note += " Estimated input and output exceed context; shorten the conversation.";
+  $("#token-hint").textContent = `${note} Input estimate: ~${estimated} tokens (images and automatic router tools excluded). Provider output limits may be lower.`;
+}
+const modelInput = $("#pmodel"), modelResults = $("#model-results");
+let modelMatches = [], modelIndex = -1, modelSearch = "";
+function showModelResults(query = modelSearch) {
+  modelSearch = query;
+  const words = query.toLowerCase().trim().split(/\s+/).filter(Boolean);
+  const capability = $("#model-cap").value, minimum = Number($("#model-context").value);
+  const unique = new Map();
+  for (const m of catalog) {
+    if (!m.id || /^nokey-image/i.test(m.id)) continue;
+    if (capability && !caps(m).split(" ").includes(capability)) continue;
+    const context = Number(m.context_window) || 0;
+    if (context < minimum) continue;
+    const search = `${m.id} ${m.owned_by || ""} ${caps(m)} ${context} ${context ? kfmt(context) + " " + Math.round(context / 1000) + "k" : ""}`.toLowerCase();
+    if (!words.every((w) => search.includes(w))) continue;
+    if (!unique.has(m.id)) unique.set(m.id, m);
+  }
+  modelMatches = [...unique.values()].slice(0, 80);
+  modelIndex = -1;
+  modelResults.innerHTML = modelMatches.length ? modelMatches.map((m, i) => `<button type="button" class="model-option" role="option" aria-selected="false" data-model-index="${i}">${esc(m.id)}<small>${esc(m.owned_by || "router")} · ${m.context_window ? esc(kfmt(Number(m.context_window))) + " context" : "context unknown"}${caps(m) ? " · " + esc(caps(m)) : ""}</small></button>`).join("") : '<div class="model-hint" style="padding:12px">No matches. You can still enter a custom model ID.</div>';
+  modelResults.hidden = false; modelInput.setAttribute("aria-expanded", "true");
+}
+function closeModelResults() { modelResults.hidden = true; modelInput.setAttribute("aria-expanded", "false"); modelInput.removeAttribute("aria-activedescendant"); }
+function chooseModel(index) {
+  if (!modelMatches[index]) return;
+  modelInput.value = modelMatches[index].id; saveParams(); updateModelHint(); modelInput.focus(); closeModelResults();
+}
+modelInput.addEventListener("focus", () => showModelResults(""));
+modelInput.addEventListener("input", () => { updateModelHint(); showModelResults(modelInput.value); });
+modelInput.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && !modelResults.hidden) { closeModelResults(); e.stopPropagation(); }
+  else if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+    e.preventDefault(); if (modelResults.hidden) showModelResults("");
+    if (!modelMatches.length) return;
+    modelIndex = Math.max(0, Math.min(modelMatches.length - 1, modelIndex + (e.key === "ArrowDown" ? 1 : -1)));
+    const options = $$("[role=option]", modelResults); options.forEach((el, i) => { el.setAttribute("aria-selected", String(i === modelIndex)); el.id = `model-option-${i}`; });
+    modelInput.setAttribute("aria-activedescendant", `model-option-${modelIndex}`); options[modelIndex]?.scrollIntoView({ block: "nearest" });
+  } else if (e.key === "Enter" && !modelResults.hidden && modelIndex >= 0) { e.preventDefault(); chooseModel(modelIndex); }
+});
+modelResults.addEventListener("mousedown", (e) => e.preventDefault());
+modelResults.addEventListener("click", (e) => { const option = e.target.closest("[data-model-index]"); if (option) chooseModel(Number(option.dataset.modelIndex)); });
+for (const id of ["model-cap", "model-context"]) $("#" + id).addEventListener("change", () => showModelResults());
+document.addEventListener("click", (e) => { if (!e.target.closest(".model-picker")) closeModelResults(); });
+$(".model-picker").addEventListener("focusout", () => setTimeout(() => { if (!$(".model-picker").contains(document.activeElement)) closeModelResults(); }, 0));
+for (const id of ["pmax", "psys", "ptools", "cinput"]) $("#" + id).addEventListener("input", updateModelHint);
+updateModelHint();
 function renderCatalog() {
   const q = $("#cfilter").value.trim().toLowerCase();
   const rows = catalog.filter((m) => !q || `${m.id} ${m.owned_by} ${caps(m)}`.toLowerCase().includes(q));
@@ -2188,7 +2291,7 @@ function renderCatalog() {
 $("#cfilter").oninput = renderCatalog;
 $("#creload").onclick = loadCatalog;
 $$("#v-catalog th[data-k]").forEach((th) => th.onclick = () => { csort = { k: th.dataset.k, d: csort.k === th.dataset.k ? -csort.d : (["iq_effective", "context_window"].includes(th.dataset.k) ? -1 : 1) }; renderCatalog(); });
-$("#ctb").onclick = (e) => { const tr = e.target.closest("[data-id]"); if (!tr) return; $("#pmodel").value = tr.dataset.id; saveParams(); go("chat"); toast("model → " + tr.dataset.id); };
+$("#ctb").onclick = (e) => { const tr = e.target.closest("[data-id]"); if (!tr) return; $("#pmodel").value = tr.dataset.id; saveParams(); updateModelHint(); go("chat"); toast("model → " + tr.dataset.id); };
 enter.catalog = () => { if (!catalog.length) loadCatalog(); else renderCatalog(); };
 
 // =====================================================================
@@ -2696,7 +2799,7 @@ const MQ_MOBILE = matchMedia("(max-width: 860px)");
 const cvar = (n, f = "#888") => getComputedStyle(document.documentElement).getPropertyValue(n).trim() || f;
 
 // ---- theme ----
-const THEME_SEQ = ["auto", "dark", "light"];
+const THEME_SEQ = ["auto", "dark", "light", "ocean", "violet"];
 let themePref = store.get("theme", "auto");
 const themeResolved = (p) => p === "auto" ? (matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark") : p;
 function paintTheme() {
@@ -2927,7 +3030,7 @@ go(location.hash.slice(1) || "chat");
 connState(null);
 ping().catch(() => {});
 setInterval(() => { if (!document.hidden && current !== "lanes") ping().catch(() => {}); }, 60_000);
-req("/v1/models").then((d) => { catalog = d.data ?? []; renderModelList(catalog); }).catch(() => {});
+req("/v1/models").then((d) => { catalog = d.data ?? []; renderModelList(catalog); updateModelHint(); }).catch(() => {});
 </script>
 </body>
 </html>
