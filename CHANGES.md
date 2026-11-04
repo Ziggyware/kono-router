@@ -1,3 +1,11 @@
+# Workspace quality of life — 2026-11-04
+
+- The chat model picker accepts arbitrary IDs and offers searchable, keyboard-navigable catalog suggestions, with capability and minimum-context filters. Catalog capabilities and context sizes are estimates, not guarantees of upstream support.
+- A blank max-token field uses a conservative output budget from the smallest advertised context for an exact model ID, after an approximate text/tool-input estimate and safety margin. For lanes or unknown IDs it leaves the provider default untouched. Manual limits are preserved; output limits, images and automatic router tools are not known to the estimator.
+- Mobile chat starts with parameters closed even if the desktop preference was open. The closed scrim cannot blur the page, and opening chat no longer automatically raises the mobile keyboard.
+- Added ocean and violet themes and local draft recovery.
+- Video generation is not implemented or advertised: this environment cannot reach provider APIs to verify keyless video support, and a model name in a catalog is not proof that a usable generation API exists.
+
 # Tool Plane (ASCK-T v2) — 2026-11-04
 
 v1 made the plane *executable*: a schema validator, a repair ladder, a registry
