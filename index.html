@@ -902,6 +902,7 @@ dialog .row { margin-top: 4px; }
     <symbol id="i-server" viewBox="0 0 24 24"><rect x="3" y="3.4" width="18" height="7.2" rx="2.4"/><rect x="3" y="13.4" width="18" height="7.2" rx="2.4"/><path d="M7 7h.01M7 17h.01"/></symbol>
     <symbol id="i-radar" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.6"/><circle cx="12" cy="12" r="3.8"/><path d="m12 12 5.6-4.6"/></symbol>
     <symbol id="i-branch" viewBox="0 0 24 24"><circle cx="6.6" cy="5.6" r="2.2"/><circle cx="6.6" cy="18.4" r="2.2"/><circle cx="17.4" cy="12" r="2.2"/><path d="M6.6 7.8v8.4M8.8 5.6h3.2a3 3 0 0 1 3 3v1.2M15.2 14.2a3 3 0 0 1-3 3H8.8"/></symbol>
+    <symbol id="i-tool" viewBox="0 0 24 24"><path d="M12 3.2 19.4 7.6v8.8L12 20.8 4.6 16.4V7.6Z"/><circle cx="12" cy="12" r="2.6"/></symbol>
     <symbol id="i-wrench" viewBox="0 0 24 24"><path d="M15.4 3.9a5.2 5.2 0 0 0-6.5 6.5l-5 5a2.1 2.1 0 0 0 3 3l5-5a5.2 5.2 0 0 0 6.5-6.5l-2.4 2.4-3-3Z"/></symbol>
     <symbol id="i-file" viewBox="0 0 24 24"><path d="M13.6 3.4H7a2.6 2.6 0 0 0-2.6 2.6v12A2.6 2.6 0 0 0 7 20.6h10a2.6 2.6 0 0 0 2.6-2.6V9.4Z"/><path d="M13.6 3.4v6h6"/></symbol>
     <symbol id="i-terminal" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="3.2"/><path d="m7.4 10 2.6 2.6-2.6 2.6M13 15h4"/></symbol>
@@ -937,6 +938,7 @@ dialog .row { margin-top: 4px; }
     <button role="tab" data-v="catalog">Catalog</button>
     <button role="tab" data-v="lanes">Lanes</button>
     <button role="tab" data-v="endpoints">Endpoints</button>
+    <button role="tab" data-v="tools">Tools</button>
     <button role="tab" data-v="harvester">Harvester</button>
     <span class="sep"></span>
     <button role="tab" data-v="traces">Traces</button>
@@ -998,7 +1000,8 @@ dialog .row { margin-top: 4px; }
         <select id="peffort"><option value="">default</option><option>low</option><option>medium</option><option>high</option></select></label>
       <label><span class="lbl">system</span><textarea id="psys" rows="3"></textarea></label>
       <div class="row"><label class="row" style="flex-direction:row"><input type="checkbox" id="pstream" checked> <span class="mid">stream</span></label>
-        <label class="row" style="flex-direction:row"><input type="checkbox" id="pparallel" checked> <span class="mid">parallel tools</span></label></div>
+        <label class="row" style="flex-direction:row"><input type="checkbox" id="pparallel" checked> <span class="mid">parallel tools</span></label>
+        <label class="row" style="flex-direction:row" title="Attach the router's own tools and let it execute the calls"><input type="checkbox" id="pauto"> <span class="mid">router tools</span></label></div>
       <label><span class="lbl">tools json</span><textarea id="ptools" rows="8" spellcheck="false"></textarea></label>
       <div class="row"><button class="btn q" id="ppreset">tools preset</button><button class="btn q" id="pclear">clear tools</button></div>
       <div class="row" style="margin-top:auto"><button class="btn q" id="cnew">new chat</button><button class="btn q" id="cexport">export</button></div>
@@ -1050,6 +1053,41 @@ dialog .row { margin-top: 4px; }
   <section class="view" id="v-endpoints" hidden>
     <div class="row" style="margin-bottom:10px"><input id="efilter" size="32" aria-label="Filter endpoints"><button class="btn q" id="ereload">reload</button><span class="grow"></span><span class="dim" id="ecount"></span></div>
     <table><thead><tr><th class="l" data-k="name">endpoint</th><th class="l" data-k="id">id</th><th data-k="catalog_tuples">tuples</th><th data-k="models">hints</th><th class="l" data-k="url">url</th></tr></thead><tbody id="etb"></tbody></table>
+  </section>
+
+  <section class="view" id="v-tools" hidden>
+    <div class="row" style="margin-bottom:10px">
+      <input id="tfilter" size="22" aria-label="Filter tools">
+      <select id="tflavor" aria-label="Vendor wire format">
+        <option value="openai">openai</option>
+        <option value="openai-strict">openai-strict</option>
+        <option value="anthropic">anthropic</option>
+        <option value="gemini">gemini</option>
+      </select>
+      <button class="btn q" id="treload">reload</button>
+      <button class="btn q" id="twire">copy wire</button>
+      <span class="grow"></span><span class="dim" id="tstat"></span>
+    </div>
+    <div class="kpis" id="tkpis"></div>
+    <div class="row" style="margin-bottom:10px;align-items:stretch">
+      <div style="display:grid;gap:6px;flex:1">
+        <input id="trname" placeholder="tool name, e.g. math_evaluate" aria-label="Tool name" spellcheck="false">
+        <textarea id="trargs" rows="4" spellcheck="false" aria-label="Tool arguments (JSON, or the mangled text a model produced)">{}</textarea>
+      </div>
+      <div style="display:grid;gap:6px;align-content:start">
+        <button class="btn" id="trgo">execute</button>
+        <span class="dim" id="trstat" style="max-width:260px"></span>
+      </div>
+    </div>
+    <pre class="wrap" id="trout" hidden style="margin-bottom:12px;max-height:260px;overflow:auto"></pre>
+    <table>
+      <thead><tr>
+        <th class="l" data-k="name">tool</th><th class="l" data-k="kind">kind</th><th data-k="calls">calls</th>
+        <th data-k="competence">competence</th><th data-k="p50">p50</th><th data-k="p95">p95</th>
+        <th data-k="repair">repair%</th><th class="l">flags</th>
+      </tr></thead>
+      <tbody id="ttb"></tbody>
+    </table>
   </section>
 
   <section class="view" id="v-harvester" hidden>
@@ -1433,6 +1471,7 @@ function paint(el, m, i) {
   const meta = [];
   if (k.degraded) meta.push(`<span class="warn">degraded · every endpoint failed · no answer fabricated</span>`);
   else if (live && !k.ttft) meta.push(`<span class="live">${k.routing ? `routing · ${k.routing} attempts` : "routing"}</span>`);
+  else if (live && k.toolRun) meta.push(`<span class="live">tool round ${esc(k.rounds)} · ${esc(k.toolRun)}</span>`);
   else if (live) meta.push(`<span class="live">streaming</span>`);
   if (k.tuple) meta.push(`<b title="${esc(k.provider ?? "")}">${esc(k.tuple)}</b>`);
   $(".meta", el).innerHTML = meta.join("");
@@ -1463,6 +1502,7 @@ function paint(el, m, i) {
     if (k.total) foot.push(`total ${ms(k.total)}`);
     const gen = (k.total ?? 0) - (k.ttft ?? 0);
     if (k.chars && gen > 0) foot.push(`${f(k.chars / 4 / (gen / 1000), 0)} tok/s`);
+    if (k.rounds) foot.push(`${esc(k.rounds)} tool round${Number(k.rounds) > 1 ? "s" : ""}${k.executed?.length ? ` · ${esc(k.executed.map((t) => t.tool).join(", "))}` : ""}`);
     if (k.finish) foot.push(esc(k.finish));
     if (k.trace) foot.push(`<button data-act="trace" data-tr="${esc(k.trace)}">trace</button>`);
     if (m.content) foot.push(`<button data-act="copy">copy</button>`);
@@ -1520,6 +1560,9 @@ async function complete() {
     stream,
     ...($("#peffort").value ? { reasoning_effort: $("#peffort").value } : {}),
     ...(toolList ? { tools: toolList, parallel_tool_calls: $("#pparallel").checked } : {}),
+    // "Router tools" attaches the plane's own built-ins and lets the router run
+    // the agent loop; with client tools present it adds to them instead.
+    ...($("#pauto").checked ? (toolList ? { nokey_tools: true } : { tools: "auto" }) : {}),
   };
   const k = m._m, t0 = performance.now();
   let frame = 0;
@@ -1534,7 +1577,7 @@ async function complete() {
       const j = await res.json();
       const msg = j.choices?.[0]?.message ?? {};
       Object.assign(m, { content: msg.content ?? "", ...(msg.reasoning_content ? { reasoning_content: msg.reasoning_content } : {}), ...(msg.tool_calls ? { tool_calls: msg.tool_calls } : {}) });
-      Object.assign(k, { ttft: j.telemetry?.observed_ttft_ms, finish: j.choices?.[0]?.finish_reason, tuple: j.nokey?.tuple_id, provider: j.provider, degraded: j.nokey?.degraded });
+      Object.assign(k, { ttft: j.telemetry?.observed_ttft_ms, finish: j.choices?.[0]?.finish_reason, tuple: j.nokey?.tuple_id, provider: j.provider, degraded: j.nokey?.degraded, rounds: j.nokey?.tool_rounds, executed: j.nokey?.tools_executed });
     } else {
       let rs0 = 0;
       for await (const { data, comment } of sse(res, chatCtl.signal)) {
@@ -1543,6 +1586,14 @@ async function complete() {
         if (!data || data === "[DONE]") continue;
         const j = JSON.parse(data);
         if (j.error) throw new Error(j.error.message);
+        // Router status frames carry bookkeeping only (empty choices): the
+        // plane ran a tool round itself and is about to re-dispatch.
+        if (j.nokey?.type === "tool_round") {
+          k.rounds = j.nokey.round;
+          k.toolRun = (j.nokey.tools ?? []).map((t) => `${t.name}${t.ok ? "" : " ✗"}`).join(", ");
+          repaint();
+          continue;
+        }
         const d = j.choices?.[0]?.delta ?? {};
         if (!k.ttft && (d.content || d.reasoning_content || d.tool_calls)) k.ttft = performance.now() - t0;
         if (d.reasoning_content) { m.reasoning_content = (m.reasoning_content ?? "") + d.reasoning_content; rs0 ||= performance.now(); }
@@ -1556,7 +1607,7 @@ async function complete() {
         }
         if (j.provider) k.provider = j.provider;
         if (j.choices?.[0]?.finish_reason) k.finish = j.choices[0].finish_reason;
-        if (j.nokey) { k.tuple = j.nokey.tuple_id ?? k.tuple; k.degraded = j.nokey.degraded; }
+        if (j.nokey) { k.tuple = j.nokey.tuple_id ?? k.tuple; k.degraded = j.nokey.degraded; k.rounds = j.nokey.tool_rounds ?? k.rounds; }
         repaint();
       }
     }
@@ -2340,6 +2391,167 @@ $("#etb").onclick = (ev) => { const tr = ev.target.closest("tr[data-id]"); if (t
 enter.endpoints = () => { if (!endpoints.length) loadEndpoints(); };
 
 // =====================================================================
+// TOOLS — the ASCK-T tool plane: registry, learned skill, live runner
+// =====================================================================
+let toolList = [], toolSkills = {}, toolTotals = {}, toolAgent = {}, toolWire = { flavor: "openai", tools: [] };
+let toolPlane = "asck-t-v1", toolEnabled = true, toolOpen = null, tsort = { k: "name", d: 1 };
+
+// Seeds double as documentation: each one is a call that actually works.
+const TOOL_SEEDS = {
+  math_evaluate: { expression: "(23*19)+14" },
+  math_statistics: { values: [12, 15, 18, 22, 90], quantiles: [0.5, 0.95, 0.99] },
+  text_similarity: { query: "gpt-4o-mini", candidates: ["gpt-4o", "claude-3-5-sonnet", "gpt-4o-mini-2024"] },
+  text_extract: { text: "order 12345 shipped 2026-11-04", pattern: "\\d{4,}" },
+  json_query: { data: { a: { b: [10, 20, 30] } }, path: "$.a.b[1]" },
+  json_validate: { data: { n: "5" }, schema: { type: "object", properties: { n: { type: "integer" } }, required: ["n"] }, coerce: true },
+  json_transform: { data: { a: 1, b: null, c: [] }, compact: true, flatten: true },
+  time_convert: { now: true, to: "iso" },
+  crypto_digest: { data: "nokey-router", algorithm: "sha-256" },
+  crypto_id: { kind: "ulid", count: 2 },
+  encode_transform: { data: "hello \u2713", to: "base64" },
+  encode_jwt: { token: "eyJhbGciOiJub25lIn0.eyJzdWIiOiIxMjM0IiwiZXhwIjoxODAwMDAwMDAwfQ." },
+  random_sample: { count: 5, distribution: "normal", seed: "reproducible" },
+  router_capabilities: {},
+  router_catalog: { mode: "tools", limit: 5 },
+  router_health: { section: "tool_plane" },
+  router_models: { filter: "free:", limit: 10 },
+  router_endpoints: { limit: 5 },
+  router_lane: { prompt: "write a python function", with_tools: true },
+  router_trace: { limit: 5 },
+};
+
+const pct = (v) => (v === null || v === undefined ? "\u2014" : `${(v * 100).toFixed(1)}%`);
+function exampleArgs(name) {
+  if (TOOL_SEEDS[name]) return TOOL_SEEDS[name];
+  const props = toolList.find((t) => t.name === name)?.parameters?.properties ?? {};
+  const required = toolList.find((t) => t.name === name)?.parameters?.required ?? [];
+  const keys = required.length ? required : Object.keys(props).slice(0, 1);
+  const out = {};
+  for (const k of keys) {
+    const sch = props[k] ?? {};
+    const type = Array.isArray(sch.type) ? sch.type[0] : sch.type;
+    out[k] = sch.default !== undefined ? sch.default
+      : sch.enum ? sch.enum[0]
+      : type === "integer" || type === "number" ? 1
+      : type === "boolean" ? false
+      : type === "array" ? []
+      : type === "object" ? {} : "";
+  }
+  return out;
+}
+
+async function loadTools() {
+  try {
+    const flavor = $("#tflavor").value;
+    const d = await req(`/v1/tools?flavor=${encodeURIComponent(flavor)}`, { admin: true });
+    toolList = d.data ?? [];
+    toolSkills = d.skills ?? {};
+    toolTotals = d.totals ?? {};
+    toolAgent = d.agent ?? {};
+    toolWire = d.wire ?? { flavor, tools: [] };
+    toolPlane = d.plane ?? toolPlane;
+    toolEnabled = d.enabled !== false;
+    renderTools();
+  } catch (e) { toast("tools: " + e.message, true); }
+}
+
+function toolDetail(t) {
+  const s = toolSkills[t.name];
+  const chips = [
+    s ? `${s.calls} calls` : "no evidence yet",
+    s ? `${s.errors} errors` : "",
+    s ? `success ${pct(s.success_rate)}` : "",
+    s ? `p99 ${ms(s.p99_ms)}` : "",
+    s ? `stale ${f(s.stale_hours, 1)}h` : "",
+    ...(s?.top_errors ?? []).map((e) => `${esc(e.code)} \u00d7${e.count}`),
+  ].filter(Boolean).join(" \u00b7 ");
+  return `<div class="dim" style="margin-bottom:6px">${esc(t.description)}</div>
+    <div class="dim t" style="margin-bottom:6px">${chips || "\u2014"}${s?.last_error ? ` \u00b7 last: ${esc(String(s.last_error).slice(0, 160))}` : ""}</div>
+    ${t.aliases?.length ? `<div class="dim t" style="margin-bottom:6px">also answers to: ${t.aliases.map(esc).join(", ")}</div>` : ""}
+    <div class="row" style="margin-bottom:6px"><button class="btn q" data-run="${esc(t.name)}">run ${esc(t.name)}</button></div>
+    <pre class="wrap" style="max-height:240px;overflow:auto">${esc(JSON.stringify(t.parameters ?? {}, null, 2))}</pre>`;
+}
+
+function renderTools() {
+  const q = $("#tfilter").value.trim().toLowerCase();
+  const rows = toolList.filter((t) => !q || [t.name, t.kind, t.description, ...(t.aliases ?? [])].join(" ").toLowerCase().includes(q));
+  const key = (t) => {
+    const s = toolSkills[t.name];
+    if (tsort.k === "calls") return s?.calls ?? -1;
+    if (tsort.k === "competence") return s?.competence ?? -1;
+    if (tsort.k === "p50") return s?.p50_ms ?? -1;
+    if (tsort.k === "p95") return s?.p95_ms ?? -1;
+    if (tsort.k === "repair") return s?.repair_rate ?? -1;
+    return t[tsort.k] ?? t.name;
+  };
+  rows.sort((a, b) => { const x = key(a), y = key(b); return (typeof x === "number" ? x - y : String(x).localeCompare(String(y))) * tsort.d; });
+
+  const t = toolTotals;
+  $("#tkpis").innerHTML = [["tools", t.tools], ["instrumented", t.instrumented], ["calls", t.calls], ["errors", t.errors], ["repairs", t.repairs], ["agent rounds", toolAgent.max_rounds]]
+    .map(([k, v]) => `<div class="kpi"><b>${esc(v ?? "\u2014")}</b><span>${k}</span></div>`).join("")
+    + `<div class="kpi"><b class="${toolEnabled ? "ok" : "no"}">${toolEnabled ? "on" : "off"}</b><span>${esc(toolPlane)}</span></div>`
+    + `<div class="kpi"><b>${esc(toolAgent.auto_tools?.length ?? 0)}</b><span>auto tools</span></div>`;
+  $("#tstat").textContent = `${rows.length}/${toolList.length} tools \u00b7 wire ${toolWire.flavor} \u00b7 ${toolEnabled ? "agent loop on" : "plane disabled"}`;
+
+  $("#ttb").innerHTML = rows.map((x) => {
+    const s = toolSkills[x.name];
+    const flags = [x.admin ? "admin" : "", x.deterministic ? "pure" : ""].filter(Boolean).join(" \u00b7 ");
+    const head = `<tr class="click" data-tool="${esc(x.name)}">
+      <td class="l t">${esc(x.name)}</td><td class="l">${esc(x.kind)}</td>
+      <td class="${s?.calls ? "" : "no"}">${s?.calls ?? 0}</td>
+      <td class="${s && s.competence < 0.5 ? "no" : ""}">${s ? pct(s.competence) : "\u2014"}</td>
+      <td>${s ? ms(s.p50_ms) : "\u2014"}</td><td>${s ? ms(s.p95_ms) : "\u2014"}</td>
+      <td class="${s && s.repair_rate > 0.25 ? "no" : ""}">${s ? pct(s.repair_rate) : "\u2014"}</td>
+      <td class="l dim">${flags || "\u2014"}</td></tr>`;
+    return head + (toolOpen === x.name ? `<tr class="x"><td colspan="8">${toolDetail(x)}</td></tr>` : "");
+  }).join("");
+}
+
+async function runToolCall() {
+  const name = $("#trname").value.trim();
+  if (!name) { toast("name a tool first", true); return; }
+  const raw = $("#trargs").value.trim();
+  let args;
+  // Unparsable text is sent as-is on purpose: the repair ladder is the feature.
+  try { args = raw ? JSON.parse(raw) : {}; } catch { args = raw; }
+  $("#trstat").textContent = "running\u2026";
+  try {
+    const d = await req("/v1/tools/execute", { method: "POST", admin: true, body: { name, arguments: args } });
+    const r = d.results?.[0] ?? {};
+    $("#trstat").textContent = r.ok
+      ? `ok \u00b7 ${ms(r.ms)} \u00b7 ${r.strategy}${r.repairs?.length ? ` \u00b7 ${r.repairs.join(", ")}` : ""} \u00b7 ${r.bytes ?? 0}B${r.truncated ? " truncated" : ""}`
+      : `${r.code ?? "error"} \u00b7 ${ms(r.ms)} \u00b7 ${r.error ?? ""}`;
+    const out = $("#trout");
+    out.hidden = false;
+    out.textContent = JSON.stringify(r.ok ? r.result : { error: r.error, code: r.code, issues: r.issues ?? [], suggestions: r.suggestions ?? [] }, null, 2).slice(0, 40000);
+    loadTools();
+  } catch (e) { $("#trstat").textContent = ""; toast("execute: " + e.message, true); }
+}
+
+$("#tfilter").oninput = renderTools;
+$("#tflavor").onchange = loadTools;
+$("#treload").onclick = loadTools;
+$("#trgo").onclick = runToolCall;
+$("#trargs").addEventListener("keydown", (e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); runToolCall(); } });
+$("#twire").onclick = () => {
+  const n = toolWire.tools[0]?.functionDeclarations?.length ?? toolWire.tools.length;
+  navigator.clipboard.writeText(JSON.stringify(toolWire.tools, null, 2)).then(() => toast(`${n} ${toolWire.flavor} declarations copied`));
+};
+$$("#v-tools th[data-k]").forEach((th) => th.onclick = () => { tsort = { k: th.dataset.k, d: tsort.k === th.dataset.k ? -tsort.d : 1 }; renderTools(); });
+$("#ttb").onclick = (ev) => {
+  const run = ev.target.closest("button[data-run]");
+  if (run) {
+    $("#trname").value = run.dataset.run;
+    $("#trargs").value = JSON.stringify(exampleArgs(run.dataset.run), null, 2);
+    $("#trgo").scrollIntoView({ block: "nearest" });
+    return;
+  }
+  const tr = ev.target.closest("tr[data-tool]");
+  if (tr) { toolOpen = toolOpen === tr.dataset.tool ? null : tr.dataset.tool; renderTools(); }
+};
+enter.tools = () => { if (!toolList.length) loadTools(); else renderTools(); };
+
+// =====================================================================
 // TRACES — live tail + span waterfall
 // =====================================================================
 const traces = new Map(); // id -> Map(spanId -> span)
@@ -2520,6 +2732,7 @@ const VIEW_META = [
   ["catalog", "Catalog", "Every routable model", "#i-grid"],
   ["lanes", "Lanes", "Live lane telemetry", "#i-pulse"],
   ["endpoints", "Endpoints", "Upstream pool", "#i-server"],
+  ["tools", "Tools", "Executable tool plane", "#i-tool"],
   ["harvester", "Harvester", "Verify new keys", "#i-radar"],
   ["traces", "Traces", "Span waterfall", "#i-branch"],
   ["ops", "Ops", "Probe · sync · resurrect", "#i-wrench"],

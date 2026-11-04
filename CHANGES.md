@@ -1,3 +1,134 @@
+# Tool Plane (ASCK-T v1) — 2026-11-04
+
+First-class tool support. Until now the router only *forwarded* `tools` /
+`tool_choice` / `parallel_tool_calls` and forced the `code` lane when they were
+present; nothing on the mesh could actually be called, and nothing was learned
+from the calls that went past. `tools.ts` adds an executable tool plane with its
+own control kernel, and `main.ts` wires it into dispatch so tool knowledge
+compounds across requests instead of being rebuilt per call.
+
+## `tools.ts` — the kernel (pure module, no I/O, no `eval`)
+- **Schema subset validator** (`validateJson`): type/enum/const, required,
+  properties, patternProperties, `additionalProperties`, items/prefixItems,
+  min/max Items, uniqueItems, minimum/maximum (+ exclusive), multipleOf,
+  min/maxLength, pattern, format, `default`, allOf/anyOf/oneOf/not, `$ref`/`$defs`.
+  Bounded (depth 24, 250k nodes) so a hostile schema cannot hang an isolate.
+  Coercion is lossless-only (`"5"`→5, `"true"`→true, scalar→[scalar], enum case,
+  inclusive-bound clamp) and every mutation is reported at its JSON pointer.
+- **Argument repair ladder** (`parseToolArguments`): native → strict parse →
+  fence/prose extraction → string-aware repair (single quotes, bare keys,
+  Python literals, trailing commas, truncation, raw newlines, comments) →
+  double-decode → scalar salvage. Each rung records what it did, so a repaired
+  call is still a *graded* call rather than a silent guess.
+- **Registry**: wire-safe canonical ids (`^[a-zA-Z0-9_-]{1,64}$`) with dotted,
+  kebab and camelCase aliases folded by one normaliser; a fuzzy resolver that
+  either auto-corrects a near miss (≥0.82) or returns ranked suggestions
+  (≥0.62), and now puts the suggestion in the error *text* too, because a model
+  retrying from the message alone must still see the correction.
+- **Sandboxed execution** (`executeTool` / `executeToolCalls`): deadline armed
+  *before* the work starts (a polite tool cannot win the race on abort), 128KB
+  argument cap, 64KB result cap with truncation flagged, structured error codes
+  (`UNKNOWN_TOOL`, `ADMIN_REQUIRED`, `INVALID_ARGUMENTS`, `TOOL_ERROR`,
+  `TIMEOUT`, `ABORTED`, `RESULT_TOO_LARGE`).
+- **Vendor projections**: one registry → `openai`, `openai-strict` (closed
+  schema, everything required), `anthropic` (`input_schema`) and `gemini`
+  (`functionDeclarations`, upper-cased types), plus a system-prompt preamble.
+- **Skill memory** (`observeToolSkill` / `skillSummary`): per-tool discounted
+  Beta posterior and a Kalman filter over ln(latency) with *tool-scale* bounds
+  (the kernel's TTFT-shaped filter would clamp a 40µs computation to 50ms),
+  reported as Wilson competence floor, Thompson draw, p50/p95/p99, repair rate,
+  top error codes and staleness.
+- **14 built-ins**: `math_evaluate` (precedence-climbing evaluator, no `eval`,
+  AST-cached, 30+ functions incl. `erf`, `norm_quantile`, `lognorm_sf`),
+  `math_statistics` (one-pass moments, type-7 quantiles, Freedman–Diaconis
+  histogram, Tukey outliers, log-normal fit), `text_similarity`, `text_extract`,
+  `json_query` (JSONPath-lite), `json_validate`, `json_transform`,
+  `time_convert` (IANA zones, durations, epoch-unit guessing), `crypto_digest`,
+  `crypto_id`, `encode_transform`, `encode_jwt`, `random_sample`,
+  `router_capabilities`.
+
+## HTTP surface
+- **`GET /v1/tools`** — registry with schemas, aliases and learned skill, plane
+  totals, the agent configuration, and `wire.tools` projected onto any of the
+  four vendor formats. `?schemas=0` slims it; admin-only tools appear only with
+  a valid `x-admin-secret` (mirroring `requireAdmin`: no secret configured means
+  no admin tier at all).
+- **`POST /v1/tools/execute`** — one call (`{name, arguments}`) or a batch
+  (`{calls:[…]}`, ≤16), accepting OpenAI nesting or flat keys. Always 200: a
+  failing tool is reported per-call with its code, issues and suggestions,
+  because that is what a model needs to retry. Skill writes are awaited so the
+  response's own `totals` already include the call, and the route is traced
+  (`traceparent` honoured inbound and returned).
+- **Mesh tools** (`router_catalog`, `router_health`, `router_models`,
+  `router_endpoints`, `router_lane`, and admin `router_trace`) expose live router
+  state to any model, so "which lane should I use?" is answered with evidence
+  instead of a guess.
+- `/health` gains a `tool_plane` block and `current_best_tools`; `/v1/models`
+  gains the `free:tools` lane. Engine id → `nokey-sovereign-v6-asck1-toolplane`.
+
+## Chat integration: an opt-in agent loop
+- `"tools": "auto"` (or `nokey_tools`, or `x-nokey-tools`) attaches the plane's
+  built-ins; `nokey_tools: "all"` attaches every non-admin tool, and an explicit
+  list attaches exactly those. Client declarations are merged first and **shadow
+  same-named built-ins** — the plane never hijacks a caller's own API.
+- When the router supplied the tools it also runs the loop: execute the calls,
+  append the protocol-correct `assistant` + `tool` turns, keep the winning tuple
+  selectable, and re-dispatch — up to `NOKEY_TOOL_ROUNDS` (default 3, clamped
+  0–8; 0 is pure passthrough). A round is executed only when *every* call in it
+  is a built-in, so a mixed parallel batch is handed back whole.
+- Streaming drains a tool round quietly (`collectUpstream`), emits a status
+  frame with `choices: []` and `nokey.type: "tool_round"`, then streams the real
+  answer. Assistant content is never fabricated, and with the loop off the byte
+  stream is exactly what it was before.
+- A one-line preamble (`toolPreamble`, opt out with `nokey_preamble: false`)
+  tells small free models the router will execute their calls — measurably the
+  difference between a tool call and a guess.
+
+## Compounding intelligence
+- Every completion with declared tools is **graded**: each call must name a
+  declared tool (the caller's schema wins over the registry's) and its arguments
+  must survive the ladder and validate. The verdict feeds the tuple's tool
+  posterior (`observeTupleToolStats`: valid → α, repaired-but-valid → half
+  credit, invalid → β), stored with the same CAS + optimistic-L1 discipline as
+  the model catalog.
+- Ranking picks it up: `scoreRecord` adds `toolRoutingBonus = (draw − 0.5) × 0.14`
+  when a request is tool-aware, and **exactly 0 with no evidence**, so unproven
+  tuples keep being explored rather than being punished for youth. Tool-aware
+  requests skip the fast-lane latency sort, because the cheapest tuple is rarely
+  the one that emits valid calls.
+- Tool-level skill (latency, reliability, repair rate) compounds separately and
+  is published on `/v1/tools`, `/health` and through `router_capabilities`.
+
+## Workspace UI
+- New **Tools** view: plane KPIs, a sortable registry table (calls, Wilson
+  competence, p50/p95, repair rate, admin/pure flags), an expandable row with
+  the description, aliases, top error codes and the JSON Schema, a live runner
+  that posts to `/v1/tools/execute` (unparsable argument text is sent as-is so
+  the repair ladder can be watched working), and a copy button for the wire
+  declarations in any of the four vendor formats.
+- Chat gains a **router tools** toggle (sends `"tools": "auto"`, or
+  `nokey_tools: true` alongside client tools) and shows tool rounds: live
+  "tool round N · name" while streaming, and "N tool rounds · tools" in the
+  message footer. Status frames with empty `choices` are handled explicitly.
+
+## Tests
+- `tests/tools_test.ts` (13 tests): validator paths and lossless coercion, the
+  full repair ladder, exact reference values for every built-in (SHA-256 of
+  `"abc"`, base64 of `"hello ✓"`, Levenshtein, type-7 quantiles, ISO-8601
+  durations, `-3^2 = -9`), the execution sandbox, all four vendor projections,
+  call partitioning, skill compounding, and the damage-accounting rules
+  (declared defaults are *not* repairs, `anyOf` prefers the branch needing the
+  fewest repairs, shadows stay the caller's).
+- `tests/tool_plane_test.ts` (25 tests, end-to-end through `app.fetch` with a
+  mocked registry): both new routes, admin gating, per-call failure reporting,
+  bounded execution (deadline enforced, maxItems/maximum clamped, 413 at the
+  body limit), skill compounding over HTTP, mesh tools answering from live
+  state, the buffered agent loop and its round cap, repaired arguments, failed
+  calls returned as tool messages, client passthrough, mixed rounds, shadowing,
+  both kill switches, three streaming cases, `free:tools`, and tuple-level
+  learning becoming visible to later requests.
+- Suite: 36 → 74 passing. `deno task check` now covers `tools.ts` too.
+
 # Workspace UI v2 — 2026-11-04
 
 Front-end only: `index.html` (the operator workspace) and `docs.html` (Scalar

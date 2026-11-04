@@ -3,7 +3,7 @@
   "info": {
     "title": "nokey-router",
     "version": "asck-v1",
-    "description": "OpenAI-compatible free-inference router. Chat and image routes never fail: after an exhaustive endpoint sweep they return 200 with `nokey.degraded=true` (buffered responses also set `X-Nokey-Degraded: 1`; streams send headers before routing settles, so they signal it in-band). Every request is traced: `traceparent` is honoured inbound and returned outbound, spans are exported via OpenTelemetry and kept in a per-isolate ring under `/v1/traces`."
+    "description": "OpenAI-compatible free-inference router. Chat and image routes never fail: after an exhaustive endpoint sweep they return 200 with `nokey.degraded=true` (buffered responses also set `X-Nokey-Degraded: 1`; streams send headers before routing settles, so they signal it in-band). Every request is traced: `traceparent` is honoured inbound and returned outbound, spans are exported via OpenTelemetry and kept in a per-isolate ring under `/v1/traces`. The ASCK-T tool plane adds first-class tool support: `GET /v1/tools` lists executable built-ins (math, statistics, text, JSON, time, crypto, encoding, sampling and mesh introspection) with their learned reliability, `POST /v1/tools/execute` runs them directly, and a chat request can attach them with `\"tools\": \"auto\"` so the router executes the calls itself and loops until the model answers."
   },
   "servers": [
     {
@@ -16,6 +16,9 @@
     },
     {
       "name": "catalog"
+    },
+    {
+      "name": "tools"
     },
     {
       "name": "admin"
@@ -66,6 +69,141 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ModelList"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid ROUTER_API_KEY",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Per-isolate rate limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/tools": {
+      "get": {
+        "tags": [
+          "tools"
+        ],
+        "operationId": "listTools",
+        "summary": "Executable tool registry with learned skill telemetry",
+        "description": "Every tool the plane can execute on a model's behalf, with its JSON Schema, aliases and learned skill record (Beta-Bernoulli success posterior, Wilson competence floor, Kalman-filtered p50/p95/p99 latency, repair rate and top error codes). `wire.tools` is the same registry projected onto a vendor tool-call format, ready to paste into a chat request. Admin-only tools are included when a valid `x-admin-secret` header is presented.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "flavor",
+            "in": "query",
+            "required": false,
+            "description": "Vendor wire format for `wire.tools`.",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "openai",
+                "openai-strict",
+                "anthropic",
+                "gemini"
+              ],
+              "default": "openai"
+            }
+          },
+          {
+            "name": "schemas",
+            "in": "query",
+            "required": false,
+            "description": "Set to `0` to omit each tool's parameter schema (smaller payload).",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "0",
+                "1"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ToolList"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid ROUTER_API_KEY",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Per-isolate rate limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/tools/execute": {
+      "post": {
+        "tags": [
+          "tools"
+        ],
+        "operationId": "executeTools",
+        "summary": "Execute tool calls server-side",
+        "description": "Runs one call (`{name, arguments}`) or a batch (`{calls:[...]}`) and returns each result with the parse strategy and the repairs the argument ladder applied. Accepts OpenAI nesting (`function.name` / `function.arguments`) as well as flat `{name, arguments}`. Every execution updates the tool's skill memory, so direct calls teach the plane too. Always returns 200: a failing tool is reported per-call with `ok:false` and a machine-readable `code`, which is what a model needs in order to retry.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ToolExecuteRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Per-call results; the request itself never fails",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ToolExecuteResponse"
                 }
               }
             }
@@ -912,6 +1050,13 @@
           },
           "smartScore": {
             "type": "number"
+          },
+          "toolCompetence": {
+            "type": "number",
+            "description": "Wilson floor on this tuple's learned ability to emit valid tool calls; 0 while unproven"
+          },
+          "toolPulls": {
+            "type": "integer"
           }
         }
       },
@@ -1002,6 +1147,48 @@
           },
           "current_best_reasoning": {
             "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Candidate"
+            }
+          },
+          "tool_plane": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string",
+                "examples": [
+                  "ASCK-T v1"
+                ]
+              },
+              "builtin_tools": {
+                "type": "integer"
+              },
+              "instrumented_tools": {
+                "type": "integer"
+              },
+              "executions": {
+                "type": "integer"
+              },
+              "errors": {
+                "type": "integer"
+              },
+              "repaired_calls": {
+                "type": "integer"
+              },
+              "auto_tools": {
+                "type": "integer"
+              },
+              "agent_rounds": {
+                "type": "integer"
+              },
+              "learning": {
+                "type": "string"
+              }
+            }
+          },
+          "current_best_tools": {
+            "type": "array",
+            "description": "Smart lane ranked by learned tool-call competence",
             "items": {
               "$ref": "#/components/schemas/Candidate"
             }
@@ -1224,14 +1411,47 @@
             "type": "object"
           },
           "tools": {
-            "type": "array",
-            "items": {
-              "type": "object"
-            }
+            "description": "OpenAI tool declarations, or the string \"auto\" to attach the router's built-in tools and let it execute the calls itself.",
+            "oneOf": [
+              {
+                "type": "array",
+                "items": {
+                  "type": "object"
+                }
+              },
+              {
+                "type": "string",
+                "enum": [
+                  "auto"
+                ]
+              }
+            ]
           },
           "tool_choice": {},
           "parallel_tool_calls": {
             "type": "boolean"
+          },
+          "nokey_tools": {
+            "description": "Attach built-in tools alongside any client tools: true/\"auto\" for the default set, \"all\" for every non-admin tool, or a comma/space separated list of names. Equivalent to the x-nokey-tools request header.",
+            "oneOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "string"
+              },
+              {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            ]
+          },
+          "nokey_preamble": {
+            "type": "boolean",
+            "default": true,
+            "description": "Prepend a one-line system message describing the attached tools. Set false to leave the message list untouched."
           }
         }
       },
@@ -1410,6 +1630,44 @@
           },
           "reason": {
             "type": "string"
+          },
+          "tool_rounds": {
+            "type": "integer",
+            "description": "Server-side tool rounds executed before this answer (absent when 0)"
+          },
+          "tools_executed": {
+            "type": "array",
+            "description": "One entry per executed call: round, tool name, ok and ms",
+            "items": {
+              "type": "object",
+              "properties": {
+                "round": {
+                  "type": "integer"
+                },
+                "tool": {
+                  "type": "string"
+                },
+                "ok": {
+                  "type": "boolean"
+                },
+                "ms": {
+                  "type": "number"
+                },
+                "code": {
+                  "type": "string",
+                  "description": "Failure code when ok=false"
+                },
+                "repaired": {
+                  "type": "boolean",
+                  "description": "True when the arguments had to be repaired (declared defaults do not count)"
+                },
+                "error": {
+                  "type": "string",
+                  "description": "Failure text when ok=false"
+                }
+              },
+              "description": "One entry per executed call: round, tool name, ok, ms, repaired and any failure code/text"
+            }
           }
         }
       },
@@ -1664,6 +1922,390 @@
                 }
               }
             }
+          }
+        }
+      },
+      "ToolSpec": {
+        "type": "object",
+        "description": "One executable tool plus everything learned about it.",
+        "required": [
+          "name",
+          "kind",
+          "description"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Wire-safe id matching ^[a-z0-9_]{1,64}$",
+            "examples": [
+              "math_evaluate",
+              "router_catalog"
+            ]
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "compute",
+              "text",
+              "json",
+              "time",
+              "crypto",
+              "encode",
+              "random",
+              "mesh"
+            ]
+          },
+          "description": {
+            "type": "string"
+          },
+          "aliases": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Accepted alternative spellings (dotted, kebab, camelCase, synonyms)"
+          },
+          "deterministic": {
+            "type": "boolean",
+            "description": "Pure function of its arguments"
+          },
+          "admin": {
+            "type": "boolean",
+            "description": "Requires x-admin-secret; never advertised to models"
+          },
+          "parameters": {
+            "type": "object",
+            "description": "JSON Schema (2020-12 subset) for the arguments object"
+          },
+          "skill": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ToolSkill"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "null until the tool has been executed at least once"
+          }
+        }
+      },
+      "ToolSkill": {
+        "type": "object",
+        "description": "Compounding skill memory for one tool: a discounted Beta-Bernoulli success posterior and a Kalman filter over ln(latency).",
+        "properties": {
+          "tool": {
+            "type": "string"
+          },
+          "calls": {
+            "type": "integer"
+          },
+          "errors": {
+            "type": "integer"
+          },
+          "success_rate": {
+            "type": "number"
+          },
+          "competence": {
+            "type": "number",
+            "description": "Wilson lower bound - the honest, evidence-weighted reliability floor"
+          },
+          "competence_draw": {
+            "type": "number",
+            "description": "Thompson sample the router ranks on"
+          },
+          "p50_ms": {
+            "type": "number"
+          },
+          "p95_ms": {
+            "type": "number"
+          },
+          "p99_ms": {
+            "type": "number"
+          },
+          "repair_rate": {
+            "type": "number",
+            "description": "Share of calls whose arguments needed the repair ladder"
+          },
+          "stale_hours": {
+            "type": "number"
+          },
+          "top_errors": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ToolErrorCount"
+            }
+          },
+          "last_error": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "ToolErrorCount": {
+        "type": "object",
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "count": {
+            "type": "integer"
+          }
+        }
+      },
+      "ToolList": {
+        "type": "object",
+        "properties": {
+          "object": {
+            "const": "list"
+          },
+          "plane": {
+            "type": "string",
+            "examples": [
+              "asck-t-v1"
+            ]
+          },
+          "enabled": {
+            "type": "boolean",
+            "description": "false when NOKEY_TOOLS=0"
+          },
+          "agent": {
+            "type": "object",
+            "properties": {
+              "max_rounds": {
+                "type": "integer",
+                "description": "NOKEY_TOOL_ROUNDS; 0 disables the server-side agent loop"
+              },
+              "auto_tools": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "count": {
+            "type": "integer"
+          },
+          "totals": {
+            "type": "object",
+            "properties": {
+              "tools": {
+                "type": "integer"
+              },
+              "instrumented": {
+                "type": "integer"
+              },
+              "calls": {
+                "type": "integer"
+              },
+              "errors": {
+                "type": "integer"
+              },
+              "repairs": {
+                "type": "integer"
+              }
+            }
+          },
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ToolSpec"
+            }
+          },
+          "skills": {
+            "type": "object",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/ToolSkill"
+            }
+          },
+          "wire": {
+            "type": "object",
+            "properties": {
+              "flavor": {
+                "type": "string"
+              },
+              "tools": {
+                "type": "array",
+                "items": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        }
+      },
+      "ToolExecuteRequest": {
+        "type": "object",
+        "description": "Either a single call or a batch. Both OpenAI nesting and flat keys are accepted.",
+        "properties": {
+          "name": {
+            "type": "string",
+            "examples": [
+              "math_evaluate"
+            ]
+          },
+          "arguments": {
+            "description": "Object, or a JSON string as emitted by a model (the repair ladder parses it)"
+          },
+          "id": {
+            "type": "string",
+            "description": "Echoed back so a batch can be correlated"
+          },
+          "calls": {
+            "type": "array",
+            "maxItems": 16,
+            "items": {
+              "type": "object"
+            }
+          },
+          "timeout_ms": {
+            "type": "integer",
+            "minimum": 50,
+            "maximum": 30000,
+            "default": 4000
+          }
+        }
+      },
+      "ToolExecution": {
+        "type": "object",
+        "required": [
+          "name",
+          "ok",
+          "ms"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "ok": {
+            "type": "boolean"
+          },
+          "ms": {
+            "type": "number"
+          },
+          "result": {
+            "description": "Present when ok=true; already size-capped"
+          },
+          "strategy": {
+            "type": "string",
+            "enum": [
+              "native",
+              "strict",
+              "extract",
+              "repair",
+              "double-decode",
+              "salvage",
+              "empty"
+            ],
+            "description": "Which rung of the argument ladder produced the call"
+          },
+          "repairs": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "truncated": {
+            "type": "boolean"
+          },
+          "bytes": {
+            "type": "integer"
+          },
+          "error": {
+            "type": "string"
+          },
+          "code": {
+            "type": "string",
+            "enum": [
+              "UNKNOWN_TOOL",
+              "ADMIN_REQUIRED",
+              "INVALID_ARGUMENTS",
+              "TOOL_ERROR",
+              "TIMEOUT",
+              "ABORTED",
+              "RESULT_TOO_LARGE"
+            ]
+          },
+          "suggestions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ToolSuggestion"
+            }
+          },
+          "issues": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ToolSchemaIssue"
+            }
+          }
+        }
+      },
+      "ToolSuggestion": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "score": {
+            "type": "number"
+          }
+        }
+      },
+      "ToolSchemaIssue": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string"
+          },
+          "keyword": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          },
+          "severity": {
+            "type": "string",
+            "enum": [
+              "error",
+              "repair"
+            ]
+          }
+        }
+      },
+      "ToolExecuteResponse": {
+        "type": "object",
+        "properties": {
+          "object": {
+            "const": "list"
+          },
+          "count": {
+            "type": "integer"
+          },
+          "ok": {
+            "type": "boolean",
+            "description": "true only when every call succeeded"
+          },
+          "results": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ToolExecution"
+            }
+          },
+          "totals": {
+            "type": "object"
+          },
+          "trace_id": {
+            "type": "string"
+          },
+          "error": {
+            "type": "string",
+            "description": "Only when the request body itself was unusable"
           }
         }
       }
