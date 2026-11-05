@@ -425,6 +425,93 @@ pre.wrap { white-space: pre-wrap; word-break: break-word; }
 
 /* ---------- chat ---------- */
 .chat { position: relative; flex: 1; display: flex; flex-direction: column; min-width: 0; }
+/* ---------- workspace split: chat | tree/inspector | live view ---------- */
+#v-chat.wsp-on .chat { flex: 0 0 var(--chat-w, 44%); min-width: 300px; }
+/* The chat column is a size container: a narrow split drops button labels and wraps the toolbar instead of overflowing. */
+.chat { container: chat / inline-size; }
+@container chat (max-width: 760px) {
+  .composer .btxt { display: none; }
+  .composer-toolbar { flex-wrap: wrap; row-gap: 4px; }
+  .composer-toolbar .quick-chips { flex: 1 1 100%; }
+  .cmodel-wrap { margin-left: 0; }
+  .cmodel-wrap input { width: 128px; }
+}
+.split-x, .split-y { flex: none; background: var(--line); touch-action: none; outline: none; position: relative; z-index: 2; transition: background .12s; }
+.split-x { width: 5px; cursor: col-resize; }
+.split-y { height: 5px; cursor: row-resize; }
+.split-x:hover, .split-y:hover, .split-x:focus-visible, .split-y:focus-visible, .split-x.drag, .split-y.drag { background: var(--acc); }
+.split-x[hidden] { display: none; }
+body.splitting { user-select: none; }
+body.split-armed iframe { pointer-events: none; }
+.split-shield { position: fixed; inset: 0; z-index: 2147483647; }
+.split-shield.drag-x { cursor: col-resize; }
+.split-shield.drag-y { cursor: row-resize; }
+.wsp { flex: 1; min-width: 380px; display: flex; flex-direction: column; background: var(--bg); font: 400 12px/1.4 var(--mono); color: var(--mid); }
+.wsp[hidden] { display: none; }
+.wsp button, .wsp select, .wsp input, .wsp textarea { font: inherit; color: inherit; border-radius: 0; }
+.wsp-bar { flex: 0 0 32px; display: flex; align-items: stretch; border-bottom: 1px solid var(--line-2); min-width: 0; }
+.wsp-bar > * { display: flex; align-items: center; padding: 0 10px; border: 0; border-right: 1px solid var(--line); background: none; white-space: nowrap; }
+.wsp-bar > b { color: var(--fg); font-size: 10.5px; font-weight: 600; letter-spacing: .14em; }
+.wsp-bar button, .wsp-bar select { cursor: pointer; }
+.wsp-bar select { appearance: none; -webkit-appearance: none; padding-right: 24px; background-position: calc(100% - 13px) 50%, calc(100% - 8px) 50%; max-width: 200px; min-width: 0; overflow: hidden; text-overflow: ellipsis; outline: none; }
+.wsp-bar select option { background: var(--bg-2); color: var(--fg); }
+.wsp-bar button:hover, .wsp-bar select:hover, .wsp-bar button:focus-visible, .wsp-bar select:focus-visible { color: var(--acc); background: var(--surface); }
+.wsp-bar [aria-pressed="true"] { color: var(--acc); }
+.wsp-bar .grow { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--dim); font-size: 11px; display: block; line-height: 32px; }
+.wsp-bar .grow.err { color: var(--bad); }
+.wsp-bar > :last-child { border-right: 0; }
+.wsp-body { flex: 1; min-height: 0; display: flex; }
+.wsp-left { flex: 0 0 var(--tree-w, 260px); min-width: 150px; display: flex; flex-direction: column; }
+.wsp-tree { flex: 0 0 var(--tree-h, 58%); min-height: 48px; overflow: auto; padding: 3px 0; outline: none; }
+.wsp-insp { flex: 1; min-height: 48px; overflow: auto; display: flex; flex-direction: column; }
+.wsp-view { flex: 1; min-width: 200px; display: flex; flex-direction: column; }
+.wsp-stage { flex: 1; min-height: 0; position: relative; display: flex; justify-content: center; background: var(--bg-2); }
+.wsp-stage iframe { flex: none; width: 100%; height: 100%; border: 0; background: #fff; }
+.wsp-stage[data-vp] iframe { width: var(--vp); max-width: 100%; box-shadow: 0 0 0 1px var(--line-2); }
+.wsp-empty { position: absolute; inset: 0; display: grid; place-content: center; gap: 6px; padding: 24px; text-align: center; color: var(--dim); background: var(--bg-2); }
+.wsp-empty[hidden] { display: none; }
+.wsp-empty b { color: var(--fg); font-weight: 600; letter-spacing: .08em; }
+.tr { display: flex; align-items: center; gap: 6px; width: 100%; height: 22px; padding: 0 8px 0 calc(6px + var(--d) * 12px); border: 0; background: none; cursor: pointer; text-align: left; white-space: nowrap; }
+.tr:hover { background: var(--surface-2); color: var(--fg); }
+.tr[aria-selected="true"] { background: var(--acc-soft); color: var(--acc); box-shadow: inset 2px 0 var(--acc); }
+.tr .tw { flex: none; width: 9px; color: var(--dim); }
+.tr .nm { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.tr.dir .nm { color: var(--fg); }
+.tr[aria-selected="true"] .nm { color: var(--acc); }
+.tr .en { flex: none; color: var(--acc); }
+.tr .sz { margin-left: auto; padding-left: 8px; color: var(--dim); font-size: 10.5px; }
+.tr.flash { animation: trflash 1.4s ease-out; }
+@keyframes trflash { from { background: var(--acc-soft); } }
+.wi-h { flex: none; display: flex; align-items: center; gap: 8px; min-height: 28px; padding: 0 10px; border-bottom: 1px solid var(--line); color: var(--fg); font-weight: 600; }
+.wi-h .p { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wi-h .dirty { color: var(--warn); }
+.wi-h .note { margin-left: auto; color: var(--warn); font-weight: 400; white-space: nowrap; }
+.wi-kv { display: grid; grid-template-columns: auto 1fr; gap: 3px 14px; padding: 8px 10px; color: var(--dim); }
+.wi-kv b { color: var(--mid); font-weight: 400; overflow-wrap: anywhere; }
+.wi-acts { flex: none; display: flex; flex-wrap: wrap; border-bottom: 1px solid var(--line); }
+.wi-acts button { border: 0; border-right: 1px solid var(--line); background: none; padding: 5px 10px; cursor: pointer; }
+.wi-acts button:hover, .wi-acts button:focus-visible { color: var(--acc); background: var(--surface); outline: none; }
+.wi-acts button.bad:hover, .wi-acts button.bad:focus-visible { color: var(--bad); }
+.wi-acts button[aria-pressed="true"] { color: var(--acc); }
+.wi-row { flex: none; display: flex; border-bottom: 1px solid var(--line); }
+.wi-row input { flex: 1; min-width: 0; border: 0; background: var(--bg-2); padding: 6px 10px; color: var(--fg); outline: none; }
+.wi-row input:focus { box-shadow: inset 0 -1px var(--acc); }
+.wi-row button { border: 0; border-left: 1px solid var(--line); background: none; padding: 0 10px; cursor: pointer; }
+.wi-row button:hover { color: var(--acc); }
+.wi-ed { flex: 1; min-height: 120px; width: 100%; resize: none; border: 0; background: var(--bg-2); color: var(--fg); padding: 8px 10px; outline: none; font: 400 12px/1.55 var(--mono) !important; tab-size: 2; white-space: pre; font-variant-ligatures: none; }
+.wi-img { display: block; max-width: calc(100% - 20px); max-height: 160px; margin: 0 10px 10px; box-shadow: 0 0 0 1px var(--line-2); background: repeating-conic-gradient(#222 0 25%, #333 0 50%) 0 0 / 12px 12px; }
+.wi-hint { padding: 8px 10px; color: var(--dim); }
+.wsp-con { flex: none; display: flex; flex-direction: column; border-top: 1px solid var(--line-2); }
+.wsp-con-h { display: flex; align-items: center; gap: 10px; height: 24px; padding: 0 10px; border: 0; background: none; cursor: pointer; font-size: 10.5px !important; letter-spacing: .12em; color: var(--dim) !important; }
+.wsp-con-h:hover, .wsp-con-h:focus-visible { color: var(--fg) !important; outline: none; }
+.wsp-con-h .grow { flex: 1; }
+.wsp-con-h .err { color: var(--bad); } .wsp-con-h .warn { color: var(--warn); }
+#wsp-con-clr:hover { color: var(--acc); }
+.wsp-con-b { height: var(--con-h, 160px); overflow: auto; border-top: 1px solid var(--line); }
+.wsp-con-b[hidden] { display: none; }
+.cl { padding: 2px 10px; border-bottom: 1px solid var(--line); white-space: pre-wrap; word-break: break-word; }
+.cl.warn { color: var(--warn); } .cl.error { color: var(--bad); } .cl.info { color: var(--blue); }
+.cl .st { display: block; color: var(--dim); }
 #thread { flex: 1; overflow: auto; padding: 22px 0 10px; overscroll-behavior: contain; }
 #thread:empty { display: none; }
 .welcome {
@@ -470,6 +557,17 @@ details.rs summary::-webkit-details-marker { display: none; }
 details.rs summary::before { content: "▸"; display: inline-block; margin-right: 7px; transition: transform .16s; }
 details.rs[open] summary::before { transform: rotate(90deg); }
 details.rs .rb { padding: 0 12px 10px; color: var(--mid); white-space: pre-wrap; word-break: break-word; max-height: 40vh; overflow: auto; font: 400 11.5px/1.65 var(--mono); }
+details.rs summary { display: flex; align-items: center; gap: 10px; min-width: 0; }
+details.rs .rhd { flex: none; }
+.rstrip { display: inline-flex; flex: none; width: 84px; height: 4px; background: var(--line); }
+.rstrip i { display: block; height: 100%; min-width: 1px; }
+.rtail { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--mid); font-family: var(--mono); }
+.rleg { display: flex; gap: 12px; padding: 0 12px 6px; font: 400 10px/1 var(--mono); letter-spacing: .06em; text-transform: uppercase; }
+.rleg i { font-style: normal; }
+.rleg i::before { content: ""; display: inline-block; width: 7px; height: 7px; margin-right: 5px; background: currentColor; vertical-align: 0; }
+.rk-plan { color: var(--blue); } .rk-check { color: var(--vio); } .rk-doubt { color: var(--warn); } .rk-done { color: var(--ok); }
+.rk-q { color: var(--fg); font-style: italic; }
+.rleg .rk-q { font-style: normal; }
 .tcalls { display: grid; gap: 8px; margin: 10px 0; }
 .tc { border: 1px solid var(--line); border-left: 2px solid var(--vio); border-radius: var(--r-sm); overflow: hidden; background: var(--bg-2); }
 .tc .h { display: flex; gap: 10px; align-items: center; padding: 7px 12px; border-bottom: 1px solid var(--line); }
@@ -1424,6 +1522,38 @@ select.tool-form-in { background: var(--bg-3); color: var(--fg); }
         </div>
       </div>
     </div>
+    <div class="split-x" id="wsp-split" role="separator" aria-orientation="vertical" aria-label="Resize chat and workspace" tabindex="0" hidden></div>
+    <aside class="wsp" id="wsp" aria-label="Workspace" hidden>
+      <div class="wsp-bar">
+        <b>WORKSPACE</b>
+        <select id="wsp-entry" aria-label="Entry point" title="Entry point the live view runs"></select>
+        <button id="wsp-reload" title="Rebuild and reload the live view">↻</button>
+        <button id="wsp-live" aria-pressed="true" title="Rebuild automatically when files change">live</button>
+        <select id="wsp-vp" aria-label="Viewport width" title="Viewport width"><option value="auto">fit</option><option value="390">390</option><option value="768">768</option><option value="1280">1280</option></select>
+        <span class="grow" id="wsp-stat" aria-live="polite"></span>
+        <button id="wsp-pop" title="Open the live view in the sandbox window">⧉</button>
+        <button id="wsp-more" title="Project: intelligence, conversations, GitHub, zip">⋯</button>
+        <button id="wsp-close" title="Close workspace" aria-label="Close workspace">✕</button>
+      </div>
+      <div class="wsp-body">
+        <div class="wsp-left" id="wsp-left">
+          <div class="wsp-tree" id="wsp-tree" role="tree" aria-label="Files" tabindex="0"></div>
+          <div class="split-y" id="wsp-split-y" role="separator" aria-orientation="horizontal" aria-label="Resize files and inspector" tabindex="0"></div>
+          <div class="wsp-insp" id="wsp-insp" aria-label="Inspector"></div>
+        </div>
+        <div class="split-x" id="wsp-split-2" role="separator" aria-orientation="vertical" aria-label="Resize files and live view" tabindex="0"></div>
+        <div class="wsp-view">
+          <div class="wsp-stage" id="wsp-stage">
+            <iframe id="wsp-frame" title="Live view" sandbox="allow-scripts allow-modals allow-forms allow-popups"></iframe>
+            <div class="wsp-empty" id="wsp-empty" hidden></div>
+          </div>
+          <div class="wsp-con" id="wsp-con">
+            <button class="wsp-con-h" id="wsp-con-h" aria-expanded="false"><span>CONSOLE</span><span id="wsp-con-n"></span><span class="grow"></span><span id="wsp-con-clr" role="button" title="Clear console">clear</span></button>
+            <div class="wsp-con-b" id="wsp-con-b" hidden></div>
+          </div>
+        </div>
+      </div>
+    </aside>
   </section>
 
   <section class="view full" id="v-community" hidden>
@@ -2211,7 +2341,7 @@ return { words: t.split(/\s+/).filter(Boolean).length, chars: t.length };</texta
       <button class="btn q icon-btn" id="sb-close" title="Close Sandbox"><svg aria-hidden="true"><use href="#i-x"/></svg></button>
     </div>
   </div>
-  <iframe id="sandbox-iframe" class="sandbox-frame" sandbox="allow-scripts allow-modals"></iframe>
+  <iframe id="sandbox-iframe" class="sandbox-frame" sandbox="allow-scripts allow-modals allow-forms allow-popups"></iframe>
   <div class="sandbox-console" id="sandbox-console" hidden>
     <div class="row" style="justify-content:space-between;margin-bottom:4px">
       <span class="lbl">Sandbox Console &amp; Debug</span>
@@ -2773,8 +2903,9 @@ function exportChat() {
   const blob = new Blob([JSON.stringify({ model: $("#pmodel").value, system: $("#psys").value, messages: conv.messages.map((m) => ({ ...wire(m), ...(m.reasoning_content ? { reasoning_content: m.reasoning_content } : {}) })) }, null, 2)], { type: "application/json" });
   const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = `nokey-chat-${Date.now()}.json`; a.click(); URL.revokeObjectURL(a.href);
 }
-function confirmDialog(msg, ok) {
+function confirmDialog(msg, ok, label = "Clear all") {
   $("#dconfirm-msg").textContent = msg;
+  $("#dconfirm-ok").textContent = label;
   const d = $("#dconfirm");
   d.showModal();
   d.addEventListener("close", () => { if (d.returnValue === "ok") ok(); }, { once: true });
@@ -2857,7 +2988,7 @@ function msgEl(m, i) {
     el.innerHTML = `<div class="body"><span class="dim">${esc(m.name ?? "")} ${esc(m.tool_call_id)} →</span> ${esc(textOf(m.content))}</div>`;
   } else {
     el.className = "msg a";
-    el.innerHTML = `<div class="meta"></div><details class="rs" hidden><summary></summary><div class="rb"></div></details><div class="md"></div><div class="tcalls"></div><div class="foot"></div>`;
+    el.innerHTML = `<div class="meta"></div><details class="rs" hidden><summary></summary><div class="rleg"><i class="rk-plan">plan</i><i class="rk-check">check</i><i class="rk-doubt">doubt</i><i class="rk-done">conclusion</i><i class="rk-q">question</i></div><div class="rb"></div></details><div class="md"></div><div class="tcalls"></div><div class="foot"></div>`;
     paint(el, m, i);
   }
   return el;
@@ -2875,10 +3006,12 @@ function paint(el, m, i) {
   const rs = $("details.rs", el);
   if (m.reasoning_content) {
     rs.hidden = false;
-    if (live && !m.content && !k.rsTouched) rs.open = true;
-    $("summary", rs).textContent = `reasoning · ${kfmt(m.reasoning_content.length)} chars${k.rsMs ? ` · ${ms(k.rsMs)}` : ""}`;
+    // Open while thinking, folded once the answer streams; a manual toggle owns it for the rest of the turn.
+    if (live && !k.rsTouched) rsSet(rs, k, !m.content);
     const rb = $(".rb", rs), stick = rb.scrollHeight - rb.scrollTop - rb.clientHeight < 40;
-    rb.textContent = m.reasoning_content;
+    const r = rsRender(rb, m.reasoning_content, !live);
+    const thinking = live && !m.content;
+    $("summary", rs).innerHTML = `<span class="rhd">${thinking ? "thinking" : "reasoning"} · ${kfmt(m.reasoning_content.length)} chars${k.rsMs ? ` · ${ms(k.rsMs)}` : ""}</span>${rsStrip(r.mix)}${thinking && !rs.open && r.last ? `<span class="rtail">${esc(r.last)}</span>` : ""}`;
     if (stick) rb.scrollTop = rb.scrollHeight;
   }
   renderMd($(".md", el), m.content ?? "", !live);
@@ -2917,8 +3050,65 @@ function renderThread() {
 }
 thread.addEventListener("toggle", (e) => {
   const el = e.target.closest?.("article"); if (!el || !e.target.matches("details.rs")) return;
-  const m = conv.messages[el.dataset.i]; if (m?._m) m._m.rsTouched = true;
+  const m = conv.messages[el.dataset.i];
+  // Auto open/fold also fires toggle; only a state the code did not ask for is the user's.
+  if (m?._m && e.target.open !== m._m.rsWant) m._m.rsTouched = true;
 }, true);
+function rsSet(rs, k, open) { if (rs.open !== open) { k.rsWant = open; rs.open = open; } }
+// Sentence-level cue classes for the reasoning trace. First match wins, so
+// corrections outrank conclusions ("but so…" is a doubt, not an answer).
+const RK = [
+  ["doubt", /^(wait|hmm+|actually|but\b|however|no[,.!]|oops|hold on|on second thought|alternatively|maybe|perhaps|though\b|that'?s (wrong|not))/i],
+  ["check", /^(check|verify|test|double[- ]check|confirm|sanity|make sure|let'?s (check|verify|test|confirm))/i],
+  ["done", /^(so\b|thus|therefore|hence|answer|final|in (summary|short|conclusion)|overall|that (means|gives)|result|ok(ay)?,? so|done\b)/i],
+  ["plan", /^(first|then\b|next|now\b|step|let'?s|let me|i('ll| will| need| should| can| must)|we (need|should|can|must|will)|plan|approach|goal|(\d+[.)]|[-*•])\s)/i],
+];
+const RK_VAR = { plan: "--blue", check: "--vio", doubt: "--warn", done: "--ok", q: "--fg", "": "--line-2" };
+function rkClass(t) { t = t.trim(); for (const [c, re] of RK) if (re.test(t)) return c; return /\?["')\]]*$/.test(t) ? "q" : ""; }
+const RS_PIECE = /[^.!?\n]*(?:[.!?]+["')\]]*|\n+|$)\s*/g;
+function rsPieces(text, into, mix) {
+  for (const p of text.match(RS_PIECE) ?? []) {
+    if (!p) continue;
+    const c = p.trim() ? rkClass(p) : "";
+    mix[c] = (mix[c] ?? 0) + p.length;
+    const last = into.lastChild;
+    if (last && last.dataset.c === c) { last.textContent += p; continue; }
+    const s = document.createElement("span");
+    s.dataset.c = c;
+    if (c) s.className = "rk-" + c;
+    s.textContent = p;
+    into.appendChild(s);
+  }
+}
+// Incremental: complete sentences are appended once; only the open tail is
+// rebuilt per frame, so a long trace costs O(new text), not O(total).
+function rsRender(rb, text, final) {
+  if (!rb._st || text.length < rb._st.n || !text.startsWith(rb._st.head)) {
+    rb.replaceChildren();
+    rb._st = { n: 0, mix: {}, head: text.slice(0, 64), tail: document.createElement("span") };
+  }
+  const st = rb._st;
+  let cut = text.length;
+  if (!final) {
+    const re = /[.!?\n]["')\]]*\s+/g; re.lastIndex = st.n; let mm, end = st.n;
+    while ((mm = re.exec(text))) end = mm.index + mm[0].length;
+    cut = end;
+  }
+  if (cut > st.n) { st.tail.remove(); rsPieces(text.slice(st.n, cut), rb, st.mix); st.n = cut; }
+  const tailMix = {};
+  st.tail.replaceChildren();
+  rsPieces(text.slice(st.n), st.tail, tailMix);
+  if (st.tail.firstChild) rb.appendChild(st.tail);
+  const mix = { ...st.mix };
+  for (const [c, n] of Object.entries(tailMix)) mix[c] = (mix[c] ?? 0) + n;
+  const sentences = text.trim().split(/(?<=[.!?\n])\s+/);
+  return { mix, last: (sentences.at(-1) ?? "").slice(-140) };
+}
+function rsStrip(mix) {
+  const total = Object.values(mix).reduce((a, b) => a + b, 0);
+  if (!total) return "";
+  return `<span class="rstrip" aria-hidden="true">${["plan", "check", "doubt", "done", "q", ""].filter((c) => mix[c]).map((c) => `<i style="flex:${mix[c]};background:var(${RK_VAR[c]})"></i>`).join("")}</span>`;
+}
 thread.onclick = async (e) => {
   const b = e.target.closest("[data-act]"); if (!b) return;
   const el = b.closest("article"), i = Number(el.dataset.i), m = conv.messages[i];
@@ -3035,6 +3225,8 @@ async function complete() {
   if (stick) thread.scrollTop = thread.scrollHeight;
   saveConv(); updateModelHint();
   if (k.degraded) toast("every upstream endpoint failed — router returned its status message", true);
+  // Files the agent wrote this turn show up in the workspace without waiting for the poll.
+  if (wsp.open) wsRefresh(true);
   // The dashboard declares no client tools: any call reaching it is the router's, so run it — never ask.
   if (!k.error && m.tool_calls?.length && !answeredIds(i).size && autoToolTurns++ < 4) await answerToolCalls(m);
 }
@@ -6339,20 +6531,25 @@ function diffWsFiles(next) {
 // While a panel is open, quietly re-list every few seconds so files the
 // agent generates appear (and announce themselves) without a manual
 // refresh. Stops when all sheets close.
+// Split-pane state; layout and preferences persist, selection and build state do not.
+const wsp = Object.assign({ open: false, entry: "", live: true, vp: "auto", chat: 0.44, tree: 260, treeH: 0.58, con: 160 }, store.get("wsp", {}),
+  { sel: null, editing: null, dirty: false, buffer: null, stale: null, ask: null, page: "", doc: "", cache: new Map(), sig: "", sigs: null, flash: new Set(), rows: [], logs: 0, errs: 0, warns: 0, timer: 0, building: false, queued: false, reloadEditor: false });
+wsp.collapsed = new Set(Array.isArray(wsp.collapsed) ? wsp.collapsed : []);
 let wsWatchTimer = null;
 function wsWatch(on) {
-  if (on && !wsWatchTimer) wsWatchTimer = setInterval(() => { if (document.querySelector(".sheet.open")) wsRefresh(true); }, 4000);
-  if (!on && wsWatchTimer) { clearInterval(wsWatchTimer); wsWatchTimer = null; }
+  if (on && !wsWatchTimer) wsWatchTimer = setInterval(() => { if (document.querySelector(".sheet.open") || (wsp.open && !document.hidden && current === "chat")) wsRefresh(true); }, 2500);
+  if (!on && wsWatchTimer && !wsp.open) { clearInterval(wsWatchTimer); wsWatchTimer = null; }
 }
 
 async function wsRefresh(quiet = false) {
   const box = $("#ws-files");
   if (!quiet) box.innerHTML = `<div class="dim" style="font-size:12px">loading…</div>`;
   try {
-    const r = await wsExec("fs_list", { limit: 200 });
+    const r = await wsExec("fs_list", { limit: 1000 });
     wsFiles = r.files ?? [];
     diffWsFiles(wsFiles);
     renderWsFiles();
+    wspOnFiles();
   } catch (e) {
     if (!quiet) {
       wsFiles = [];
@@ -6361,13 +6558,698 @@ async function wsRefresh(quiet = false) {
   }
 }
 
+// ---- workspace split pane ---------------------------------------------------
+// chat | workspace, where the workspace is (tree / inspector) | live view.
+// The live view assembles the project from its entry point in the browser:
+// every file is read whole (paged past fs_read's line cap, batched 16 per
+// request, cached by bytes+mtime), CSS and classic scripts inline, ES
+// modules resolve through one import map of data: URLs, and a prelude
+// supplies the hooks an opaque sandbox lacks (fetch of workspace files,
+// storage, history, page links).
+const WSP_HOST = "https://ws.local/";
+const WSP_RUN = /\.(html?|m?js|jsx|tsx?|mts)$/i;
+const WSP_JS = /\.(m?js|jsx|tsx?|mts)$/i;
+const WSP_SPEC = /(\bimport\s*(?:[\w$*{}\s,]+?\s*from\s*)?|\bexport\s*(?:[\w$*{}\s,]+?\s*)?from\s*|\bimport\s*\(\s*)(["'])([^"'\n]+)\2/g;
+const wspDir = (p) => p.slice(0, p.lastIndexOf("/") + 1);
+const wspSig = (f) => `${f.bytes}:${f.mtime || ""}`;
+function b64utf8(text) {
+  const b = new TextEncoder().encode(text);
+  let out = "";
+  for (let i = 0; i < b.length; i += 0x8000) out += String.fromCharCode.apply(null, b.subarray(i, i + 0x8000));
+  return btoa(out);
+}
+function wspDataUrl(f, mime) { return `data:${mime || f.mime || "text/plain"};base64,${f.binary ? f.content : b64utf8(f.content)}`; }
+
+async function wsReadFull(path) {
+  let r = await wsExec("fs_read", { path, limit: 5000 });
+  if (r.binary) return r;
+  let content = r.content ?? "";
+  while (r.truncated) {
+    r = await wsExec("fs_read", { path, offset: r.end_line + 1, limit: 5000 });
+    content += "\n" + (r.content ?? "");
+  }
+  return { ...r, content, truncated: false };
+}
+// Stale files only, 16 calls per request; a truncated read is finished by paging.
+async function wspFetch(files) {
+  for (let i = 0; i < files.length; i += 16) {
+    const batch = files.slice(i, i + 16);
+    const d = await req("/v1/tools/execute", { method: "POST", admin: true, body: { calls: batch.map((f) => ({ name: "fs_read", arguments: { path: f.path, limit: 5000 } })) } });
+    await Promise.all(batch.map(async (f, j) => {
+      const res = d.results?.[j];
+      if (!res?.ok) { wsp.cache.delete(f.path); return; }
+      const r = res.result.truncated ? await wsReadFull(f.path) : res.result;
+      wsp.cache.set(f.path, { sig: wspSig(f), content: r.content ?? "", binary: Boolean(r.binary), mime: r.mime || f.mime || "" });
+    }));
+  }
+}
+
+function wspEntry() {
+  const run = wsFiles.map((f) => f.path).filter((p) => WSP_RUN.test(p));
+  if (wsp.entry && run.includes(wsp.entry)) return wsp.entry;
+  const by = (re) => run.filter((p) => re.test(p)).sort((a, b) => a.split("/").length - b.split("/").length || a.length - b.length)[0];
+  return by(/(^|\/)index\.html?$/i) ?? by(/\.html?$/i) ?? by(/(^|\/)(main|index|app)\.(m?js|jsx|tsx?)$/i) ?? "";
+}
+function wspRenderEntry() {
+  const sel = $("#wsp-entry");
+  const auto = wsp.entry && wsFiles.some((f) => f.path === wsp.entry) ? "" : wspEntry();
+  const run = wsFiles.map((f) => f.path).filter((p) => WSP_RUN.test(p)).sort();
+  sel.innerHTML = `<option value="">auto${auto ? " · " + esc(auto) : ""}</option>` + run.map((p) => `<option value="${esc(p)}">${esc(p)}</option>`).join("");
+  sel.value = wsp.entry && run.includes(wsp.entry) ? wsp.entry : "";
+}
+
+async function wspCompiled(path, f) {
+  if (!/\.(tsx?|jsx|mts)$/i.test(path)) return f.content;
+  if (f.out === undefined) {
+    const r = await sbxTranspile(f.content, path);
+    f.out = r.code;
+    f.err = r.error;
+  }
+  if (f.err) wspLog({ level: "error", text: `transpile failed in ${path}: ${f.err}` });
+  return f.out;
+}
+
+async function wspAssemble(page) {
+  const F = wsp.cache;
+  const resolve = (spec, from) => {
+    if (!spec || /^[a-z][\w+.-]*:|^\/\/|^#/i.test(spec)) return null;
+    try { return decodeURIComponent(new URL(spec, WSP_HOST + wspDir(from)).pathname.slice(1)); } catch { return null; }
+  };
+  const find = (p) => {
+    if (p == null) return null;
+    const base = p.replace(/\/$/, "");
+    for (const c of [p, ...[".js", ".ts", ".tsx", ".jsx", ".mjs"].map((x) => base + x), ...["js", "ts", "tsx", "jsx"].map((x) => `${base}/index.${x}`)]) if (F.has(c)) return c;
+    return null;
+  };
+  const bare = new Set();
+  const rewrite = (code, from) => code.replace(WSP_SPEC, (all, pre, q, spec) => {
+    if (/^\.{0,2}\//.test(spec)) { const hit = find(resolve(spec, from)); return hit ? pre + q + WSP_HOST + hit + q : all; }
+    if (!/^[a-z][\w+.-]*:/i.test(spec)) bare.add(spec);
+    return all;
+  });
+  const imports = {};
+  for (const [p, f] of F) {
+    if (!WSP_JS.test(p) || f.binary) continue;
+    const code = rewrite(await wspCompiled(p, f), p);
+    imports[WSP_HOST + p] = `data:text/javascript;base64,${b64utf8(code + `\n//# sourceURL=${WSP_HOST}${p}`)}`;
+  }
+  const asset = (ref, from) => { const hit = find(resolve(ref, from)); const f = hit && F.get(hit); return f ? wspDataUrl(f) : null; };
+  const css = (path, seen = new Set()) => {
+    if (seen.has(path)) return "";
+    seen.add(path);
+    const f = F.get(path);
+    if (!f || f.binary) return "";
+    return f.content
+      .replace(/@import\s+(?:url\()?\s*["']?([^"')\s;]+)["']?\s*\)?\s*;/gi, (all, ref) => { const hit = find(resolve(ref, path)); return hit ? css(hit, seen) : all; })
+      .replace(/url\(\s*(["']?)([^"')]+)\1\s*\)/gi, (all, q, ref) => { const u = asset(ref, path); return u ? `url("${u}")` : all; });
+  };
+
+  let html;
+  if (/\.html?$/i.test(page)) html = F.get(page)?.content ?? "";
+  else html = `<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(page)}</title></head><body><div id="root"></div><div id="app"></div><script type="module" data-sbx="${esc(page)}">import "${WSP_HOST}${page}";<\/script></body></html>`;
+  const doc = new DOMParser().parseFromString(html, "text/html");
+  const userMap = { imports: {}, scopes: {} };
+  for (const s of [...doc.querySelectorAll('script[type="importmap"]')]) {
+    try { const j = JSON.parse(s.textContent || "{}"); Object.assign(userMap.imports, j.imports); Object.assign(userMap.scopes, j.scopes); } catch { wspLog({ level: "warn", text: "ignored an invalid importmap in " + page }); }
+    s.remove();
+  }
+  for (const l of [...doc.querySelectorAll("link[href]")]) {
+    const rel = (l.getAttribute("rel") || "").toLowerCase();
+    const href = l.getAttribute("href");
+    if (rel.includes("stylesheet")) {
+      const hit = find(resolve(href, page));
+      if (!hit) continue;
+      const st = doc.createElement("style");
+      st.setAttribute("data-sbx", hit);
+      st.textContent = css(hit);
+      l.replaceWith(st);
+    } else if (rel.includes("modulepreload")) l.remove();
+    else { const u = asset(href, page); if (u) l.setAttribute("href", u); }
+  }
+  for (const sc of [...doc.querySelectorAll("script")]) {
+    const type = (sc.getAttribute("type") || "").toLowerCase();
+    const src = sc.getAttribute("src");
+    if (src) {
+      const hit = find(resolve(src, page));
+      if (!hit) continue;
+      const n = doc.createElement("script");
+      for (const a of sc.attributes) if (a.name !== "src") n.setAttribute(a.name, a.value);
+      n.setAttribute("data-sbx", hit);
+      if (type === "module") n.textContent = `import "${WSP_HOST}${hit}";`;
+      else {
+        const f = F.get(hit);
+        const code = type === "text/babel" || !WSP_JS.test(hit) ? f.content : await wspCompiled(hit, f);
+        n.textContent = code.replace(/<\/script/gi, "<\\/script");
+      }
+      sc.replaceWith(n);
+    } else if (type === "module") sc.textContent = rewrite(sc.textContent, page);
+  }
+  for (const el of doc.querySelectorAll("img[src],source[src],video[src],audio[src],track[src],embed[src],input[src]")) { const u = asset(el.getAttribute("src"), page); if (u) el.setAttribute("src", u); }
+  for (const el of doc.querySelectorAll("video[poster]")) { const u = asset(el.getAttribute("poster"), page); if (u) el.setAttribute("poster", u); }
+  for (const el of doc.querySelectorAll("[style*='url(']")) el.setAttribute("style", el.getAttribute("style").replace(/url\(\s*(["']?)([^"')]+)\1\s*\)/gi, (all, q, ref) => { const u = asset(ref, page); return u ? `url("${u}")` : all; }));
+  for (const st of doc.querySelectorAll("style:not([data-sbx])")) st.textContent = st.textContent.replace(/url\(\s*(["']?)([^"')]+)\1\s*\)/gi, (all, q, ref) => { const u = asset(ref, page); return u ? `url("${u}")` : all; });
+
+  // Bare package imports resolve on esm.sh with shared packages externalized,
+  // so react and react-dom (say) load one instance between them.
+  const rootOf = (spec) => spec.startsWith("@") ? spec.split("/").slice(0, 2).join("/") : spec.split("/")[0];
+  const roots = new Set([...bare].map(rootOf));
+  for (const r of roots) bare.add(r);
+  for (const spec of bare) {
+    const ext = [...roots].filter((r) => r !== rootOf(spec));
+    imports[spec] = `https://esm.sh/${spec}${ext.length ? "?external=" + ext.join(",") : ""}`;
+  }
+  Object.assign(imports, userMap.imports);
+  const fs = {};
+  for (const [p, f] of F) fs[p] = [f.mime || "text/plain", f.content, f.binary ? 1 : 0];
+  const json = (v) => JSON.stringify(v).replace(/</g, "\\u003c");
+  const head = doc.head;
+  const map = doc.createElement("script");
+  map.type = "importmap";
+  map.textContent = json({ imports, ...(Object.keys(userMap.scopes).length ? { scopes: userMap.scopes } : {}) });
+  head.prepend(map);
+  const pre = doc.createElement("script");
+  pre.textContent = WSP_PRELUDE.replace("__ARGS__", () => [json(fs), json(wspDir(page)), json(WSP_HOST), json(store.get("wsp.ls", {}))].join(","));
+  head.prepend(pre);
+  return "<!DOCTYPE html>\n" + doc.documentElement.outerHTML;
+}
+
+// Hooks an opaque-origin sandbox lacks. fetch() of a workspace path is served
+// from the snapshot; storage falls back to an in-memory Storage persisted to
+// the parent; pushState keeps its state when the URL part is refused; links
+// to workspace pages navigate the live view instead of a dead frame URL.
+const WSP_PRELUDE = `(function(FS, DIR, HOST, LS){
+  function rel(u){ try { var s = typeof u === "string" ? u : (u && u.url) || String(u); if (/^[a-z][\\w+.-]*:/i.test(s) && s.indexOf(HOST) !== 0) return null; var p = decodeURIComponent(new URL(s, HOST + DIR).pathname.slice(1)); return FS[p] ? p : null; } catch (e) { return null; } }
+  function bytes(b64){ var s = atob(b64), a = new Uint8Array(s.length); for (var i = 0; i < s.length; i++) a[i] = s.charCodeAt(i); return a; }
+  var of = window.fetch && window.fetch.bind(window);
+  window.fetch = function(input, init){ var p = rel(input); if (p === null) return of(input, init); var e = FS[p]; return Promise.resolve(new Response(e[2] ? bytes(e[1]) : e[1], { status: 200, headers: { "content-type": e[0] } })); };
+  function store(name, seed){
+    var d = Object.assign({}, seed || {});
+    function sync(){ if (name === "localStorage") try { parent.postMessage({ __wsp: "ls", data: d }, "*"); } catch (e) {} }
+    var api = { getItem: function(k){ k = String(k); return Object.prototype.hasOwnProperty.call(d, k) ? d[k] : null; }, setItem: function(k, v){ d[String(k)] = String(v); sync(); }, removeItem: function(k){ delete d[String(k)]; sync(); }, clear: function(){ d = {}; sync(); }, key: function(i){ var k = Object.keys(d)[i]; return k === undefined ? null : k; } };
+    Object.defineProperty(api, "length", { get: function(){ return Object.keys(d).length; } });
+    return new Proxy(api, { get: function(t, k){ return k in t ? t[k] : (typeof k === "string" && Object.prototype.hasOwnProperty.call(d, k) ? d[k] : undefined); }, set: function(t, k, v){ t.setItem(k, v); return true; }, deleteProperty: function(t, k){ t.removeItem(k); return true; }, ownKeys: function(){ return Object.keys(d); }, getOwnPropertyDescriptor: function(t, k){ return Object.prototype.hasOwnProperty.call(d, k) ? { value: d[k], enumerable: true, configurable: true, writable: true } : undefined; } });
+  }
+  ["localStorage", "sessionStorage"].forEach(function(n){ var ok = true; try { window[n].length; } catch (e) { ok = false; } if (!ok) Object.defineProperty(window, n, { value: store(n, n === "localStorage" ? LS : null), configurable: true }); });
+  ["pushState", "replaceState"].forEach(function(k){ var o = history[k].bind(history); history[k] = function(s, t, u){ try { return o(s, t, u); } catch (e) { return o(s, t); } }; });
+  addEventListener("click", function(e){ var a = e.target && e.target.closest && e.target.closest("a[href]"); if (!a || e.defaultPrevented || a.target === "_blank") return; var h = a.getAttribute("href"); if (!h || h.charAt(0) === "#") return; var p = rel(h.split("#")[0]); if (p && /\\.html?$/i.test(p)) { e.preventDefault(); parent.postMessage({ __wsp: "nav", path: p }, "*"); } });
+})(__ARGS__);`;
+
+async function wspBuild() {
+  if (!wsp.open) return;
+  if (wsp.building) { wsp.queued = true; return; }
+  wsp.building = true;
+  try { do { wsp.queued = false; await wspBuildOnce(); } while (wsp.queued); }
+  finally { wsp.building = false; }
+}
+async function wspBuildOnce() {
+  const stat = $("#wsp-stat"), empty = $("#wsp-empty"), frame = $("#wsp-frame");
+  wspRenderEntry();
+  const entry = wspEntry();
+  if (wsp.page && !wsFiles.some((f) => f.path === wsp.page)) wsp.page = "";
+  const page = wsp.page || entry;
+  if (!page) {
+    frame.srcdoc = "";
+    empty.hidden = false;
+    empty.innerHTML = `<b>NO ENTRY POINT</b><span>Add an index.html (or main.js / main.tsx), or ask the chat to build an app — it writes here.</span>`;
+    stat.textContent = `${wsFiles.length} files`; stat.classList.remove("err");
+    return;
+  }
+  const t0 = performance.now();
+  stat.textContent = "building…"; stat.classList.remove("err");
+  try {
+    const live = wsFiles.filter((f) => !/(^|\/)\.gitkeep$/.test(f.path));
+    const keep = new Set(live.map((f) => f.path));
+    for (const p of [...wsp.cache.keys()]) if (!keep.has(p)) wsp.cache.delete(p);
+    await wspFetch(live.filter((f) => wsp.cache.get(f.path)?.sig !== wspSig(f)));
+    wspConClear();
+    const doc = await wspAssemble(page);
+    wsp.doc = doc;
+    let out = sbxWrap(doc);
+    try { const t = await sbxTranspileDoc(out); out = t.doc; for (const e of t.errors) wspLog({ level: "error", text: `transpile failed in ${e.name}: ${e.error}` }); } catch { /* keep the untranspiled doc */ }
+    empty.hidden = true;
+    frame.srcdoc = out;
+    stat.textContent = `${page}${wsp.page && wsp.page !== entry ? " (page)" : ""} · ${live.length} files · ${Math.round(performance.now() - t0)} ms`;
+  } catch (e) {
+    stat.textContent = "build failed: " + e.message;
+    stat.classList.add("err");
+  }
+}
+const wspSchedule = () => { clearTimeout(wsp.timer); wsp.timer = setTimeout(wspBuild, 350); };
+
+// ---- console ---------------------------------------------------------------
+function wspConClear() {
+  wsp.logs = 0; wsp.errs = 0; wsp.warns = 0;
+  $("#wsp-con-b").replaceChildren();
+  wspConBadge();
+}
+function wspConBadge() {
+  const n = $("#wsp-con-n");
+  n.className = wsp.errs ? "err" : wsp.warns ? "warn" : "";
+  n.textContent = wsp.errs ? `${wsp.errs} error${wsp.errs > 1 ? "s" : ""}` : wsp.warns ? `${wsp.warns} warning${wsp.warns > 1 ? "s" : ""}` : wsp.logs ? String(wsp.logs) : "";
+}
+function wspConOpen(on) {
+  $("#wsp-con-b").hidden = !on;
+  $("#wsp-con-h").setAttribute("aria-expanded", String(on));
+}
+function wspLog(d) {
+  const body = $("#wsp-con-b");
+  if (wsp.logs >= 500) body.firstChild?.remove();
+  wsp.logs++;
+  if (d.level === "error") wsp.errs++;
+  if (d.level === "warn") wsp.warns++;
+  const row = document.createElement("div");
+  row.className = "cl " + (d.level || "log");
+  row.textContent = d.text + (d.line ? `  :${d.line}${d.col ? ":" + d.col : ""}` : "");
+  if (d.stack) {
+    const st = document.createElement("span");
+    st.className = "st";
+    st.textContent = String(d.stack).split("\n").filter((l) => /\bat\b|@/.test(l)).slice(0, 4).join("\n").replace(/data:text\/javascript;base64,[\w+/=]+/g, "module");
+    if (st.textContent) row.appendChild(st);
+  }
+  const stick = body.scrollHeight - body.scrollTop - body.clientHeight < 30;
+  body.appendChild(row);
+  if (stick) body.scrollTop = body.scrollHeight;
+  if (d.level === "error") wspConOpen(true);
+  wspConBadge();
+}
+$("#wsp-con-h").addEventListener("click", (e) => {
+  if (e.target.id === "wsp-con-clr") { wspConClear(); return; }
+  wspConOpen($("#wsp-con-b").hidden);
+});
+window.addEventListener("message", (e) => {
+  const fr = $("#wsp-frame");
+  if (!fr || e.source !== fr.contentWindow) return;
+  const d = e.data;
+  if (!d) return;
+  if (d.__sbx === 1) wspLog(d);
+  else if (d.__wsp === "ls" && d.data && typeof d.data === "object") store.set("wsp.ls", d.data);
+  else if (d.__wsp === "nav" && typeof d.path === "string" && wsp.cache.has(d.path)) { wsp.page = d.path; wspBuild(); }
+});
+
+// ---- tree --------------------------------------------------------------------
+function wspRows() {
+  const rows = [];
+  const count = (n) => n.files.filter((f) => !/(^|\/)\.gitkeep$/.test(f.path)).length + [...n.dirs.values()].reduce((a, c) => a + count(c), 0);
+  const walk = (node, prefix, d) => {
+    for (const [name, child] of [...node.dirs.entries()].sort((a, b) => a[0].localeCompare(b[0]))) {
+      const path = prefix + name + "/";
+      const open = !wsp.collapsed.has(path);
+      rows.push({ dir: true, path, name, d, open, n: count(child) });
+      if (open) walk(child, path, d + 1);
+    }
+    for (const f of node.files.slice().sort((a, b) => a.path.localeCompare(b.path))) {
+      if (/(^|\/)\.gitkeep$/.test(f.path)) continue;
+      rows.push({ dir: false, path: f.path, name: f.path.split("/").pop(), d, f });
+    }
+  };
+  walk(buildFileTree(wsFiles), "", 0);
+  return rows;
+}
+const wspSize = (b) => b >= 1048576 ? (b / 1048576).toFixed(1) + "M" : b >= 1024 ? (b / 1024).toFixed(1) + "k" : b + "B";
+function wspRenderTree() {
+  const tree = $("#wsp-tree");
+  const rows = wspRows();
+  wsp.rows = rows;
+  const entry = wspEntry();
+  tree.innerHTML = rows.length ? rows.map((r) => `<button class="tr${r.dir ? " dir" : ""}${wsp.flash.has(r.path) ? " flash" : ""}" role="treeitem" tabindex="-1" style="--d:${r.d}" data-p="${esc(r.path)}" aria-level="${r.d + 1}" aria-selected="${wsp.sel === r.path}"${r.dir ? ` aria-expanded="${r.open}"` : ""}><span class="tw">${r.dir ? (r.open ? "▾" : "▸") : ""}</span><span class="nm">${esc(r.name)}${r.dir ? "/" : ""}</span>${!r.dir && r.path === entry ? `<span class="en" title="entry point">★</span>` : ""}<span class="sz">${r.dir ? r.n : wspSize(r.f.bytes)}</span></button>`).join("")
+    : `<div class="wi-hint">empty — create a file below, or ask the chat to build something.</div>`;
+  wsp.flash.clear();
+}
+function wspToggleDir(path, open) {
+  if (open ?? wsp.collapsed.has(path)) wsp.collapsed.delete(path); else wsp.collapsed.add(path);
+  wspSave(); wspRenderTree();
+}
+$("#wsp-tree").addEventListener("click", (e) => {
+  const b = e.target.closest(".tr");
+  if (!b) { wspSelect(null); return; }
+  const p = b.dataset.p;
+  // Rows re-render on select, so a native dblclick never lands: the second click (detail 2) opens the editor.
+  if (e.detail >= 2 && !p.endsWith("/")) { wspEdit(p); return; }
+  if (p.endsWith("/") && (wsp.sel === p || e.target.closest(".tw"))) wspToggleDir(p);
+  wspSelect(p);
+});
+$("#wsp-tree").addEventListener("keydown", (e) => {
+  const rows = wsp.rows ?? [];
+  if (!rows.length) return;
+  const i = rows.findIndex((r) => r.path === wsp.sel);
+  const cur = rows[i];
+  let to = null;
+  if (e.key === "ArrowDown") to = rows[Math.min(rows.length - 1, i + 1)];
+  else if (e.key === "ArrowUp") to = rows[Math.max(0, i - 1)];
+  else if (e.key === "ArrowRight" && cur?.dir) { if (!cur.open) wspToggleDir(cur.path, true); else to = rows[i + 1]; }
+  else if (e.key === "ArrowLeft" && cur) { if (cur.dir && cur.open) wspToggleDir(cur.path, false); else to = rows.find((r) => r.dir && cur.path.startsWith(r.path) && r.path !== cur.path && r.d === cur.d - 1); }
+  else if (e.key === "Enter" && cur) { if (cur.dir) wspToggleDir(cur.path); else wspEdit(cur.path); }
+  else if (e.key === "Delete" && cur) wspDelete(cur.path);
+  else return;
+  e.preventDefault();
+  if (to) wspSelect(to.path, { focus: true });
+});
+
+// ---- inspector ---------------------------------------------------------------
+function wspGuard(next) {
+  if (!wsp.dirty) { next(); return; }
+  confirmDialog(`Discard unsaved edits to ${wsp.editing}?`, () => { wsp.dirty = false; wsp.editing = null; next(); }, "Discard");
+}
+function wspSelect(path, { focus = false } = {}) {
+  wspGuard(() => {
+    if (wsp.editing && wsp.editing !== path) wsp.editing = null;
+    wsp.sel = path;
+    wsp.ask = null;
+    wspRenderTree();
+    wspInspect();
+    if (focus) $(`#wsp-tree .tr[aria-selected="true"]`)?.focus();
+  });
+}
+function wspInspect() {
+  const box = $("#wsp-insp");
+  const sel = wsp.sel;
+  const ask = wsp.ask ? `<div class="wi-row"><input id="wi-in" spellcheck="false" aria-label="${esc(wsp.ask.label)}" placeholder="${esc(wsp.ask.label)}" value="${esc(wsp.ask.value ?? "")}"><button id="wi-ok">${esc(wsp.ask.verb)}</button><button id="wi-no">cancel</button></div>` : "";
+  if (!sel || (sel.endsWith("/") && !wsFiles.some((f) => f.path.startsWith(sel)))) {
+    const bytes = wsFiles.reduce((a, f) => a + f.bytes, 0);
+    box.innerHTML = `<div class="wi-h"><span class="p">/</span></div><div class="wi-kv"><span>files</span><b>${wsFiles.filter((f) => !/(^|\/)\.gitkeep$/.test(f.path)).length}</b><span>size</span><b>${wspSize(bytes)}</b><span>entry</span><b>${esc(wspEntry() || "none")}</b></div><div class="wi-acts"><button data-a="newfile">+ file</button><button data-a="newdir">+ folder</button><button data-a="refresh">↻ refresh</button></div>${ask}<div class="wi-hint">select a file or folder · dbl-click / enter edits · ↑↓←→ navigate · del deletes</div>`;
+  } else if (sel.endsWith("/")) {
+    const inside = wsFiles.filter((f) => f.path.startsWith(sel) && !/(^|\/)\.gitkeep$/.test(f.path));
+    box.innerHTML = `<div class="wi-h"><span class="p">${esc(sel)}</span></div><div class="wi-kv"><span>files</span><b>${inside.length}</b><span>size</span><b>${wspSize(inside.reduce((a, f) => a + f.bytes, 0))}</b></div><div class="wi-acts"><button data-a="newfile">+ file here</button><button data-a="newdir">+ folder here</button><button data-a="rename">rename</button><button class="bad" data-a="delete">delete</button></div>${ask}`;
+  } else {
+    const f = wsFiles.find((x) => x.path === sel);
+    if (!f) { wsp.sel = null; wspInspect(); return; }
+    const c = wsp.cache.get(sel);
+    const runnable = WSP_RUN.test(sel);
+    const isEntry = wspEntry() === sel;
+    const editing = wsp.editing === sel;
+    const img = c?.binary && /^image\//.test(c.mime) ? `<img class="wi-img" alt="" src="${wspDataUrl(c)}">` : "";
+    box.innerHTML = `<div class="wi-h"><span class="p">${esc(sel)}</span>${editing && wsp.dirty ? `<span class="dirty" title="unsaved">●</span>` : ""}${wsp.stale === sel ? `<span class="note">changed on disk</span>` : ""}</div>
+      ${editing ? "" : `<div class="wi-kv"><span>size</span><b>${f.bytes} B</b><span>lines</span><b>${f.lines ?? "—"}</b><span>type</span><b>${esc(f.mime || "")}</b><span>modified</span><b>${f.mtime ? esc(new Date(f.mtime).toLocaleString()) : "—"}</b></div>${img}`}
+      <div class="wi-acts">${c?.binary ? "" : `<button data-a="edit" aria-pressed="${editing}">${editing ? "close editor" : "edit"}</button>`}${editing ? `<button data-a="save">save · ctrl+s</button><button data-a="revert">revert</button>` : ""}${runnable ? `<button data-a="entry" aria-pressed="${isEntry}" title="Run this file in the live view">${isEntry ? "★ entry" : "set entry"}</button>` : ""}<button data-a="rename">rename</button><button data-a="download">download</button><button class="bad" data-a="delete">delete</button></div>${ask}
+      ${editing ? `<textarea class="wi-ed" id="wi-ed" spellcheck="false" aria-label="Edit ${esc(sel)}"></textarea>` : ""}`;
+    if (editing) {
+      const ed = $("#wi-ed");
+      ed.value = wsp.buffer ?? c?.content ?? "";
+      ed.addEventListener("input", () => { wsp.buffer = ed.value; if (!wsp.dirty) { wsp.dirty = true; wspInspectHead(); } });
+      ed.addEventListener("keydown", (e) => {
+        if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s") { e.preventDefault(); wspSaveFile(); }
+        else if (e.key === "Tab" && !e.shiftKey && !e.ctrlKey && !e.altKey) { e.preventDefault(); ed.setRangeText("  ", ed.selectionStart, ed.selectionEnd, "end"); ed.dispatchEvent(new Event("input")); }
+      });
+    }
+  }
+  const input = $("#wi-in");
+  if (input) {
+    input.focus();
+    input.setSelectionRange(input.value.length, input.value.length);
+    input.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); wspAskApply(); } else if (e.key === "Escape") { wsp.ask = null; wspInspect(); } });
+  }
+}
+function wspInspectHead() {
+  const h = $("#wsp-insp .wi-h");
+  if (!h || h.querySelector(".dirty")) return;
+  h.insertAdjacentHTML("beforeend", `<span class="dirty" title="unsaved">●</span>`);
+}
+$("#wsp-insp").addEventListener("click", (e) => {
+  if (e.target.id === "wi-ok") { wspAskApply(); return; }
+  if (e.target.id === "wi-no") { wsp.ask = null; wspInspect(); return; }
+  const a = e.target.closest("[data-a]")?.dataset.a;
+  if (!a) return;
+  const sel = wsp.sel;
+  const base = sel ? (sel.endsWith("/") ? sel : wspDir(sel)) : "";
+  if (a === "newfile") { wsp.ask = { kind: "newfile", label: "new file path", verb: "create", value: base }; wspInspect(); }
+  else if (a === "newdir") { wsp.ask = { kind: "newdir", label: "new folder path", verb: "create", value: base }; wspInspect(); }
+  else if (a === "rename") { wsp.ask = { kind: "rename", label: "new path", verb: "move", value: sel }; wspInspect(); }
+  else if (a === "refresh") wsRefresh(true);
+  else if (a === "delete") wspDelete(sel);
+  else if (a === "edit") { if (wsp.editing === sel) wspGuard(() => { wsp.editing = null; wspInspect(); }); else wspEdit(sel); }
+  else if (a === "save") wspSaveFile();
+  else if (a === "revert") { wsp.dirty = false; wsp.buffer = null; wsp.stale = null; wspEdit(sel, true); }
+  else if (a === "entry") { wsp.entry = wspEntry() === sel && wsp.entry === sel ? "" : sel; wsp.page = ""; wspSave(); wspRenderTree(); wspInspect(); wspBuild(); }
+  else if (a === "download") wspDownload(sel);
+});
+async function wspEdit(path, reload = false) {
+  wspGuard(async () => {
+    wsp.sel = path; wsp.editing = path; wsp.dirty = false; wsp.buffer = null; wsp.stale = null; wsp.ask = null;
+    const f = wsFiles.find((x) => x.path === path);
+    if (reload || !f || wsp.cache.get(path)?.sig !== wspSig(f)) {
+      try { const r = await wsReadFull(path); wsp.cache.set(path, { sig: f ? wspSig(f) : "", content: r.content ?? "", binary: Boolean(r.binary), mime: r.mime || "" }); }
+      catch (e) { toast("open failed: " + e.message, true); return; }
+    }
+    if (wsp.cache.get(path)?.binary) { wsp.editing = null; toast("binary file — not editable here", true); }
+    wspRenderTree(); wspInspect();
+    const ed = $("#wi-ed");
+    if (ed) { ed.setSelectionRange(0, 0); ed.focus(); ed.scrollTop = ed.scrollLeft = 0; }
+  });
+}
+async function wspSaveFile() {
+  const path = wsp.editing;
+  const ed = $("#wi-ed");
+  if (!path || !ed) return;
+  try {
+    const r = await wsExec("fs_write", { path, content: ed.value });
+    wsp.dirty = false; wsp.buffer = null; wsp.stale = null;
+    wsp.cache.set(path, { sig: "", content: ed.value, binary: false, mime: wsp.cache.get(path)?.mime || "" });
+    toast(`saved ${path} · ${r.bytes} B`);
+    await wsRefresh(true);
+    wspInspect();
+  } catch (e) { toast("save failed: " + e.message, true); }
+}
+async function wspMove(from, to) {
+  const r = await wsExec("fs_read", { path: from, encoding: "auto", limit: 5000 });
+  const full = !r.binary && r.truncated ? await wsReadFull(from) : r;
+  await wsExec("fs_write", { path: to, content: full.content ?? "", ...(full.binary ? { encoding: "base64" } : {}) });
+  await wsExec("fs_delete", { path: from });
+  if (wsp.entry === from) wsp.entry = to;
+}
+async function wspAskApply() {
+  const ask = wsp.ask;
+  const v = ($("#wi-in")?.value ?? "").trim().replace(/^\/+/, "");
+  if (!ask) return;
+  try {
+    if (ask.kind === "newfile") {
+      if (!v || v.endsWith("/")) { toast("name the file", true); return; }
+      if (wsFiles.some((f) => f.path === v)) { toast(`${v} already exists`, true); return; }
+      await wsExec("fs_write", { path: v, content: "" });
+      wsp.ask = null;
+      await wsRefresh(true);
+      wspEdit(v);
+    } else if (ask.kind === "newdir") {
+      const dir = v.replace(/\/+$/, "");
+      if (!dir) { toast("name the folder", true); return; }
+      await wsExec("fs_write", { path: dir + "/.gitkeep", content: "" });
+      wsp.ask = null; wsp.collapsed.delete(dir + "/"); wsp.sel = dir + "/";
+      await wsRefresh(true);
+      wspInspect();
+    } else if (ask.kind === "rename") {
+      const from = ask.value;
+      if (!v || v === from) { wsp.ask = null; wspInspect(); return; }
+      if (from.endsWith("/")) {
+        const to = v.replace(/\/*$/, "/");
+        const moving = wsFiles.filter((f) => f.path.startsWith(from));
+        if (moving.some((f) => wsFiles.some((g) => g.path === to + f.path.slice(from.length)))) { toast("target folder has clashing files", true); return; }
+        $("#wsp-stat").textContent = `moving ${moving.length} files…`;
+        for (const f of moving) await wspMove(f.path, to + f.path.slice(from.length));
+        wsp.sel = to;
+      } else {
+        if (wsFiles.some((f) => f.path === v)) { toast(`${v} already exists`, true); return; }
+        if (wsp.editing === from && wsp.dirty) await wsExec("fs_write", { path: from, content: $("#wi-ed").value });
+        await wspMove(from, v);
+        if (wsp.editing === from) wsp.editing = v;
+        wsp.dirty = false; wsp.buffer = null;
+        wsp.sel = v;
+      }
+      wsp.ask = null;
+      wspSave();
+      await wsRefresh(true);
+      wspInspect();
+    }
+  } catch (e) { toast(`${ask.kind} failed: ${e.message}`, true); }
+}
+function wspDelete(path) {
+  if (!path) return;
+  const files = path.endsWith("/") ? wsFiles.filter((f) => f.path.startsWith(path)) : wsFiles.filter((f) => f.path === path);
+  if (!files.length) return;
+  confirmDialog(`Delete ${path}${files.length > 1 ? ` (${files.length} files)` : ""}? This cannot be undone.`, async () => {
+    try {
+      for (let i = 0; i < files.length; i += 16) {
+        const d = await req("/v1/tools/execute", { method: "POST", admin: true, body: { calls: files.slice(i, i + 16).map((f) => ({ name: "fs_delete", arguments: { path: f.path } })) } });
+        const bad = (d.results ?? []).find((r) => !r.ok);
+        if (bad) throw new Error(bad.error || bad.code || "fs_delete failed");
+      }
+      if (wsp.editing && files.some((f) => f.path === wsp.editing)) { wsp.editing = null; wsp.dirty = false; }
+      wsp.sel = null;
+      await wsRefresh(true);
+      wspInspect();
+    } catch (e) { toast("delete failed: " + e.message, true); wsRefresh(true); }
+  }, "Delete");
+}
+async function wspDownload(path) {
+  try {
+    const f = wsp.cache.get(path) ?? await wsReadFull(path);
+    const blob = f.binary ? new Blob([Uint8Array.from(atob(f.content), (ch) => ch.charCodeAt(0))], { type: f.mime || "application/octet-stream" }) : new Blob([wsp.editing === path ? $("#wi-ed").value : f.content], { type: "text/plain" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = path.split("/").pop() || "file";
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+  } catch (e) { toast("download failed: " + e.message, true); }
+}
+
+// ---- file snapshots ------------------------------------------------------------
+function wspOnFiles() {
+  if (!wsp.open) return;
+  const sigs = new Map(wsFiles.map((f) => [f.path, wspSig(f)]));
+  const sig = [...sigs].map(([p, s]) => p + "=" + s).sort().join("|");
+  if (sig !== wsp.sig) {
+    if (wsp.sigs) for (const [p, s] of sigs) if (wsp.sigs.get(p) !== s) {
+      wsp.flash.add(p);
+      if (p === wsp.editing) { if (wsp.dirty) wsp.stale = p; else wsp.reloadEditor = true; }
+    }
+    wsp.sig = sig;
+    wsp.sigs = sigs;
+    if (wsp.live) wspSchedule();
+  }
+  wspRenderTree();
+  if (wsp.reloadEditor) { wsp.reloadEditor = false; wspEdit(wsp.editing, true); }
+  else if (!wsp.editing || wsp.stale) wspInspect();
+}
+
+// ---- layout ----------------------------------------------------------------------
+const wspSupported = () => matchMedia("(min-width: 900px)").matches;
+function wspSave() {
+  store.set("wsp", { open: wsp.open, entry: wsp.entry, live: wsp.live, vp: wsp.vp, chat: wsp.chat, tree: wsp.tree, treeH: wsp.treeH, con: wsp.con, collapsed: [...wsp.collapsed] });
+}
+function wspLayout() {
+  const view = $("#v-chat");
+  view.style.setProperty("--chat-w", (wsp.chat * 100).toFixed(2) + "%");
+  view.style.setProperty("--tree-w", wsp.tree + "px");
+  view.style.setProperty("--tree-h", (wsp.treeH * 100).toFixed(2) + "%");
+  view.style.setProperty("--con-h", wsp.con + "px");
+  const stage = $("#wsp-stage");
+  if (wsp.vp === "auto") { delete stage.dataset.vp; stage.style.removeProperty("--vp"); }
+  else { stage.dataset.vp = wsp.vp; stage.style.setProperty("--vp", wsp.vp + "px"); }
+  $("#wsp-vp").value = wsp.vp;
+  $("#wsp-live").setAttribute("aria-pressed", String(wsp.live));
+}
+function wspShow(on) {
+  wsp.open = on;
+  $("#v-chat").classList.toggle("wsp-on", on);
+  $("#wsp").hidden = $("#wsp-split").hidden = !on;
+  $("#cworkspace-btn")?.setAttribute("aria-pressed", String(on));
+  wspSave();
+  if (!on) { wsWatch(false); $("#wsp-frame").srcdoc = ""; return; }
+  wspLayout();
+  wsp.sig = "";
+  wsWatch(true);
+  wspRenderTree();
+  wspInspect();
+  wsRefresh(true).then(() => { if (!wsp.live) wspBuild(); });
+}
+// Chrome hit-tests out-of-process frames (the sandboxed live view) against the
+// last compositor frame, so a shield added on press can lose the first moves
+// and the release to the iframe. Frames are muted from hover on (arm), a
+// full-viewport shield plus capture owns the drag, and a move with no button
+// held ends a drag whose release was lost.
+function armSplit(handle) {
+  handle.addEventListener("pointerenter", () => document.body.classList.add("split-armed"));
+  handle.addEventListener("pointerleave", () => { if (!document.body.classList.contains("splitting")) document.body.classList.remove("split-armed"); });
+}
+function dragShield(axis, move, done, handle, pointerId) {
+  const sh = document.createElement("div");
+  sh.className = "split-shield drag-" + axis;
+  document.body.appendChild(sh);
+  document.body.classList.add("splitting", "split-armed");
+  try { handle?.setPointerCapture(pointerId); } catch { /* pointer already released */ }
+  const mv = (e) => { if (e.buttons === 0) up(); else move(e); };
+  const up = () => {
+    removeEventListener("pointermove", mv); removeEventListener("pointerup", up); removeEventListener("pointercancel", up);
+    sh.remove();
+    document.body.classList.remove("splitting");
+    if (!handle?.matches(":hover")) document.body.classList.remove("split-armed");
+    done();
+  };
+  addEventListener("pointermove", mv);
+  addEventListener("pointerup", up);
+  addEventListener("pointercancel", up);
+}
+// One splitter primitive: pointer drag (shielded), arrows
+// (shift = coarse), Home/End to the limits, double-click to the default.
+function splitter(handle, { axis, get, set, min, max, reset }) {
+  const apply = (v) => { set(Math.round(Math.min(max(), Math.max(min(), v)))); wspLayout(); };
+  handle.addEventListener("pointerdown", (e) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    const start = axis === "x" ? e.clientX : e.clientY, v0 = get();
+    handle.classList.add("drag");
+    dragShield(axis, (ev) => apply(v0 + (axis === "x" ? ev.clientX : ev.clientY) - start), () => { handle.classList.remove("drag"); wspSave(); }, handle, e.pointerId);
+  });
+  armSplit(handle);
+  handle.addEventListener("keydown", (e) => {
+    const step = e.shiftKey ? 80 : 16;
+    const k = { [axis === "x" ? "ArrowRight" : "ArrowDown"]: get() + step, [axis === "x" ? "ArrowLeft" : "ArrowUp"]: get() - step, Home: min(), End: max() }[e.key];
+    if (k === undefined) return;
+    e.preventDefault();
+    apply(k);
+    wspSave();
+  });
+  handle.addEventListener("dblclick", () => { reset(); wspLayout(); wspSave(); });
+}
+const wspW = () => $("#v-chat").clientWidth;
+splitter($("#wsp-split"), {
+  axis: "x",
+  get: () => $(".chat", $("#v-chat")).getBoundingClientRect().width,
+  set: (px) => { wsp.chat = px / wspW(); },
+  min: () => 300, max: () => wspW() - 385,
+  reset: () => { wsp.chat = 0.44; },
+});
+splitter($("#wsp-split-2"), {
+  axis: "x",
+  get: () => wsp.tree,
+  set: (px) => { wsp.tree = px; },
+  min: () => 150, max: () => Math.max(150, $("#wsp").clientWidth - 205),
+  reset: () => { wsp.tree = 260; },
+});
+splitter($("#wsp-split-y"), {
+  axis: "y",
+  get: () => $("#wsp-tree").getBoundingClientRect().height,
+  set: (px) => { wsp.treeH = px / Math.max(1, $("#wsp-left").clientHeight); },
+  min: () => 48, max: () => Math.max(48, $("#wsp-left").clientHeight - 53),
+  reset: () => { wsp.treeH = 0.58; },
+});
+// The console's top edge resizes it too: drag the header.
+$("#wsp-con-h").addEventListener("pointerdown", (e) => {
+  if ($("#wsp-con-b").hidden || e.button !== 0 || e.target.id === "wsp-con-clr") return;
+  const y0 = e.clientY, h0 = wsp.con, h = e.currentTarget;
+  let moved = false;
+  e.preventDefault();
+  dragShield("y", (ev) => {
+    if (Math.abs(ev.clientY - y0) > 3) moved = true;
+    wsp.con = Math.round(Math.min(innerHeight * 0.7, Math.max(60, h0 - (ev.clientY - y0))));
+    wspLayout();
+  }, () => {
+    if (!moved) return;
+    wspSave();
+    // A resize is not a toggle: swallow the click that follows the release.
+    const swallow = (ev) => ev.stopImmediatePropagation();
+    h.addEventListener("click", swallow, { capture: true, once: true });
+    setTimeout(() => h.removeEventListener("click", swallow, { capture: true }), 0);
+  }, h, e.pointerId);
+});
+armSplit($("#wsp-con-h"));
+
+$("#wsp-entry").addEventListener("change", (e) => { wsp.entry = e.target.value; wsp.page = ""; wspSave(); wspRenderTree(); wspInspect(); wspBuild(); });
+$("#wsp-reload").addEventListener("click", () => { wsp.cache.clear(); wsRefresh(true).then(wspBuild); });
+$("#wsp-live").addEventListener("click", () => { wsp.live = !wsp.live; wspLayout(); wspSave(); if (wsp.live) wspBuild(); });
+$("#wsp-vp").addEventListener("change", (e) => { wsp.vp = e.target.value; wspLayout(); wspSave(); });
+$("#wsp-pop").addEventListener("click", () => { if (wsp.doc) launchAppSandbox(wsp.doc, wsp.page || wspEntry()); else toast("nothing built yet", true); });
+$("#wsp-more").addEventListener("click", () => wsDrawerOpen());
+$("#wsp-close").addEventListener("click", () => wspGuard(() => { wsp.editing = null; wspShow(false); }));
+addEventListener("resize", () => { if (wsp.open && !wspSupported()) wspShow(false); });
+addEventListener("beforeunload", (e) => { if (wsp.dirty) e.preventDefault(); });
+setTimeout(() => { if (wsp.open && wspSupported()) wspShow(true); else wsp.open = false; }, 0);
+
 async function wsOpen(path) {
   wsCur = path;
   $("#ws-editor-wrap").hidden = false;
   $("#ws-cur-path").textContent = path;
   $("#ws-stat").textContent = "loading…";
   try {
-    const read = await wsExec("fs_read", { path });
+    const read = await wsReadFull(path);
     if (read.binary) {
       $("#ws-editor").value = "";
       $("#ws-editor").disabled = true;
@@ -6392,7 +7274,7 @@ $("#ws-analyze")?.addEventListener("click", analyzeWorkspace);
 $("#builder-open-ws")?.addEventListener("click", () => openWorkspace());
 $("#builder-files")?.addEventListener("click", (e) => {
   const b = e.target.closest("[data-ws-open]");
-  if (b) { openWorkspace(); wsOpen(b.dataset.wsOpen); }
+  if (b) openWorkspace(b.dataset.wsOpen);
 });
 // ---- rename / move + folders ----------------------------------------------
 // There is no fs_move tool: a rename is write-new + delete-old through
@@ -6773,14 +7655,23 @@ async function analyzeWorkspace() {
   }
 }
 
-function openWorkspace() {
+// The workspace opens as the split pane beside the chat; narrow screens and
+// the project menu (intelligence, conversations, GitHub, zip) use the drawer.
+function openWorkspace(path) {
+  if (!wspSupported()) { wsDrawerOpen(); if (path) wsOpen(path); return; }
+  closeSheets();
+  go("chat");
+  if (!wsp.open) wspShow(true);
+  if (path) wspSelect(path);
+}
+function wsDrawerOpen() {
   wsWatch(true);
   ghLoad();
   renderWsConvs();
   openSheet(wsDrawer);
   wsRefresh();
 }
-$("#cworkspace-btn")?.addEventListener("click", openWorkspace);
+$("#cworkspace-btn")?.addEventListener("click", () => { if (wspSupported()) wspGuard(() => { wsp.editing = null; wspShow(!wsp.open); }); else wsDrawerOpen(); });
 wsDrawer?.addEventListener("click", (e) => { if (e.target.closest("[data-close]")) closeSheets(); });
 $("#ws-open-builder")?.addEventListener("click", () => openAppBuilder());
 cmd("workspace", () => openWorkspace(), "builder");
