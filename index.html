@@ -3035,11 +3035,25 @@ async function complete() {
   if (stick) thread.scrollTop = thread.scrollHeight;
   saveConv(); updateModelHint();
   if (k.degraded) toast("every upstream endpoint failed — router returned its status message", true);
+  // The dashboard declares no client tools: any call reaching it is the router's, so run it — never ask.
+  if (!k.error && m.tool_calls?.length && !answeredIds(i).size && autoToolTurns++ < 4) await answerToolCalls(m);
+}
+let autoToolTurns = 0;
+async function answerToolCalls(m) {
+  try {
+    const d = await req("/v1/tools/execute", { method: "POST", admin: true, body: { calls: m.tool_calls } });
+    m.tool_calls.forEach((t, j) => {
+      const r = d.results?.[j] ?? {};
+      conv.messages.push({ role: "tool", tool_call_id: t.id, name: t.function?.name ?? "", content: JSON.stringify(r.ok ? r.result : { error: r.error || r.code || "tool failed" }) });
+    });
+  } catch (e) { toast(`tool run failed: ${e.message}`, true); return; }
+  saveConv(); renderThread(); await complete();
 }
 async function sendChat() {
   if (chatCtl) return;
   const text = $("#cinput").value.trim();
   if (!text && !attachments.length) return;
+  autoToolTurns = 0;
   const max = $("#pmax").value.trim();
   if (max && (!Number.isSafeInteger(Number(max)) || Number(max) < 1)) { toast("max tokens must be a positive whole number", true); return; }
   const content = attachments.length ? [{ type: "text", text }, ...attachments.map((url) => ({ type: "image_url", image_url: { url } }))] : text;

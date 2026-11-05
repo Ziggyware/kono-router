@@ -10,7 +10,10 @@ suggestions, and the model self-corrects. **Spent budget**: when the
 last allowed round executes and the caller declared no tools, the
 next turn runs with `tool_choice: "none"`, so it answers instead of
 emitting calls nobody will run. Callers that declare their own tools
-keep the OpenAI contract unchanged. Tests: partition unit cases,
+keep the OpenAI contract unchanged. **Dashboard backstop**: if calls still reach the
+chat page (a model ignoring `"none"`), it runs them through
+`/v1/tools/execute` and continues automatically (≤4 turns per send);
+the manual "send results" box remains only as the failure fallback. Tests: partition unit cases,
 both client-handoff tests now declare their client tool, new e2e
 test for the auto path.
 
