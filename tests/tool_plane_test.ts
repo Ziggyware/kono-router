@@ -1174,3 +1174,29 @@ test("tools:auto never hands a call to the user: undeclared names execute, a spe
     restoreMock();
   }
 });
+
+test("a streamed tool call that arrives after the head committed still runs in-plane", async () => {
+  const good = await pickHealthyUrl();
+  const seen: any[] = [];
+  const preamble = "Let me work this out carefully before calling the calculator tool for the exact value.";
+  installMock(scripted(good, (_p, call) =>
+    call === 0
+      ? sseOf([{ content: preamble }, { tool_calls: [{ index: 0, id: "call_late", type: "function", function: { name: "calculate", arguments: '{"expression":"6*7"}' } }] }], "tool_calls")
+      : sseOf([{ content: "The answer is 42." }]), seen));
+  try {
+    const text = await (await app.fetch(chatRequest({
+      model: "free:smart", stream: true, tools: "auto",
+      messages: [{ role: "user", content: "6*7?" }],
+    }))).text();
+    const frames = text.split("\n\n").filter((l) => l.startsWith("data: {")).map((l) => JSON.parse(l.slice(6)));
+    if (frames.some((f) => f.choices?.[0]?.delta?.tool_calls)) throw new Error("late calls reached the client");
+    if (!frames.some((f) => f.nokey?.type === "tool_round")) throw new Error("no tool round reported");
+    const fin = frames.filter((f) => f.choices?.[0]?.finish_reason).at(-1);
+    if (fin?.choices[0].finish_reason !== "stop") throw new Error(`finish ${JSON.stringify(fin)}`);
+    if (seen.length !== 2) throw new Error(`expected 2 upstream calls, saw ${seen.length}`);
+    const toolMsg = seen[1].messages.at(-1);
+    if (toolMsg.role !== "tool" || !String(toolMsg.content).includes("42")) throw new Error(JSON.stringify(toolMsg));
+  } finally {
+    restoreMock();
+  }
+});

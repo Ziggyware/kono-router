@@ -13,7 +13,11 @@ emitting calls nobody will run. Callers that declare their own tools
 keep the OpenAI contract unchanged. **Dashboard backstop**: if calls still reach the
 chat page (a model ignoring `"none"`), it runs them through
 `/v1/tools/execute` and continues automatically (≤4 turns per send);
-the manual "send results" box remains only as the failure fallback. Tests: partition unit cases,
+the manual "send results" box remains only as the failure fallback. **Late streamed calls**: a streaming model that emits more than
+`COMMIT_CHARS` of text before its tool call committed the head as plain
+text, and the call was passed straight through to the page. Calls that
+arrive in the tail are now held, executed in-plane, and the loop
+re-dispatches; only client-declared calls are handed over. Tests: partition unit cases,
 both client-handoff tests now declare their client tool, new e2e
 test for the auto path.
 

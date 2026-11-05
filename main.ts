@@ -5404,18 +5404,22 @@ honoApp.post("/v1/chat/completions", async (c) => {
           const toolCalls = new Set<number>();
           const streamedCalls = new Map<number, ToolCallDelta>();
           let contentChars = 0;
+          let streamedText = "";
           let reasoning = "";
           let finish: string | undefined;
+          // Calls that surface after the head committed are held, not streamed: the plane may still own them.
+          const holdCalls = agentRounds > 0 && toolRound < agentRounds;
           const wire = (d: Delta): string | null => {
             const out: Record<string, unknown> = {};
             if (d.reasoning) out.reasoning_content = d.reasoning;
             if (d.content) out.content = d.content;
             if (d.toolCalls) {
-              out.tool_calls = d.toolCalls;
+              if (!holdCalls) out.tool_calls = d.toolCalls;
               mergeToolCalls(streamedCalls, d.toolCalls);
               for (const t of d.toolCalls) toolCalls.add(t.index);
             }
             contentChars += d.content?.trim() ? d.content.length : 0;
+            streamedText += d.content ?? "";
             reasoning += d.reasoning ?? "";
             finish = d.finish ?? finish;
             if (Object.keys(out).length === 0) return null;
@@ -5431,6 +5435,33 @@ honoApp.post("/v1/chat/completions", async (c) => {
             for await (const d of up.tail) {
               const f = wire(d);
               if (f) yield f;
+            }
+            if (holdCalls && streamedCalls.size > 0) {
+              const late = [...streamedCalls.values()].sort((a, b) => a.index - b.index)
+                .map((t) => ({ id: t.id ?? `call_${t.index}`, type: "function", function: { name: t.function?.name ?? "", arguments: t.function?.arguments ?? "" } }));
+              const roundSpan = root.child("tool_round", { round: toolRound + 1, calls: late.length, tuple: cand.tupleId, late: true });
+              const outcome = await executeOwnedToolCalls(late, { span: roundSpan, signal: master.signal, admin: isAdminContext(c), clientNames: clientToolNames, caps: { kv, namespace: toolNamespace(c) } });
+              if (outcome.loop) {
+                roundSpan.end("ok", { executed: outcome.executed.length, failures: outcome.executed.filter((e) => !e.ok).length });
+                messages.push({ role: "assistant", content: streamedText || null, tool_calls: late } as unknown as { role: string; content: unknown });
+                for (const m of outcome.messages) messages.push(m);
+                toolRound += 1;
+                if (toolRound >= agentRounds && clientToolNames.length === 0) completionOptions.tool_choice = "none";
+                tried.delete(cand.tupleId);
+                yield status({
+                  type: "tool_round",
+                  round: toolRound,
+                  tuple: cand.tupleId,
+                  trace_id: root.traceId,
+                  tools: outcome.executed.map((e) => ({ name: e.name, ok: e.ok, ms: e.ms, repaired: e.repaired, ...(e.error ? { error: e.error } : {}) })),
+                });
+                continue;
+              }
+              roundSpan.end("ok", { executed: 0, reason: "tool calls belong to the client" });
+              const handoff: Record<string, unknown> = { tool_calls: late };
+              if (first) handoff.role = "assistant";
+              first = false;
+              yield chunk(handoff, null);
             }
             // Salvage parity with the buffered path: a reasoning-only stream also surfaces as content.
             if (!contentChars && !toolCalls.size && reasoning.trim()) yield chunk({ content: reasoning.trim() }, null);
