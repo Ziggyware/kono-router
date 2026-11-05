@@ -2207,6 +2207,7 @@ return { words: t.split(/\s+/).filter(Boolean).length, chars: t.length };</texta
       <button class="btn q icon-btn" id="sb-fullscreen" title="Toggle Fullscreen"><svg aria-hidden="true"><use href="#i-expand"/></svg></button>
       <button class="btn q icon-btn" id="sb-toggle-console" title="Toggle Console Log"><svg aria-hidden="true"><use href="#i-terminal"/></svg></button>
       <button class="btn q icon-btn" id="sb-copy-code" title="Copy Source Code"><svg aria-hidden="true"><use href="#i-more"/></svg></button>
+      <button class="btn q" id="sb-save-ws" style="font-size:10.5px;padding:2px 8px" title="Split this app into files in the durable workspace">💾 Save to workspace</button>
       <button class="btn q icon-btn" id="sb-close" title="Close Sandbox"><svg aria-hidden="true"><use href="#i-x"/></svg></button>
     </div>
   </div>
@@ -5272,6 +5273,39 @@ async function launchAppSandbox(code, title = "Application Preview") {
   if (!modal.open) modal.showModal();
   for (const e of errors) sbxRenderLog({ level: "error", text: `Transpile failed in ${e.name}: ${e.error} (syntax-level transpile only — types are not checked)` });
 }
+
+// ---- save the running app back to the workspace --------------------------
+// The assembled document carries its origins in data-sbx markers, so it
+// can be split back into the files it came from: marked style/script
+// blocks become their own files again, and what remains becomes the
+// page (index.html, or the sandbox title when that names an .html
+// file). A single unmarked block saves as one file. The console bridge
+// is never saved — this works from currentSandboxCode, the source from
+// before wrapping and transpiling, so TypeScript saves as TypeScript.
+async function sbxSaveToWorkspace() {
+  const src = currentSandboxCode || "";
+  if (!src.trim()) { toast("Nothing to save yet", true); return; }
+  const files = [];
+  let doc = src;
+  const take = (re) => {
+    doc = doc.replace(re, (full, name, body) => { files.push({ path: name, content: body.replace(/^\n+/, "").replace(/\s+$/, "") + "\n" }); return ""; });
+  };
+  take(/<style data-sbx="([^"]+)"[^>]*>([\s\S]*?)<\/style>/gi);
+  take(/<[s]cript data-sbx="([^"]+)"[^>]*>([\s\S]*?)<\/[s]cript>/gi);
+  const rest = doc.trim();
+  if (rest) {
+    const title = $("#sandbox-app-title").textContent || "";
+    const mainName = /\.html?$/i.test(title) ? title : (files.length ? "index.html" : (/\.[\w]+$/.test(title) ? title : "sandbox-app.html"));
+    files.unshift({ path: mainName, content: rest + "\n" });
+  }
+  if (!files.length) { toast("Nothing to save", true); return; }
+  try {
+    for (const f of files) await wsExec("fs_write", { path: f.path, content: f.content });
+    toast(`Saved ${files.length} file${files.length === 1 ? "" : "s"} to the workspace: ${files.map((f) => f.path).join(", ")}`);
+    wsRefresh(true);
+  } catch (e) { toast("Save to workspace failed: " + e.message, true); }
+}
+$("#sb-save-ws")?.addEventListener("click", sbxSaveToWorkspace);
 
 // ---- sandbox debug rendering ----------------------------------------------
 // Console lines stay one-liners, but errors render as debug cards: the

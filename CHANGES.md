@@ -1,3 +1,17 @@
+# Backlog knock-off: Save to Workspace from the sandbox — 2026-11-04
+
+An app running in the sandbox used to live only in the chat message
+it came from. The sandbox header now has **💾 Save to workspace**:
+the assembled document carries its origins in `data-sbx` markers, so
+it splits back into the files it came from — marked style/script
+blocks become their own files again and the remainder becomes the
+page (`index.html`, or the sandbox title when that names an .html
+file; a single unmarked block saves as one file). Saving works from
+the pre-wrap, pre-transpile source, so the console bridge is never
+saved and TypeScript saves as TypeScript. Verified with the jsdom
+harness (new run10: split correctness, bridge exclusion, single-file
+naming; run8/run9 still pass).
+
 # Backlog knock-off: rename/move and folders in the workspace — 2026-11-04
 
 The file tree was display-only for structure: folders existed only as
