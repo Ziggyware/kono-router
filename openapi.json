@@ -1656,6 +1656,137 @@
           }
         }
       }
+    },
+    "/v1/agent/compile": {
+      "post": {
+        "tags": [
+          "tools"
+        ],
+        "operationId": "compileAgent",
+        "summary": "Plan, execute and answer with a compiled tool DAG",
+        "description": "LLMCompiler-style agent over the tool plane. BM25 retrieves the relevant tools; `samples` plans are drawn in parallel at spread temperatures and the minimum-Bayes-risk plan (expected Jaccard utility over id-free call signatures, down-weighted by literal schema failures) is executed as a DAG: list scheduling by upward rank over learned tool latencies, bounded concurrency, `$n1.path` / `${n1.path}` result references, stateful tools chained in order, dependents of a failed node skipped. A joiner answers or requests a replan (up to `rounds`). Sub-calls run in-process through this router as the caller (same key, session and quota) and nest in one trace.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "question": {
+                    "type": "string"
+                  },
+                  "messages": {
+                    "type": "array",
+                    "items": {
+                      "type": "object"
+                    },
+                    "description": "Alternative to question: the last user message is the task."
+                  },
+                  "model": {
+                    "type": "string",
+                    "default": "free:smart"
+                  },
+                  "samples": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 5,
+                    "default": 3
+                  },
+                  "rounds": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 3,
+                    "default": 2
+                  },
+                  "concurrency": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 16,
+                    "default": 6
+                  },
+                  "k": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 40,
+                    "default": 12,
+                    "description": "Tools retrieved for the planner."
+                  },
+                  "tools": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    },
+                    "description": "Explicit tool names; skips retrieval."
+                  },
+                  "budget_ms": {
+                    "type": "integer",
+                    "minimum": 1000,
+                    "maximum": 600000,
+                    "default": 120000
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Answer with every round: candidate plans and MBR scores, per-node schedule (rank, start/end, result), makespan / work / critical path / parallelism / depth, and round-trip accounting versus ReAct",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "No question",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid ROUTER_API_KEY",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Per-isolate rate limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Planner or joiner unreachable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {

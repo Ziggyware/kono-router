@@ -132,7 +132,8 @@ export function startTrace(name: string, attrs: Attrs = {}, traceparent?: string
   const sc = o.spanContext();
   const inbound = traceparent ? TRACEPARENT.exec(traceparent.trim().toLowerCase()) : null;
   const traceId = !INVALID.test(sc.traceId) ? sc.traceId : inbound && !INVALID.test(inbound[1]) ? inbound[1] : hex(16);
-  ring.set(traceId, { id: traceId, spans: [] });
+  // A joined trace already in the ring keeps its spans (in-process sub-requests nest under their parent).
+  if (!ring.has(traceId)) ring.set(traceId, { id: traceId, spans: [] });
   while (ring.size > RING_MAX) ring.delete(ring.keys().next().value!);
   const span = new Span(traceId, o, name, inbound?.[2] ?? null, attrs);
   return span;
