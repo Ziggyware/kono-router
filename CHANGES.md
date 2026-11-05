@@ -1,3 +1,19 @@
+# Tool calls never land on the user — 2026-11-04
+
+With `tools: "auto"` the dashboard declares no client tools, yet two
+paths handed tool calls back to it, where they surfaced as a
+"result" box + "send results" button. **Undeclared names**: a call
+that was neither built-in nor caller-declared made the whole batch
+"the client's"; ownership is now strictly caller-declared, so a
+hallucinated name executes in-plane, returns `UNKNOWN_TOOL` with
+suggestions, and the model self-corrects. **Spent budget**: when the
+last allowed round executes and the caller declared no tools, the
+next turn runs with `tool_choice: "none"`, so it answers instead of
+emitting calls nobody will run. Callers that declare their own tools
+keep the OpenAI contract unchanged. Tests: partition unit cases,
+both client-handoff tests now declare their client tool, new e2e
+test for the auto path.
+
 # Backlog knock-off: Save to Workspace from the sandbox — 2026-11-04
 
 An app running in the sandbox used to live only in the chat message

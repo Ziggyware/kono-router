@@ -585,11 +585,14 @@ Deno.test("partitioning and auto-resolution", () => {
   assert(normalized[0].arguments === '{"expression":"1+1"}', "object arguments stringified");
   assert(!normalized[1].builtin && normalized[1].id.length > 0, "client tool + synthesised id");
 
-  const mixed = partitionToolCalls([
+  const batch = [
     { function: { name: "calculate", arguments: "{}" } },
     { function: { name: "get_weather", arguments: "{}" } },
-  ]);
+  ];
+  const mixed = partitionToolCalls(batch, { clientNames: ["get_weather"] });
   assert(mixed.mine.length === 0 && mixed.theirs.length === 2, "mixed batch goes back whole");
+  const hallucinated = partitionToolCalls(batch);
+  assert(hallucinated.mine.length === 2 && hallucinated.theirs.length === 0, "undeclared names execute, never reach the user");
   assert(partitionToolCalls([{ function: { name: "data", arguments: "{}" } }]).mine.length === 1, "our batch executes");
   const shadowed = partitionToolCalls([{ function: { name: "Calculate", arguments: "{}" } }], { clientNames: ["calculate"] });
   assert(shadowed.mine.length === 0, "shadowing matched through the normaliser");

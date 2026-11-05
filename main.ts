@@ -5132,6 +5132,8 @@ honoApp.post("/v1/chat/completions", async (c) => {
               } as unknown as { role: string; content: unknown });
               for (const m of outcome.messages) messages.push(m);
               toolRound += 1;
+              // Budget spent and every tool is the router's: the last turn answers instead of handing calls to the user.
+              if (toolRound >= agentRounds && clientToolNames.length === 0) completionOptions.tool_choice = "none";
               // Keep the winner available for its own continuation; tuples that
               // already failed this request stay excluded.
               tried.delete(cand.tupleId);
@@ -5361,6 +5363,7 @@ honoApp.post("/v1/chat/completions", async (c) => {
               } as unknown as { role: string; content: unknown });
               for (const m of outcome.messages) messages.push(m);
               toolRound += 1;
+              if (toolRound >= agentRounds && clientToolNames.length === 0) completionOptions.tool_choice = "none";
               tried.delete(cand.tupleId);
               yield status({
                 type: "tool_round",

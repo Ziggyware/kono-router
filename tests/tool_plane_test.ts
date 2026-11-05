@@ -778,7 +778,7 @@ test("a round mixing built-in and client calls is handed back whole, never half-
     }), seen));
   try {
     const res = await app.fetch(chatRequest({
-      model: "free:smart", stream: false, tools: "auto",
+      model: "free:smart", stream: false, tools: [{ type: "function", function: { name: "get_weather" } }],
       nokey_tools: ["calculate"],
       messages: [{ role: "user", content: "go" }],
     }));
@@ -1004,7 +1004,8 @@ test("a streaming round whose calls belong to the client is emitted buffered, no
   ], "tool_calls"), seen));
   try {
     const res = await app.fetch(chatRequest({
-      model: "free:smart", stream: true, tools: "auto",
+      model: "free:smart", stream: true,
+      tools: [{ type: "function", function: { name: "get_weather" } }], nokey_tools: "auto",
       messages: [{ role: "user", content: "weather" }],
     }));
     const text = await res.text();
@@ -1146,6 +1147,29 @@ test("tool rounds and direct executions are traced inside the request trace", as
     if (exec.results[0].ok !== true) throw new Error(JSON.stringify(exec.results[0]));
     if (exec.trace_id !== traceId) throw new Error(`inbound traceparent not honoured: ${exec.trace_id} != ${traceId}`);
     if (exec.results[0].result.epoch_s !== 1793793600) throw new Error(`epoch_s ${exec.results[0].result.epoch_s}`);
+  } finally {
+    restoreMock();
+  }
+});
+
+test("tools:auto never hands a call to the user: undeclared names execute, a spent budget forces an answer", async () => {
+  const good = await pickHealthyUrl();
+  const seen: any[] = [];
+  installMock(scripted(good, (_p, call) =>
+    call === 0
+      ? toolCallCompletion("get_weather", '{"city":"Oslo"}')
+      : jsonResponse({ choices: [{ index: 0, finish_reason: "stop", message: { role: "assistant", content: "No weather tool; answering directly." } }] }), seen));
+  try {
+    const data = await asJson(await app.fetch(chatRequest({
+      model: "free:smart", stream: false, tools: "auto", nokey_rounds: 1,
+      messages: [{ role: "user", content: "weather in Oslo" }],
+    })));
+    if (data.choices[0].finish_reason !== "stop") throw new Error(`finish ${data.choices[0].finish_reason}`);
+    if (data.choices[0].message.tool_calls) throw new Error("calls reached the client");
+    if (seen.length !== 2) throw new Error(`expected 2 upstream calls, saw ${seen.length}`);
+    const toolMsg = seen[1].messages.at(-1);
+    if (toolMsg.role !== "tool" || !String(toolMsg.content).includes("UNKNOWN_TOOL")) throw new Error(JSON.stringify(toolMsg));
+    if (seen[1].tool_choice !== "none") throw new Error(`final turn tool_choice ${JSON.stringify(seen[1].tool_choice)}`);
   } finally {
     restoreMock();
   }

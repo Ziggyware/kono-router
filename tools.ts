@@ -1804,7 +1804,10 @@ export function partitionToolCalls(calls: unknown[], options: PartitionOptions =
     if (key) shadowed.add(key);
   }
   const normalized = normalizeToolCalls(calls);
-  const isMine = (c: NormalizedToolCall): boolean => c.builtin && !shadowed.has(normalizeToolName(c.name));
+  // Only a caller-declared name belongs to the caller. An undeclared name is a
+  // hallucination: the plane executes it (UNKNOWN_TOOL + suggestions) so the
+  // model self-corrects instead of the call landing on a human to answer.
+  const isMine = (c: NormalizedToolCall): boolean => !shadowed.has(normalizeToolName(c.name));
   const mine = normalized.filter(isMine);
   const theirs = normalized.filter((c) => !isMine(c));
   // All-or-nothing per round: executing half of a parallel batch would leave

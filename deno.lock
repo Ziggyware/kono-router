@@ -2,6 +2,7 @@
   "version": "5",
   "specifiers": {
     "jsr:@deno/esbuild-plugin@^1.2.0": "1.2.0",
+    "jsr:@deno/installer-shell-setup@*": "0.3.4",
     "jsr:@deno/loader@~0.3.3": "0.3.5",
     "jsr:@std/bytes@^1.0.6": "1.0.6",
     "jsr:@std/encoding@1": "1.0.10",
@@ -30,6 +31,9 @@
         "jsr:@deno/loader",
         "jsr:@std/path@^1.1.1"
       ]
+    },
+    "@deno/installer-shell-setup@0.3.4": {
+      "integrity": "48665d1a737d487cce6874bc97bba70a5aeffa7053aca3f60df93c6fab8963b4"
     },
     "@deno/loader@0.3.5": {
       "integrity": "72f6ce9c6e7242c6e070705dbd8a838884dd236d5dd0bd907d08bece92db5722"
