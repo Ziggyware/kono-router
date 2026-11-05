@@ -27,6 +27,9 @@ import {
   normalizeToolCalls,
   normalizeToolName,
   observeToolSkill,
+  parseTextToolCalls,
+  resolveTool,
+  TEXT_CALL_OPENERS,
   observeTupleToolStats,
   parseToolArguments,
   partitionToolCalls,
@@ -934,7 +937,7 @@ function analyzeModelCapabilities(modelId: string, contextLength: number = 12800
   // Exclude non-chat, moderation/guardrail, audio-only, image-gen, and embedding endpoints
   // Note: nvidia/nemotron-3.5-content-safety:free is a guardrail moderation classifier, not a general chat LLM
   if (
-    /embed|bge-|e5-|whisper|tts|kokoro|flux|sdxl|dall-e|imagen|veo-|moderation|guard|content-safety|rerank|suno|udio|respan/i
+    /embed|bge-|e5-|whisper|tts|kokoro|flux|sdxl|stable-diffusion|\bsd3|dall-e|gpt-image|imagen|veo-|bria|recraft|ideogram|kandinsky|hidream|seedream|seededit|cogview|qwen-image|playground-v|kling|hunyuan-video|ltx-video|wan-?2|moderation|guard|content-safety|rerank|suno|udio|respan/i
       .test(m)
   ) {
     return { iqPrior: 0.0, supportsReasoning: false, supportsVision: false, isCodingSpecialist: false };
@@ -999,8 +1002,10 @@ function analyzeModelCapabilities(modelId: string, contextLength: number = 12800
     /argon|claude-opus-5|claude-sonnet-5|kimi-k3|gpt-6|grok-4|gemini|qwen3\.8|gemma-?4-(26b|31b)|inkling|nemotron-3-nano-omni|dots-3|deepseek-v3\.2|vision|vl|pixtral|llama-4/i
       .test(m);
 
+  // Code-tuned models only: strong generalists rank on IQ, and flagging them
+  // here erased the code lane's difference from the smart lane.
   const isCodingSpecialist =
-    /laguna|north-mini-code|flint|coder|codestral|devstral|kimi-k3|claude-opus-5|claude-sonnet-5|gemini-4-argon|deepseek-v4|glm-5\.3|qwen3\.8|inkling|kilo/i
+    /laguna|north-mini-code|flint|coder|codestral|devstral|codex|starcoder|codegemma|code-?llama|-code\b/i
       .test(m);
 
   if (isCodingSpecialist) baseScore += 0.015;
@@ -1177,6 +1182,9 @@ interface ProviderSpec {
   name: string;
   /** Chat completions URL, exposed for coverage reporting. */
   chatUrl?: string;
+  /** OpenAI-standard images URL and headers, when the endpoint follows the /v1 layout. */
+  imagesUrl?: string;
+  imageHeaders?: Record<string, string>;
   isConfigured: () => boolean;
   discoverModels: (signal: AbortSignal) => Promise<Array<{ id: string, context?: number; }>>;
   executeCompletion: (
@@ -1351,6 +1359,56 @@ async function* refineDeltas(src: AsyncIterable<Delta>): AsyncGenerator<Delta> {
   if (buf) yield phase === "think" ? { reasoning: buf } : { content: buf };
 }
 
+// Lifts text-format tool calls (see parseTextToolCalls) into structured
+// deltas when the request declared tools. Content streams through until an
+// opener appears; from there it is held to the end and parsed. Calls naming a
+// declared tool (directly or by alias) become tool_calls with finish
+// "tool_calls"; anything else is released as the content it was.
+async function* liftTextToolCalls(src: AsyncIterable<Delta>, declared: Set<string>): AsyncGenerator<Delta> {
+  const owns = (name: string) => declared.has(normalizeToolName(name)) || declared.has(normalizeToolName(resolveTool(name).tool?.name ?? ""));
+  let held = "";
+  let holding = false;
+  let finish: string | undefined;
+  let nextIndex = 0;
+  for await (const d of src) {
+    for (const t of d.toolCalls ?? []) nextIndex = Math.max(nextIndex, t.index + 1);
+    if (holding && d.finish) finish = d.finish;
+    const pass: Delta = { ...d, content: undefined, ...(holding ? { finish: undefined } : {}) };
+    if (d.content) {
+      let text = held + d.content;
+      held = "";
+      if (!holding) {
+        const at = Math.min(...TEXT_CALL_OPENERS.map((o) => { const i = text.indexOf(o); return i < 0 ? Infinity : i; }));
+        if (at !== Infinity) {
+          holding = true;
+          held = text.slice(at);
+          text = text.slice(0, at);
+          if (d.finish) { finish = d.finish; pass.finish = undefined; }
+        } else {
+          const keep = Math.max(...TEXT_CALL_OPENERS.map((o) => partialTagSuffix(text, o)));
+          held = text.slice(text.length - keep);
+          text = text.slice(0, text.length - keep);
+        }
+        pass.content = text || undefined;
+      } else held = text;
+    }
+    if (pass.content || pass.reasoning || pass.toolCalls || pass.finish) yield pass;
+  }
+  if (!holding) { if (held) yield { content: held }; return; }
+  const parsed = parseTextToolCalls(held);
+  if (!parsed || !parsed.calls.every((c) => owns(c.name))) { yield { content: held, finish }; return; }
+  if (parsed.rest) yield { content: parsed.rest };
+  yield {
+    toolCalls: parsed.calls.map((c, i) => ({
+      index: nextIndex + i,
+      id: `call_${crypto.randomUUID().replace(/-/g, "").slice(0, 24)}`,
+      type: "function",
+      function: { name: c.name, arguments: JSON.stringify(c.arguments) },
+    })),
+    finish: "tool_calls",
+  };
+}
+
 // Incremental, self-sniffing response decoder. It handles SSE, a single JSON
 // document (bodies that ignore stream:true), JSON arrays, and plain text —
 // every shape the heterogeneous keyless registry emits.
@@ -1440,7 +1498,11 @@ async function openUpstream(
     throw new Error(`HTTP_${res.status}: Upstream error`);
   }
 
-  const tail = refineDeltas(parseDeltas(res.body));
+  const declared = Array.isArray(payload.tools)
+    ? new Set((payload.tools as Json[]).map((t) => normalizeToolName(String(((t?.function ?? t) as Json)?.name ?? ""))).filter(Boolean))
+    : null;
+  const refined = refineDeltas(parseDeltas(res.body));
+  const tail = declared?.size ? liftTextToolCalls(refined, declared) : refined;
   const head: Delta[] = [];
   let ttftMs = 0;
   let content = "";
@@ -1831,6 +1893,7 @@ function makeServiceJsonProvider(endpoint: ServiceJsonEndpoint, validationError?
     id,
     name: endpoint.name,
     chatUrl,
+    ...(/\/chat\/completions\/?$/.test(chatUrl) ? { imagesUrl: chatUrl.replace(/\/chat\/completions\/?$/, "/images/generations"), imageHeaders: headers } : {}),
     isConfigured: () => isEndpointConfigured(endpoint),
     discoverModels: async () => {
       const targetUrl = modelsUrl ?? (baseUrl ? `${baseUrl}/models` : null);
@@ -2110,14 +2173,23 @@ async function runSyncProviderTask(task: SyncProviderTask): Promise<void> {
       return [] as Array<{ id: string; context?: number }>;
     });
     if (!discovered || discovered.length === 0) return;
+    if (provider.imagesUrl) {
+      const images = discovered.map((m) => m.id).filter(isImageModelId);
+      IMAGE_CATALOG.set(provider.id, images);
+      await kv.set([IMAGE_KV_PREFIX, provider.id], images);
+    }
 
     const modelTasks = discovered.map(async (item) => {
       const ctxWindow = item.context || 128000;
       const profile = analyzeModelCapabilities(item.id, ctxWindow);
-      if (profile.iqPrior <= 0.0) return;
-
       const tupleId = `${provider.id}::${item.id}`;
       const modelKey = [KV_PREFIX, tupleId];
+      // Non-chat models (image, audio, embeddings) never rank; one catalogued
+      // before the exclusion list caught it is evicted on the next sync.
+      if (profile.iqPrior <= 0.0) {
+        if (L1_CACHE.has(tupleId)) { L1_CACHE.delete(tupleId); await kv.delete(modelKey); }
+        return;
+      }
       const existing = await kv.get<MeshModelRecord>(modelKey);
 
       if (existing.value) {
@@ -2327,6 +2399,10 @@ interface RankOptions {
 // + UCB exploration + Plackett–Luce (Gumbel) rank sampling. Pure function of
 // one catalog record, reused by the lane ranker and the exhaustive sweep.
 // ---------------------------------------------------------------------------
+/** Population mean of the capability prior (the untiered base score). */
+const IQ_POPULATION_MEAN = 0.56;
+/** Share of a claimed prior believed before any evidence. */
+const IQ_CREDIBILITY_FLOOR = 0.4;
 function scoreRecord(
   r: MeshModelRecord,
   mode: RoutingMode,
@@ -2337,12 +2413,17 @@ function scoreRecord(
   learning?: { taskClass: TaskClass; tenant: string },
 ): ScoredCandidate {
   const iqPrior = Number(r.iq_prior);
-  // Rank-time trust clamp: a tuple that has never completed a request cannot
-  // spend a trusted iq_verified, no matter what sync stored.
-  const iqVerified = r.success_count > 0
-    ? Number(r.iq_verified)
-    : Math.min(Number(r.iq_verified), 0.55);
-  const iqEffective = Number((iqPrior * iqVerified).toFixed(3));
+  // Capability estimate on the prior's own scale: the model-name prior is a
+  // claim, shrunk toward the population mean by how much this tuple has
+  // earned trust. iq_verified runs 0.55 (unproven, or a failed canary) to 1.0
+  // (canary passed / repeated completions); a tuple that never completed a
+  // request is unproven whatever sync stored. Unproven keeps 40% of its
+  // distance from the mean, fully trusted keeps all of it, so an unverified
+  // headline name no longer outranks a proven workhorse and mode bonuses
+  // (code, reasoning) decide within the unproven pack.
+  const trust = r.success_count > 0 ? clampNum((Number(r.iq_verified) - 0.55) / 0.45, 0, 1) : 0;
+  const credibility = IQ_CREDIBILITY_FLOOR + (1 - IQ_CREDIBILITY_FLOOR) * trust;
+  const iqEffective = Number((IQ_POPULATION_MEAN + credibility * (iqPrior - IQ_POPULATION_MEAN)).toFixed(3));
   const ewmaTtftMs = Number(r.ewma_ttft_ms);
   const ewmaTps = Math.max(1.0, Number(r.ewma_tps));
 
@@ -4143,9 +4224,12 @@ for (const [route, file, type] of [
 }
 /** The whole /health document, also served to models through `router_health`. */
 async function buildHealthPayload(): Promise<Json> {
+  const rankedProviders = new Set<string>();
   const safeRank = async (m: RoutingMode) => {
     try {
-      return (await getRankedCandidates(m, true)).slice(0, 5);
+      const all = await getRankedCandidates(m, true);
+      for (const c of all) rankedProviders.add(c.providerId);
+      return all.slice(0, 8);
     } catch (err) {
       console.error(`health rank ${m}:`, err);
       return [];
@@ -4159,7 +4243,7 @@ async function buildHealthPayload(): Promise<Json> {
   const reasoningRank = await safeRank("reasoning");
   // The tools lane is the smart lane ranked by learned tool-call competence.
   const toolsRank = await getRankedCandidates("smart", true, false, { toolAware: true })
-    .then((r) => r.slice(0, 5))
+    .then((r) => r.slice(0, 8))
     .catch((err) => {
       console.error("health rank tools:", err);
       return [] as ScoredCandidate[];
@@ -4204,6 +4288,9 @@ async function buildHealthPayload(): Promise<Json> {
       registry_endpoints: coverage.registry_endpoints,
       catalog_tuples: coverage.catalog_tuples,
       sweep_candidates: coverage.sweep_candidates,
+      // Providers with ranked tuples vs. configured: the gap is covered by the exhaustive sweep tier.
+      providers_active: (await activeProviderList().catch(() => [])).length,
+      providers_ranked: rankedProviders.size,
     },
     current_best_fast: fastRank,
     current_best_smart: smartRank,
@@ -4267,12 +4354,10 @@ async function buildModelList(): Promise<Json> {
     context_window: m.contextWindow,
   }));
 
-  const imageModels = IMAGE_MODELS.map((img) => ({
-    id: img.id,
-    object: "model",
-    created: 1761523200,
-    owned_by: "nokey-image",
-  }));
+  const imageModels = [
+    ...IMAGE_MODELS.map((img) => ({ id: img.id, object: "model", created: 1761523200, owned_by: "nokey-image" })),
+    ...(await openAIImageBackends().catch(() => [])).map((b) => ({ id: b.id, object: "model", created: 1761523200, owned_by: "nokey-image:" + b.id.split("::")[0] })),
+  ];
 
   return {
     object: "list",
@@ -4335,6 +4420,7 @@ honoApp.post("/v1/tools/execute", async (c) => {
   const traceHeaders = { traceparent: root.traceparent };
   try {
     const body = await c.req.json().catch(() => ({} as Json)) as Json;
+    root.io("request", body);
     const admin = isAdminContext(c);
     const rawCalls = Array.isArray(body.calls) ? body.calls : [body];
     const calls = rawCalls
@@ -4356,7 +4442,7 @@ honoApp.post("/v1/tools/execute", async (c) => {
     await hydrateToolSkills().catch(logErr);
     await hydrateForgedTools().catch(logErr);
     const locals: Json = { tool_skills: Object.fromEntries([...TOOL_SKILLS.entries()]) as Json };
-    const timeoutMs = body.timeout_ms === undefined ? undefined : Math.round(clampNum(Number(body.timeout_ms) || 4000, 50, 120_000));
+    const timeoutMs = body.timeout_ms === undefined ? undefined : Math.round(clampNum(Number(body.timeout_ms) || 4000, 50, 10_000_000));
 
     // Stateful calls run in order (write-then-read in one batch), pure ones in
     // parallel. The scheduler lives in the kernel so both entry points agree.
@@ -4398,6 +4484,7 @@ honoApp.post("/v1/tools/execute", async (c) => {
     }));
 
     const ok = results.every((r) => r.ok);
+    root.io("response", results);
     root.end(ok ? "ok" : "error", { calls: results.length, failures: results.filter((r) => !r.ok).length });
     return c.json({
       object: "list",
@@ -4618,6 +4705,151 @@ honoApp.post("/v1/community/messages", async (c) => {
   return c.json({ ok: true, message: msg });
 });
 
+// =====================================================================
+// COMMUNITY POSTS — reddit-style: anyone posts, up/down votes, comments.
+// KV is the source of truth (shared across isolates). One vote per voter id
+// per post; score changes commit atomically against both records' versions.
+// Ranking "hot" is score / (age_h + 2)^1.5 (Hacker News gravity).
+// =====================================================================
+interface CommunityPost {
+  id: string;
+  user: string;
+  title: string;
+  body: string;
+  createdAt: string;
+  up: number;
+  down: number;
+  score: number;
+  comments: number;
+}
+interface CommunityComment { id: string; postId: string; user: string; body: string; createdAt: string }
+
+const cleanHandle = (v: unknown) => (typeof v === "string" && v.trim() ? v.trim().slice(0, 32) : "Anonymous");
+const newId = (p: string) => `${p}-${Date.now().toString(36)}-${crypto.randomUUID().slice(0, 8)}`;
+const hotRank = (p: CommunityPost, now: number) => p.score / Math.pow((now - Date.parse(p.createdAt)) / 3_600_000 + 2, 1.5);
+
+async function allPosts(): Promise<CommunityPost[]> {
+  const out: CommunityPost[] = [];
+  for await (const e of kv.list<CommunityPost>({ prefix: ["cposts"] }, { limit: 1000 })) if (e.value) out.push(e.value);
+  return out;
+}
+
+honoApp.get("/v1/community/posts", async (c) => {
+  const sort = c.req.query("sort") ?? "hot";
+  const limit = Math.min(200, Math.max(1, Number(c.req.query("limit") ?? 50) || 50));
+  const voter = c.req.query("voter") ?? "";
+  const now = Date.now();
+  const posts = await allPosts();
+  posts.sort(sort === "new" ? (a, b) => b.createdAt.localeCompare(a.createdAt)
+    : sort === "top" ? (a, b) => b.score - a.score || b.createdAt.localeCompare(a.createdAt)
+    : (a, b) => hotRank(b, now) - hotRank(a, now));
+  const page = posts.slice(0, limit);
+  const votes = voter ? await kv.getMany<number[]>(page.map((p) => ["cvotes", p.id, voter])) : [];
+  return c.json({ ok: true, sort, posts: page.map((p, i) => ({ ...p, myVote: votes[i]?.value ?? 0 })) });
+});
+
+honoApp.post("/v1/community/posts", async (c) => {
+  const body = await c.req.json().catch(() => null) as Json | null;
+  const title = typeof body?.title === "string" ? body.title.trim().slice(0, 200) : "";
+  if (!title) return c.json({ error: { message: "title is required" } }, 400);
+  const post: CommunityPost = {
+    id: newId("post"), user: cleanHandle(body!.user), title,
+    body: typeof body!.body === "string" ? body!.body.slice(0, 20000) : "",
+    createdAt: new Date().toISOString(), up: 0, down: 0, score: 0, comments: 0,
+  };
+  await kv.set(["cposts", post.id], post);
+  return c.json({ ok: true, post });
+});
+
+honoApp.get("/v1/community/posts/:id", async (c) => {
+  const id = c.req.param("id");
+  const post = (await kv.get<CommunityPost>(["cposts", id])).value;
+  if (!post) return c.json({ error: { message: "no such post" } }, 404);
+  const comments: CommunityComment[] = [];
+  for await (const e of kv.list<CommunityComment>({ prefix: ["ccomments", id] }, { limit: 1000 })) if (e.value) comments.push(e.value);
+  comments.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+  const voter = c.req.query("voter");
+  const myVote = voter ? (await kv.get<number>(["cvotes", id, voter])).value ?? 0 : 0;
+  return c.json({ ok: true, post: { ...post, myVote }, comments });
+});
+
+honoApp.post("/v1/community/posts/:id/vote", async (c) => {
+  const id = c.req.param("id");
+  const body = await c.req.json().catch(() => null) as Json | null;
+  const voter = typeof body?.voter === "string" ? body.voter.slice(0, 64) : "";
+  const value = Number(body?.value);
+  if (!voter || ![1, 0, -1].includes(value)) return c.json({ error: { message: "voter and value (1, 0 or -1) are required" } }, 400);
+  for (let attempt = 0; attempt < 8; attempt++) {
+    const [p, v] = await kv.getMany<[CommunityPost, number]>([["cposts", id], ["cvotes", id, voter]]);
+    if (!p.value) return c.json({ error: { message: "no such post" } }, 404);
+    const prev = v.value ?? 0;
+    if (prev === value) return c.json({ ok: true, post: { ...p.value, myVote: value } });
+    const post = { ...p.value };
+    post.up += (value === 1 ? 1 : 0) - (prev === 1 ? 1 : 0);
+    post.down += (value === -1 ? 1 : 0) - (prev === -1 ? 1 : 0);
+    post.score = post.up - post.down;
+    const tx = kv.atomic().check(p).check(v).set(["cposts", id], post);
+    const res = await (value === 0 ? tx.delete(["cvotes", id, voter]) : tx.set(["cvotes", id, voter], value)).commit();
+    if (res.ok) return c.json({ ok: true, post: { ...post, myVote: value } });
+  }
+  return c.json({ error: { message: "vote contended, retry" } }, 409);
+});
+
+honoApp.post("/v1/community/posts/:id/comments", async (c) => {
+  const id = c.req.param("id");
+  const body = await c.req.json().catch(() => null) as Json | null;
+  const text = typeof body?.body === "string" ? body.body.trim().slice(0, 5000) : "";
+  if (!text) return c.json({ error: { message: "comment body is required" } }, 400);
+  const comment: CommunityComment = { id: newId("cmt"), postId: id, user: cleanHandle(body!.user), body: text, createdAt: new Date().toISOString() };
+  for (let attempt = 0; attempt < 8; attempt++) {
+    const p = await kv.get<CommunityPost>(["cposts", id]);
+    if (!p.value) return c.json({ error: { message: "no such post" } }, 404);
+    const res = await kv.atomic().check(p).set(["cposts", id], { ...p.value, comments: p.value.comments + 1 }).set(["ccomments", id, comment.id], comment).commit();
+    if (res.ok) return c.json({ ok: true, comment });
+  }
+  return c.json({ error: { message: "comment contended, retry" } }, 409);
+});
+
+honoApp.get("/v1/community/stats", async (c) => {
+  const posts = await allPosts();
+  const day = Date.now() - 86_400_000;
+  const people = new Map<string, { posts: number; comments: number; messages: number; score: number }>();
+  const bump = (u: string, k: "posts" | "comments" | "messages", score = 0) => {
+    const r = people.get(u) ?? { posts: 0, comments: 0, messages: 0, score: 0 };
+    r[k]++; r.score += score; people.set(u, r);
+  };
+  const active = new Set<string>();
+  let comments = 0;
+  for (const p of posts) {
+    bump(p.user, "posts", p.score);
+    if (Date.parse(p.createdAt) > day) active.add(p.user);
+    for await (const e of kv.list<CommunityComment>({ prefix: ["ccomments", p.id] }, { limit: 1000 })) {
+      if (!e.value) continue;
+      comments++;
+      bump(e.value.user, "comments");
+      if (Date.parse(e.value.createdAt) > day) active.add(e.value.user);
+    }
+  }
+  const rooms: Record<string, number> = {};
+  for (const [room, list] of communityRooms) {
+    const real = list.filter((m) => m.user !== "System");
+    rooms[room] = real.length;
+    for (const m of real) { bump(m.user, "messages"); if (Date.parse(m.createdAt) > day) active.add(m.user); }
+  }
+  return c.json({
+    ok: true,
+    posts: posts.length,
+    comments,
+    votes: posts.reduce((a, p) => a + p.up + p.down, 0),
+    messages: Object.values(rooms).reduce((a, n) => a + n, 0),
+    rooms,
+    members: people.size,
+    active_24h: active.size,
+    top_posts: [...posts].sort((a, b) => b.score - a.score).slice(0, 5).map((p) => ({ id: p.id, title: p.title, user: p.user, score: p.score, comments: p.comments })),
+    top_people: [...people].map(([user, r]) => ({ user, ...r })).sort((a, b) => (b.posts + b.comments + b.messages) - (a.posts + a.comments + a.messages)).slice(0, 10),
+  });
+});
+
 honoApp.get("/v1/community/stream", (c) => {
   const room = c.req.query("room") || "general";
   let subscriber: ((msg: CommunityMessage) => void) | null = null;
@@ -4703,6 +4935,7 @@ honoApp.post("/v1/chat/completions", async (c) => {
   try {
     // Never 400 on a malformed body: normalise it and keep routing.
     const body = await c.req.json().catch(() => ({} as Json)) as Json;
+    root.io("request", body);
     const messages = normalizeMessages(body.messages, body.prompt);
     reqModel = String(body.model || "free:auto");
     const reqModelLower = reqModel.toLowerCase();
@@ -5192,6 +5425,7 @@ honoApp.post("/v1/chat/completions", async (c) => {
             }).catch(logErr);
           }
 
+          root.io("response", { model: cand.modelId, provider: cand.providerId, finish: res.finish ?? (res.toolCalls ? "tool_calls" : "stop"), content: res.content, ...(res.reasoningContent ? { reasoning_content: res.reasoningContent } : {}), ...(res.toolCalls ? { tool_calls: res.toolCalls } : {}), ...(toolRound > 0 ? { tools_executed: toolLog } : {}) });
           root.end("ok", {
             tuple: cand.tupleId,
             provider: cand.providerId,
@@ -5384,6 +5618,7 @@ honoApp.post("/v1/chat/completions", async (c) => {
             yield chunk(clientDelta, null);
             ok = true;
             const clientFinish = quiet.finish ?? "tool_calls";
+            root.io("response", { model: cand.modelId, provider: cand.providerId, finish: clientFinish, content: quiet.content, tool_calls: quiet.toolCalls });
             yield chunk({}, clientFinish, { nokey: { ...meta(cand), ...(toolRound > 0 ? { tool_rounds: toolRound } : {}) } });
             root.end("ok", {
               tuple: cand.tupleId,
@@ -5467,6 +5702,7 @@ honoApp.post("/v1/chat/completions", async (c) => {
             if (!contentChars && !toolCalls.size && reasoning.trim()) yield chunk({ content: reasoning.trim() }, null);
             ok = true;
             const fin = finish ?? (toolCalls.size ? "tool_calls" : "stop");
+            root.io("response", { model: cand.modelId, provider: cand.providerId, finish: fin, content: streamedText, ...(reasoning ? { reasoning_content: reasoning } : {}), ...(streamedCalls.size ? { tool_calls: [...streamedCalls.values()] } : {}) });
             yield chunk({}, fin, { nokey: { ...meta(cand), ...(toolRound > 0 ? { tool_rounds: toolRound } : {}) } });
             const totalMs = Math.max(up.ttftMs + 1, Math.round(performance.now() - up.t0));
             recordTupleSuccess(cand.tupleId, up.ttftMs, totalMs, Math.max(1, Math.ceil((contentChars + reasoning.length) / 4))).catch(logErr);
@@ -5559,8 +5795,67 @@ honoApp.post("/v1/chat/completions", async (c) => {
 const IMAGE_MODELS = [
   { id: "nokey-image", provider: "pollinations", upstreamModel: "turbo" },
   { id: "nokey-image-flux", provider: "pollinations", upstreamModel: "flux" },
+  { id: "nokey-image-gen", provider: "pollinations-gen", upstreamModel: "flux" },
   { id: "nokey-image-horde", provider: "horde", upstreamModel: "stable_diffusion" },
 ];
+
+// ---- OpenAI-standard image backends ----------------------------------------
+// Discovery already lists image models on configured providers (flux, sdxl,
+// gpt-image, seedream…). Each one is a candidate for POST {v1}/images/generations,
+// the de-facto standard across OpenAI-compatible gateways. Ordering is a
+// Laplace-smoothed success rate learned per (provider, model) in this isolate.
+const IMAGE_KV_PREFIX = "nokey_images";
+const IMAGE_CATALOG = new Map<string, string[]>();
+const IMAGE_STATS = new Map<string, { ok: number; fail: number }>();
+const IMAGE_MODEL_RE = /flux|sdxl|stable-diffusion|\bsd-?3|dall-e|gpt-image|imagen|bria|recraft|ideogram|kandinsky|hidream|seedream|cogview|qwen-image|playground-v|midjourney|janus-pro|\bimage(?!-to-text|-?2-?text)\b/i;
+function isImageModelId(id: string): boolean {
+  return IMAGE_MODEL_RE.test(id) && !/vision|\bvl\b|-vl-|caption|embed/i.test(id);
+}
+async function hydrateImageCatalog(): Promise<void> {
+  if (IMAGE_CATALOG.size) return;
+  for await (const e of kv.list<string[]>({ prefix: [IMAGE_KV_PREFIX] })) {
+    if (Array.isArray(e.value)) IMAGE_CATALOG.set(String(e.key[1]), e.value);
+  }
+}
+async function openAIImageBackends(): Promise<Array<{ id: string; url: string; headers: Record<string, string>; model: string }>> {
+  await hydrateImageCatalog().catch(logErr);
+  const providers = new Map((await activeProviderList()).map((p) => [p.id, p]));
+  const out: Array<{ id: string; url: string; headers: Record<string, string>; model: string; rate: number }> = [];
+  for (const [pid, models] of IMAGE_CATALOG) {
+    const p = providers.get(pid);
+    if (!p?.imagesUrl) continue;
+    for (const model of models) {
+      const id = `${pid}::${model}`;
+      const st = IMAGE_STATS.get(id) ?? { ok: 0, fail: 0 };
+      out.push({ id, url: p.imagesUrl, headers: p.imageHeaders ?? {}, model, rate: (st.ok + 1) / (st.ok + st.fail + 2) });
+    }
+  }
+  return out.sort((a, b) => b.rate - a.rate);
+}
+async function generateViaOpenAIImages(url: string, headers: Record<string, string>, model: string, prompt: string, size: string): Promise<string> {
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { ...buildRotatedHeaders(headers), "content-type": "application/json" },
+    body: JSON.stringify({ model, prompt, n: 1, size }),
+    signal: AbortSignal.timeout(60000),
+  });
+  if (!res.ok) throw new Error(`images HTTP ${res.status}`);
+  const j = await res.json().catch(() => null) as Json | null;
+  const first = Array.isArray(j?.data) ? (j!.data as Json[])[0] : null;
+  if (typeof first?.url === "string" && /^(https?:|data:image\/)/.test(first.url)) return first.url;
+  if (typeof first?.b64_json === "string" && first.b64_json.length > 512) return `data:image/png;base64,${first.b64_json}`;
+  throw new Error("images response carried no image");
+}
+async function generateViaPollinationsGen(prompt: string, width: number, height: number, model: string, seed: number): Promise<string> {
+  const url = `https://gen.pollinations.ai/image/${encodeURIComponent(prompt)}?width=${width}&height=${height}&seed=${seed}&model=${model}&nologo=true`;
+  const res = await fetch(url, { signal: AbortSignal.timeout(45000) });
+  if (!res.ok) throw new Error(`gen.pollinations HTTP ${res.status}`);
+  const ct = (res.headers.get("content-type") ?? "").toLowerCase();
+  const buf = await res.arrayBuffer();
+  if (!ct.startsWith("image/") || buf.byteLength < 512) throw new Error(`gen.pollinations returned ${ct || "no content-type"}, ${buf.byteLength} bytes`);
+  // The image itself, not the URL: an authenticated-only host would not render the link client-side.
+  return `data:${ct.split(";")[0]};base64,${bytesToBase64(buf)}`;
+}
 
 function parseImageSize(size: unknown): { width: number; height: number } {
   switch (String(size || "1024x1024")) {
@@ -5680,17 +5975,31 @@ honoApp.post("/v1/images/generations", async (c) => {
   const prompt = String(body.prompt || "").trim() || "abstract geometric composition";
   const requestedModel = String(body.model || "nokey-image");
   const spec = IMAGE_MODELS.find((img) => img.id === requestedModel) || IMAGE_MODELS[0];
+  const sizeText = `${parseImageSize(body.size).width}x${parseImageSize(body.size).height}`;
+  const standard = await openAIImageBackends().catch(() => []);
+  const pinned = standard.find((b) => b.id === requestedModel);
   const { width, height } = parseImageSize(body.size);
   const n = Math.round(clampNum(Number(body.n || 1) || 1, 1, 4));
   const wantB64 = String(body.response_format || "url") === "b64_json";
   const root = startTrace("images.generations", { "model.requested": requestedModel, n, width, height, b64: wantB64 }, c.req.header("traceparent"));
+  root.io("request", body);
 
   // Every available backend is tried, in "requested model first" order, for
   // ANY requested model id. Only a locally generated placeholder can end the
   // request — it never errors out.
-  const chain = [spec, ...IMAGE_MODELS.filter((m) => m.id !== spec.id)];
+  type Variant = { id: string; provider: string; upstreamModel: string; url?: string; headers?: Record<string, string> };
+  const asVariant = (b: typeof standard[number]): Variant => ({ id: b.id, provider: "openai-images", upstreamModel: b.model, url: b.url, headers: b.headers });
+  const builtin: Variant[] = [spec, ...IMAGE_MODELS.filter((m) => m.id !== spec.id)];
+  const horde = builtin.filter((v) => v.provider === "horde");
+  const chain: Variant[] = [
+    ...(pinned ? [asVariant(pinned)] : []),
+    ...builtin.filter((v) => v.provider !== "horde"),
+    ...standard.filter((b) => b !== pinned).slice(0, 6).map(asVariant),
+    ...horde,
+  ];
   const errors: string[] = [];
   const data: Array<{ url?: string; b64_json?: string }> = [];
+  const winners: string[] = [];
   let degraded = false;
 
   for (let i = 0; i < n; i++) {
@@ -5700,11 +6009,20 @@ honoApp.post("/v1/images/generations", async (c) => {
       try {
         if (variant.provider === "horde") {
           url = await attempt.run(() => generateViaHorde(prompt, width, height));
+        } else if (variant.provider === "openai-images") {
+          const st = IMAGE_STATS.get(variant.id) ?? { ok: 0, fail: 0 };
+          try {
+            url = await attempt.run(() => generateViaOpenAIImages(variant.url!, variant.headers ?? {}, variant.upstreamModel, prompt, sizeText));
+            st.ok++;
+          } catch (e) { st.fail++; throw e; } finally { IMAGE_STATS.set(variant.id, st); }
+        } else if (variant.provider === "pollinations-gen") {
+          url = await attempt.run(() => generateViaPollinationsGen(prompt, width, height, variant.upstreamModel, Math.floor(Math.random() * 1000000) + i));
         } else {
           const seed = Math.floor(Math.random() * 1000000) + i;
           url = await attempt.run(() => generateViaPollinations(prompt, width, height, variant.upstreamModel, seed));
         }
         attempt.end("ok", { outcome: "won" });
+        winners.push(variant.id);
         break;
       } catch (err) {
         attempt.end("error", { outcome: "failed", error: errText(err).slice(0, 200) });
@@ -5738,6 +6056,7 @@ honoApp.post("/v1/images/generations", async (c) => {
     }
   }
 
+  root.io("response", { backends: winners, degraded, errors, data: data.map((d) => d.url ? { url: d.url.length > 300 ? d.url.slice(0, 300) + "…" : d.url } : { b64_json: `(${d.b64_json?.length ?? 0} base64 chars)` }) });
   root.end(degraded ? "error" : "ok", { degraded, images: data.length, backend_errors: errors.length });
   return c.json({
     created: Math.floor(Date.now() / 1000),
@@ -5745,6 +6064,7 @@ honoApp.post("/v1/images/generations", async (c) => {
     nokey: {
       degraded,
       requested_model: requestedModel,
+      backends: winners,
       backends_tried: errors.length + data.length,
       errors: errors.slice(0, 8),
       trace_id: root.traceId,

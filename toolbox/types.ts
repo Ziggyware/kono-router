@@ -50,6 +50,8 @@ export interface ToolSpec {
   parameters: Json;
   kind: ToolKind;
   aliases?: string[];
+  /** Argument-name synonyms models reach for (e.g. oldpath → from), renamed before validation. */
+  argAliases?: Record<string, string>;
   /** Pure function of its arguments and the injected store — cacheable. */
   deterministic?: boolean;
   /** Requires the admin secret to execute over HTTP. */

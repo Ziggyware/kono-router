@@ -13,6 +13,7 @@ import {
   DEFAULT_AUTO_TOOLS,
   emptyToolSkill,
   executeTool,
+  parseTextToolCalls,
   executeToolCalls,
   extractJsonCandidate,
   getTool,
@@ -710,4 +711,33 @@ Deno.test("isPrivateProbe matches the guard's address classes", () => {
     assert(isPrivateProbe(host), `${host} should be private`);
   }
   for (const host of ["example.com", "8.8.8.8", "router.test"]) assert(!isPrivateProbe(host), `${host} should be public`);
+});
+
+Deno.test("text-format tool calls: Qwen3-Coder XML, Hermes JSON, bare <function=>", () => {
+  const q = parseTextToolCalls("Renaming now.\n<tool_call> <function=fs_rename> <parameter=newpath> myapp/src/styles.module.css <parameter=oldpath> myapp/src/main.module.css </tool_call>");
+  assert(q?.calls.length === 1 && q.calls[0].name === "fs_rename", JSON.stringify(q));
+  assert(q.calls[0].arguments.newpath === "myapp/src/styles.module.css" && q.calls[0].arguments.oldpath === "myapp/src/main.module.css", "params trimmed");
+  assert(q.rest === "Renaming now.", "prose kept");
+  const typed = parseTextToolCalls("<tool_call>\n<function=fs_read>\n<parameter=path>\na.md\n</parameter>\n<parameter=limit>\n20\n</parameter>\n</function>\n</tool_call>");
+  assert(typed?.calls[0].arguments.limit === 20 && typed.calls[0].arguments.path === "a.md", "closed tags + number typing");
+  const h = parseTextToolCalls('<tool_call>{"name": "calculate", "arguments": {"expression": "1+1"}}</tool_call>\n<tool_call>{"name":"time","arguments":"{\\"op\\":\\"now\\"}"}</tool_call>');
+  assert(h?.calls.length === 2 && h.calls[1].arguments.op === "now", "hermes, string arguments");
+  const bare = parseTextToolCalls('<function=calculate>{"expression":"2*3"}</function>');
+  assert(bare?.calls[0].arguments.expression === "2*3", "bare function JSON");
+  assert(parseTextToolCalls("no calls here <b>x</b>") === null, "plain text is not a call");
+});
+
+Deno.test("fs_move: renames files and directories, honours aliases and overwrite", async () => {
+  const ns = "move-" + crypto.randomUUID();
+  await run("fs_write", { path: "src/main.module.css", content: "a{}" }, { namespace: ns });
+  await run("fs_write", { path: "src/lib/x.ts", content: "export {}" }, { namespace: ns });
+  const r = await run("fs_rename", { oldpath: "src/main.module.css", newpath: "src/styles.module.css" }, { namespace: ns });
+  assert(r.moved === 1, JSON.stringify(r));
+  assert((await run("fs_read", { path: "src/styles.module.css" }, { namespace: ns })).content === "a{}", "content moved");
+  fail(await executeTool("fs_read", { path: "src/main.module.css" }, { caps: { namespace: ns } }));
+  const d = await run("fs_move", { from: "src/lib", to: "lib" }, { namespace: ns });
+  assert(d.moved === 1 && (await run("fs_read", { path: "lib/x.ts" }, { namespace: ns })).content === "export {}", "directory moved");
+  await run("fs_write", { path: "b.txt", content: "b" }, { namespace: ns });
+  fail(await executeTool("fs_move", { from: "lib/x.ts", to: "b.txt" }, { caps: { namespace: ns } }));
+  assert((await run("fs_move", { from: "lib/x.ts", to: "b.txt", overwrite: true }, { namespace: ns })).moved === 1, "overwrite");
 });

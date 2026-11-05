@@ -1200,3 +1200,25 @@ test("a streamed tool call that arrives after the head committed still runs in-p
     restoreMock();
   }
 });
+
+test("a tool call written as text (Qwen3-Coder XML) is lifted and executed in-plane", async () => {
+  const good = await pickHealthyUrl();
+  const seen: any[] = [];
+  installMock(scripted(good, (_p, call) =>
+    call === 0
+      ? sseOf([{ content: "Computing.\n<tool_call> <function=calc" }, { content: "ulate> <parameter=expression> 6*7 </tool_call>" }], "stop")
+      : sseOf([{ content: "It is 42." }]), seen));
+  try {
+    const text = await (await app.fetch(chatRequest({
+      model: "free:smart", stream: true, tools: "auto",
+      messages: [{ role: "user", content: "6*7?" }],
+    }))).text();
+    if (text.includes("<tool_call>")) throw new Error("text call leaked to the client");
+    if (!text.includes('"type":"tool_round"')) throw new Error("no tool round");
+    if (seen.length !== 2) throw new Error(`expected 2 upstream calls, saw ${seen.length}`);
+    const toolMsg = seen[1].messages.at(-1);
+    if (toolMsg.role !== "tool" || !String(toolMsg.content).includes("42")) throw new Error(JSON.stringify(toolMsg));
+  } finally {
+    restoreMock();
+  }
+});

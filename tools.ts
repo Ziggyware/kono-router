@@ -1376,6 +1376,19 @@ export function safeStringify(value: unknown, maxBytes = 8 * 1024 * 1024): strin
   }
 }
 
+/** Rename synonym keys before validation, which would otherwise drop them as undeclared. */
+function renameArgs(raw: unknown, aliases: Record<string, string>): unknown {
+  let obj = raw;
+  if (typeof raw === "string") { try { obj = JSON.parse(raw); } catch { return raw; } }
+  if (!isPlainObject(obj)) return raw;
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(obj)) {
+    const to = aliases[k.toLowerCase()];
+    if (to && obj[to] === undefined) out[to] = v; else out[k] = v;
+  }
+  return out;
+}
+
 /** Execute one tool call end-to-end: resolve → repair → validate → run → cap. */
 export async function executeTool(name: string, rawArgs: unknown, options: ExecuteOptions = {}): Promise<ToolExecution> {
   const started = performance.now();
@@ -1404,6 +1417,7 @@ export async function executeTool(name: string, rawArgs: unknown, options: Execu
     return { ok: false, tool: tool.name, code: "INVALID_ARGUMENTS", error: `arguments exceed ${MAX_ARG_BYTES} bytes`, ms: elapsed(), strategy: "strict" };
   }
 
+  if (tool.argAliases) rawArgs = renameArgs(rawArgs, tool.argAliases);
   const parsed = options.rawArgs && isPlainObject(rawArgs)
     ? { ok: true, value: rawArgs as JsonValue, strategy: "native" as ParseStrategy, repaired: false, repairs: [], issues: [] }
     : parseToolArguments(rawArgs, tool.parameters, { coerce: true });
@@ -1421,9 +1435,9 @@ export async function executeTool(name: string, rawArgs: unknown, options: Execu
     };
   }
 
-  // Per-tool deadlines are the default; a caller may tighten but not extend them.
+  // Per-tool deadlines are the default; an explicit caller timeout (timeout_ms) overrides it either way.
   const toolTimeout = tool.timeoutMs ?? DEFAULT_TOOL_TIMEOUT_MS;
-  const timeoutMs = Math.min(options.timeoutMs ?? toolTimeout, toolTimeout);
+  const timeoutMs = options.timeoutMs ?? toolTimeout;
   const ctrl = new AbortController();
   const onOuter = () => ctrl.abort(options.signal?.reason);
   options.signal?.addEventListener("abort", onOuter, { once: true });
@@ -1854,6 +1868,7 @@ export const DEFAULT_AUTO_TOOLS = [
   "fs_delete",
   "fs_grep",
   "fs_list",
+  "fs_move",
   "fs_patch",
   "fs_read",
   "fs_write",
@@ -1908,3 +1923,65 @@ export function resolveAutoToolNames(requested: unknown): string[] | null {
 // owns capabilities. Registration is the only seam between them.
 
 registerToolbox(registerTool, { validateJson });
+
+// ---- text-format tool calls --------------------------------------------------
+// Some models write the call into content instead of tool_calls: Hermes/Qwen2.5
+// `<tool_call>{"name":…,"arguments":{…}}</tool_call>`, Qwen3-Coder
+// `<tool_call><function=NAME><parameter=KEY>VALUE…</tool_call>`, and the bare
+// `<function=NAME>{…}</function>`. These are lifted into structured calls.
+export const TEXT_CALL_OPENERS = ["<tool_call>", "<function="];
+
+export interface TextToolCall { name: string; arguments: Record<string, unknown> }
+
+function textArgValue(raw: string): unknown {
+  const v = raw.replace(/^\s*\n|\n\s*$/g, "").trim();
+  if (/^(?:-?\d+(?:\.\d+)?(?:e[+-]?\d+)?|true|false|null)$/i.test(v) || /^[[{]/.test(v)) {
+    try { return JSON.parse(v); } catch { /* keep the string */ }
+  }
+  return v;
+}
+
+/** Parse every text-format call in `text`; null when none parse. `rest` is the prose outside them. */
+export function parseTextToolCalls(text: string): { calls: TextToolCall[]; rest: string } | null {
+  const calls: TextToolCall[] = [];
+  const block = /<tool_call>\s*([\s\S]*?)\s*(?:<\/tool_call>|$)|<function=([^>\s]+)>\s*([\s\S]*?)\s*(?:<\/function>|(?=<function=)|$)/g;
+  let rest = "";
+  let last = 0;
+  for (let m; (m = block.exec(text));) {
+    if (m[0] === "") { block.lastIndex++; continue; }
+    const parsed = m[1] !== undefined ? parseCallBody(m[1]) : parseFunctionBody(m[2], m[3]);
+    if (!parsed.length) continue;
+    calls.push(...parsed);
+    rest += text.slice(last, m.index);
+    last = m.index + m[0].length;
+  }
+  if (!calls.length) return null;
+  rest += text.slice(last);
+  return { calls, rest: rest.trim() };
+}
+
+function parseCallBody(body: string): TextToolCall[] {
+  const fn = body.match(/^<function=([^>\s]+)>\s*([\s\S]*?)\s*(?:<\/function>\s*)?$/);
+  if (fn) return parseFunctionBody(fn[1], fn[2]);
+  try {
+    const j = JSON.parse(body);
+    const one = (o: Record<string, unknown>): TextToolCall | null => {
+      const name = typeof o.name === "string" ? o.name : typeof (o.function as Json)?.name === "string" ? String((o.function as Json).name) : "";
+      let args = o.arguments ?? o.parameters ?? (o.function as Json)?.arguments ?? {};
+      if (typeof args === "string") { try { args = JSON.parse(args); } catch { return null; } }
+      return name && isPlainObject(args) ? { name, arguments: args as Record<string, unknown> } : null;
+    };
+    const list = (Array.isArray(j) ? j : [j]).filter(isPlainObject).map(one);
+    return list.every(Boolean) ? (list as TextToolCall[]) : [];
+  } catch {
+    return [];
+  }
+}
+
+function parseFunctionBody(name: string, body: string): TextToolCall[] {
+  const params = [...body.matchAll(/<parameter=([^>\s]+)>([\s\S]*?)(?=<\/parameter>|<parameter=|<\/function>|<\/tool_call>|$)(?:<\/parameter>)?/g)];
+  if (params.length) return [{ name, arguments: Object.fromEntries(params.map((p) => [p[1], textArgValue(p[2])])) }];
+  const trimmed = body.trim();
+  if (!trimmed) return [{ name, arguments: {} }];
+  try { const j = JSON.parse(trimmed); return isPlainObject(j) ? [{ name, arguments: j }] : []; } catch { return []; }
+}

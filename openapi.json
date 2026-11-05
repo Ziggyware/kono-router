@@ -1335,6 +1335,306 @@
           }
         }
       }
+    },
+    "/v1/community/posts": {
+      "get": {
+        "tags": [
+          "community"
+        ],
+        "operationId": "listCommunityPosts",
+        "summary": "List posts (hot, new or top)",
+        "security": [],
+        "parameters": [
+          {
+            "name": "sort",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "hot",
+                "new",
+                "top"
+              ],
+              "default": "hot"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 50,
+              "maximum": 200
+            }
+          },
+          {
+            "name": "voter",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Voter id; echoes that voter’s vote as myVote."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "community"
+        ],
+        "operationId": "createCommunityPost",
+        "summary": "Create a post",
+        "security": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "user": {
+                    "type": "string"
+                  },
+                  "title": {
+                    "type": "string",
+                    "maxLength": 200
+                  },
+                  "body": {
+                    "type": "string",
+                    "maxLength": 20000
+                  }
+                },
+                "required": [
+                  "title"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "title missing"
+          }
+        }
+      }
+    },
+    "/v1/community/posts/{id}": {
+      "get": {
+        "tags": [
+          "community"
+        ],
+        "operationId": "getCommunityPost",
+        "summary": "A post with its comments",
+        "security": [],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "voter",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Voter id; echoes that voter’s vote as myVote."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "no such post"
+          }
+        }
+      }
+    },
+    "/v1/community/posts/{id}/vote": {
+      "post": {
+        "tags": [
+          "community"
+        ],
+        "operationId": "voteCommunityPost",
+        "summary": "Up/down vote; one vote per voter, 0 clears it",
+        "security": [],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "voter": {
+                    "type": "string"
+                  },
+                  "value": {
+                    "type": "integer",
+                    "enum": [
+                      1,
+                      0,
+                      -1
+                    ]
+                  }
+                },
+                "required": [
+                  "voter",
+                  "value"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "bad voter or value"
+          },
+          "404": {
+            "description": "no such post"
+          },
+          "409": {
+            "description": "contended; retry"
+          }
+        }
+      }
+    },
+    "/v1/community/posts/{id}/comments": {
+      "post": {
+        "tags": [
+          "community"
+        ],
+        "operationId": "commentCommunityPost",
+        "summary": "Add a comment",
+        "security": [],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "user": {
+                    "type": "string"
+                  },
+                  "body": {
+                    "type": "string",
+                    "maxLength": 5000
+                  }
+                },
+                "required": [
+                  "body"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "empty comment"
+          },
+          "404": {
+            "description": "no such post"
+          }
+        }
+      }
+    },
+    "/v1/community/stats": {
+      "get": {
+        "tags": [
+          "community"
+        ],
+        "operationId": "communityStats",
+        "summary": "Members, activity, top posts and people, room counts",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {

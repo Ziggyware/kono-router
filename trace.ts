@@ -17,6 +17,8 @@ export interface SpanRec {
   status: SpanStatus;
   attrs: Record<string, Attr>;
   events: Array<{ t: number; name: string; attrs?: Record<string, Attr> }>;
+  /** Request/response bodies (JSON, capped), for the admin panel only: never exported to OTel. */
+  io?: { request?: string; response?: string };
 }
 
 export interface TraceRec {
@@ -27,6 +29,7 @@ export interface TraceRec {
 export type TraceEvent = { type: "start" | "end" | "event"; trace: string; span: SpanRec };
 
 const RING_MAX = 256;
+const IO_MAX = 32_000;
 const ring = new Map<string, TraceRec>(); // insertion-ordered: oldest first
 const subscribers = new Set<(e: TraceEvent) => void>();
 const tracer = otel.getTracer("nokey-router");
@@ -77,6 +80,15 @@ export class Span {
     Object.assign(this.rec.attrs, a);
     this.otelSpan.setAttributes(a);
     return this;
+  }
+
+  /** Keeps a capped JSON copy of the request or response body on this span. */
+  io(kind: "request" | "response", value: unknown): void {
+    let text: string;
+    try { text = typeof value === "string" ? value : JSON.stringify(value, null, 2); } catch { text = String(value); }
+    if (text.length > IO_MAX) text = text.slice(0, IO_MAX) + `\n… truncated (${text.length} chars)`;
+    (this.rec.io ??= {})[kind] = text;
+    publish("event", this.traceId, this.rec);
   }
 
   event(name: string, attrs: Attrs = {}): void {

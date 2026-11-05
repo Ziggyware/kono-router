@@ -425,6 +425,15 @@ pre.wrap { white-space: pre-wrap; word-break: break-word; }
 
 /* ---------- chat ---------- */
 .chat { position: relative; flex: 1; display: flex; flex-direction: column; min-width: 0; }
+/* A quick-search browser extension injects this box over the page; it has no role here. */
+#dse-quicksearch, .dse-quicksearch, [id^="dse-quicksearch"], [class*="dse-quicksearch"] { display: none !important; }
+.sallout { display: flex; flex-direction: column; max-height: 300px; overflow: auto; margin-bottom: 10px; border: 1px solid var(--line); }
+.sall-h { padding: 5px 10px; border-bottom: 1px solid var(--line); font: 400 11px var(--mono); }
+.sall-r { display: flex; gap: 12px; padding: 4px 10px; border: 0; border-bottom: 1px solid var(--line); background: none; color: var(--mid); font: 400 11.5px/1.5 var(--mono); text-align: left; cursor: pointer; min-width: 0; }
+.sall-r:hover, .sall-r:focus-visible { background: var(--surface-2); color: var(--fg); outline: none; }
+.sall-r b { flex: none; font-weight: 500; color: var(--acc); }
+.sall-r span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+pre.src mark { background: var(--acc-soft); color: var(--acc); box-shadow: 0 0 0 1px var(--acc-line); }
 /* ---------- workspace split: chat | tree/inspector | live view ---------- */
 #v-chat.wsp-on .chat { flex: 0 0 var(--chat-w, 44%); min-width: 300px; }
 /* The chat column is a size container: a narrow split drops button labels and wraps the toolbar instead of overflowing. */
@@ -432,7 +441,6 @@ pre.wrap { white-space: pre-wrap; word-break: break-word; }
 @container chat (max-width: 760px) {
   .composer .btxt { display: none; }
   .composer-toolbar { flex-wrap: wrap; row-gap: 4px; }
-  .composer-toolbar .quick-chips { flex: 1 1 100%; }
   .cmodel-wrap { margin-left: 0; }
   .cmodel-wrap input { width: 128px; }
 }
@@ -685,6 +693,20 @@ input[type="color"]::-webkit-color-swatch { border: none; border-radius: 7px; }
 
 /* ---------- traces ---------- */
 .split { display: grid; grid-template-columns: minmax(300px, 34%) 1fr; gap: 14px; align-items: start; }
+.trx { flex: 1; min-width: 0; display: flex; flex-direction: column; padding: 14px 20px 16px; gap: 0; }
+.trx-bar { flex: none; margin-bottom: 10px; }
+.trx-top.tl { flex: 0 0 var(--trx-top, 42%); min-height: 60px; max-height: none; border-radius: 0; outline: none; }
+.trx-bot { flex: 1; min-height: 60px; display: flex; flex-direction: column; border: 1px solid var(--line); background: var(--bg-2); }
+.trx-tabs { flex: none; display: flex; align-items: stretch; border-bottom: 1px solid var(--line); font: 400 11px var(--mono); }
+.trx-tabs button { border: 0; border-right: 1px solid var(--line); background: none; color: var(--dim); padding: 6px 14px; cursor: pointer; font: inherit; letter-spacing: .08em; text-transform: uppercase; }
+.trx-tabs button:hover { color: var(--fg); }
+.trx-tabs button[aria-selected="true"] { color: var(--acc); box-shadow: inset 0 -2px var(--acc); }
+.trx-tabs #trx-meta { align-self: center; padding: 0 10px; }
+.trx-out { flex: 1; min-height: 0; overflow: auto; }
+.trx-out pre { margin: 0; border: 0; border-radius: 0; background: none; padding: 10px 12px; font: 400 12px/1.55 var(--mono); white-space: pre-wrap; word-break: break-word; }
+.trx-out .wf { border: 0; border-radius: 0; border-bottom: 1px solid var(--line); }
+.trx-empty { padding: 14px 12px; font: 400 12px var(--mono); }
+#v-traces .split-y { margin: 0; }
 .tl {
   border: 1px solid var(--line); border-radius: var(--r); overflow: auto;
   max-height: calc(100dvh - 190px); background: var(--bg-2);
@@ -745,6 +767,12 @@ pre.src span::before {
   visibility: hidden;
 }
 .sheet.open { transform: none; visibility: visible; }
+/* Full-page sheet: below the header, edge to edge, content in a readable column. */
+.sheet.sheet-full { inset: var(--hdr) 0 0 0; width: auto; height: auto; max-width: none; max-height: none; margin: 0; border: 0; border-top: 1px solid var(--line-2); border-radius: 0; box-shadow: none; }
+.sheet.sheet-full .sheet-h::before { display: none; }
+.sheet.sheet-full .sheet-h, .sheet.sheet-full .sheet-b > * { width: 100%; max-width: 1180px; margin: 0 auto; }
+.sheet.sheet-full .sheet-b { flex: 1; }
+.sheet.sheet-full .tech-cards-grid { grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); max-height: none; }
 .sheet-h { display: flex; align-items: center; gap: 10px; padding: 14px 16px 10px; }
 .sheet-h h2 { margin: 0; font: 600 14px/1.2 var(--sans); letter-spacing: -.01em; }
 .sheet-h::before {
@@ -1179,9 +1207,12 @@ dialog .row { margin-top: 4px; }
 
 /* Cleaner, expandable composer */
 .composer-toolbar { max-width: 940px; margin: 0 auto 6px; display: flex; align-items: center; gap: 8px; }
-.quick-chips { display: flex; align-items: center; gap: 6px; overflow-x: auto; padding: 2px 0; }
-.quick-chips .chip { padding: 3px 9px; font-size: 11px; cursor: pointer; white-space: nowrap; }
-.quick-chips .chip:hover { border-color: var(--acc-line); color: var(--acc); background: var(--acc-soft); }
+.cmenu-wrap { position: relative; }
+.cmenu { position: absolute; bottom: calc(100% + 6px); left: 0; z-index: 30; min-width: 180px; display: flex; flex-direction: column; border: 1px solid var(--line-2); background: var(--bg-2); box-shadow: var(--shadow-lg); }
+.cmenu[hidden] { display: none; }
+.cmenu button { border: 0; border-bottom: 1px solid var(--line); background: none; color: var(--mid); text-align: left; padding: 8px 14px; font: 400 12.5px var(--sans); cursor: pointer; }
+.cmenu button:last-child { border-bottom: 0; }
+.cmenu button:hover, .cmenu button:focus-visible { background: var(--acc-soft); color: var(--acc); outline: none; }
 .cmodel-wrap { margin-left: auto; display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--dim); flex-shrink: 0; }
 .cmodel-wrap input { width: 170px; font: 500 11.5px var(--mono); padding: 4px 8px; }
 .par-panel { border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; margin: 8px 0; display: grid; gap: 8px; }
@@ -1226,6 +1257,41 @@ dialog .row { margin-top: 4px; }
 
 /* Modern Tools Tab Revamp */
 .tools-layout { display: grid; grid-template-columns: 310px 1fr; gap: 16px; align-items: start; margin-top: 14px; }
+.ttabs { display: flex; align-items: stretch; border-bottom: 1px solid var(--line-2); margin: -4px 0 14px; }
+.ttabs button { border: 0; background: none; color: var(--dim); padding: 8px 16px; font: 400 12px var(--mono); letter-spacing: .08em; text-transform: uppercase; cursor: pointer; }
+.ttabs button:hover { color: var(--fg); }
+.ttabs button[aria-selected="true"] { color: var(--acc); box-shadow: inset 0 -2px var(--acc); }
+.ttabs #tstat { align-self: center; font: 400 11px var(--mono); }
+.tdash { display: grid; gap: 12px; }
+.td-sum { display: flex; flex-wrap: wrap; gap: 0; border: 1px solid var(--line); }
+.td-sum span { padding: 10px 16px; border-right: 1px solid var(--line); color: var(--dim); font: 400 11.5px var(--mono); }
+.td-sum b { color: var(--fg); font: 400 18px var(--mono); margin-right: 6px; }
+.td-sum b.ok { color: var(--ok); } .td-sum b.no { color: var(--bad); }
+.td-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 12px; }
+.td-card { border: 1px solid var(--line); padding: 10px 12px; background: var(--bg-2); min-width: 0; }
+.td-card h4 { margin: 0 0 8px; color: var(--mid); font: 400 10.5px var(--mono); letter-spacing: .12em; text-transform: uppercase; }
+.td-bar { display: grid; grid-template-columns: minmax(90px, 30%) 1fr auto; align-items: center; gap: 10px; height: 20px; font: 400 11.5px var(--mono); }
+.td-n { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--mid); }
+.td-track { height: 6px; background: var(--surface-2); }
+.td-track i { display: block; height: 100%; min-width: 1px; }
+.td-v { color: var(--dim); white-space: nowrap; max-width: 260px; overflow: hidden; text-overflow: ellipsis; }
+.td-tags { display: flex; flex-wrap: wrap; gap: 6px; }
+.ex-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+.ex-chip { border: 1px solid var(--line); background: var(--bg-2); color: var(--mid); padding: 3px 10px; font: 400 11.5px var(--mono); cursor: pointer; border-radius: 0; }
+.ex-chip:hover { color: var(--fg); border-color: var(--line-2); }
+.ex-chip[aria-selected="true"] { color: var(--acc); border-color: var(--acc-line); background: var(--acc-soft); }
+/* Lighter type and category colour on the Tools surfaces. */
+#v-tools .tool-item-name, #v-tools .wb-title { font-weight: 500; }
+#v-tools .wb-title { font-size: 16px; }
+#v-tools .lbl, #v-tools .kpi span { font-weight: 400; }
+#v-tools .kpi b { font-weight: 400; }
+#v-tools .mode-switch-btn.active, #v-tools .tools-cat-btn.active { font-weight: 500; }
+#v-tools .tool-item-card { border-left: 3px solid var(--cat, var(--line)); }
+#v-tools .tool-item-card.active { border-left-color: var(--acc); }
+#v-tools .tool-item-desc { color: var(--mid); opacity: .8; }
+#v-tools .tool-form-label { color: var(--fg); }
+#v-tools .tool-form-desc { color: var(--mid); opacity: .75; }
+#v-tools .example-pane-title { letter-spacing: .08em; }
 .tools-sidebar { border: 1px solid var(--line); border-radius: var(--r); background: var(--bg-2); overflow: hidden; display: flex; flex-direction: column; max-height: calc(100vh - 220px); }
 .tools-cat-tabs { display: flex; gap: 4px; overflow-x: auto; padding: 8px 10px; border-bottom: 1px solid var(--line); background: var(--surface); }
 .tools-cat-btn { padding: 3px 8px; font-size: 11px; border: 1px solid transparent; border-radius: 99px; background: none; color: var(--dim); cursor: pointer; white-space: nowrap; }
@@ -1319,7 +1385,47 @@ select.tool-form-in { background: var(--bg-3); color: var(--fg); }
 .sandbox-console { height: 140px; flex: none; border-top: 1px solid var(--line); background: var(--bg); overflow-y: auto; padding: 8px 12px; font-family: var(--mono); font-size: 11.5px; }
 
 /* Community / People Chat */
-.community-layout { display: grid; grid-template-columns: 240px 1fr; height: calc(100vh - var(--hdr)); overflow: hidden; width: 100%; }
+.community-layout { display: grid; grid-template-columns: 240px 1fr; height: 100%; overflow: hidden; width: 100%; }
+.cm { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.cm-tabs { flex: none; margin: 0; padding: 0 16px; }
+.cm-page { flex: 1; min-height: 0; overflow: auto; }
+.cm-page[hidden] { display: none; }
+.cm-chat { overflow: hidden; display: flex; }
+.cm-posts, #cm-dash { max-width: 920px; margin: 0 auto; padding: 16px 20px 40px; }
+.cm-bar { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
+.cm-sort { display: flex; border: 1px solid var(--line); }
+.cm-sort button { border: 0; border-right: 1px solid var(--line); background: none; color: var(--dim); padding: 5px 14px; font: 400 11.5px var(--mono); text-transform: uppercase; letter-spacing: .08em; cursor: pointer; }
+.cm-sort button:last-child { border-right: 0; }
+.cm-sort button[aria-checked="true"] { color: var(--acc); background: var(--acc-soft); }
+.cm-compose { display: grid; gap: 8px; border: 1px solid var(--line); padding: 12px; margin-bottom: 14px; background: var(--bg-2); }
+.cm-compose input, .cm-compose textarea, .cm-cbox textarea { width: 100%; border: 1px solid var(--line); background: var(--bg); color: var(--fg); padding: 8px 10px; font: 400 13px var(--sans); border-radius: 0; outline: none; }
+.cm-compose input:focus, .cm-compose textarea:focus, .cm-cbox textarea:focus { border-color: var(--acc-line); }
+.cm-post { display: grid; grid-template-columns: 44px 1fr; gap: 12px; border: 1px solid var(--line); border-top: 0; padding: 10px 12px 10px 6px; background: var(--bg-2); }
+#cm-list .cm-post:first-child { border-top: 1px solid var(--line); }
+.cm-vote { display: flex; flex-direction: column; align-items: center; gap: 2px; font: 400 13px var(--mono); color: var(--mid); }
+.cm-vote button { border: 0; background: none; color: var(--dim); font-size: 13px; line-height: 1; padding: 3px 6px; cursor: pointer; }
+.cm-vote button:hover { color: var(--fg); }
+.cm-vote button[aria-pressed="true"][data-v="1"] { color: var(--acc); }
+.cm-vote button[aria-pressed="true"][data-v="-1"] { color: var(--blue); }
+.cm-vote b { font-weight: 400; }
+.cm-vote b.pos { color: var(--acc); } .cm-vote b.neg { color: var(--blue); }
+.cm-title { display: block; border: 0; background: none; padding: 0; text-align: left; color: var(--fg); font: 500 14.5px/1.35 var(--sans); cursor: pointer; }
+.cm-title:hover { color: var(--acc); }
+.cm-meta { color: var(--dim); font: 400 11px var(--mono); margin-top: 3px; }
+.cm-meta b { color: var(--mid); font-weight: 400; }
+.cm-prev { color: var(--mid); font-size: 12.5px; margin-top: 4px; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.cm-body { margin: 10px 0 4px; font-size: 13.5px; }
+.cm-back { border: 0; background: none; color: var(--dim); font: 400 11.5px var(--mono); cursor: pointer; padding: 0; margin-bottom: 10px; }
+.cm-back:hover { color: var(--acc); }
+.cm-cmts { margin-top: 14px; border-top: 1px solid var(--line-2); }
+.cm-cmt { padding: 10px 0 10px 12px; border-bottom: 1px solid var(--line); box-shadow: inset 2px 0 var(--line-2); }
+.cm-cmt .md { font-size: 13px; margin-top: 4px; }
+.cm-cbox { display: grid; gap: 8px; margin-top: 12px; }
+.cm-empty { padding: 24px; text-align: center; color: var(--dim); border: 1px solid var(--line); font: 400 12px var(--mono); }
+.cm-kpis { display: flex; flex-wrap: wrap; border: 1px solid var(--line); margin-bottom: 14px; }
+.cm-kpis span { padding: 12px 18px; border-right: 1px solid var(--line); color: var(--dim); font: 400 11px var(--mono); text-transform: uppercase; letter-spacing: .08em; }
+.cm-kpis b { display: block; color: var(--fg); font: 400 22px var(--mono); letter-spacing: 0; text-transform: none; }
+.cm-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 12px; }
 .comm-sidebar { border-right: 1px solid var(--line); background: var(--bg-2); display: flex; flex-direction: column; }
 .comm-side-header { padding: 14px 16px; border-bottom: 1px solid var(--line); display: flex; flex-direction: column; gap: 2px; }
 .comm-brand { display: flex; align-items: center; gap: 8px; font-size: 14px; font-weight: 600; color: var(--fg); }
@@ -1428,7 +1534,7 @@ select.tool-form-in { background: var(--bg-3); color: var(--fg); }
   <span class="vtitle" id="vtitle"></span>
   <nav role="tablist" aria-label="Views" id="nav">
     <button role="tab" data-v="chat">Chat</button>
-    <button role="tab" data-v="community">People Chat</button>
+    <button role="tab" data-v="community">Community</button>
     <button role="tab" data-v="architect">Architect</button>
     <button role="tab" data-v="media">Media</button>
     <button role="tab" data-v="plugins">Plugins</button>
@@ -1482,14 +1588,15 @@ select.tool-form-in { background: var(--bg-3); color: var(--fg); }
       <div class="composer">
         <button id="jump" aria-label="Jump to latest message" title="Jump to latest"><svg aria-hidden="true"><use href="#i-down"/></svg></button>
         <div class="composer-toolbar" id="cquick-tools">
-          <div class="quick-chips">
-            <span class="dim" style="font-size:11px;margin-right:2px">Integrate:</span>
-            <button class="chip" data-quick-tool="calculate" title="Quick calculate tool">⚡ calculate</button>
-            <button class="chip" data-quick-tool="web_search" title="Quick web search tool">🔍 search</button>
-            <button class="chip" data-quick-tool="fs_read" title="Quick file read tool">📁 read</button>
-            <button class="chip" data-quick-tool="memory_recall" title="Quick memory recall tool">🧠 recall</button>
-            <button class="chip" data-quick-app="app-builder" title="Open App Builder Studio">🔨 app builder</button>
-            <button class="chip" data-quick-app="workspace" title="Durable workspace: files, conversations, GitHub">🗂 workspace</button>
+          <div class="cmenu-wrap">
+            <button class="btn q" id="cmenu-btn" aria-haspopup="menu" aria-expanded="false" aria-controls="cmenu" title="Menu"><svg viewBox="0 0 16 16" aria-hidden="true" style="width:14px;height:14px"><path d="M2 4h12M2 8h12M2 12h12" stroke="currentColor" stroke-width="1.5" fill="none"/></svg></button>
+            <div class="cmenu" id="cmenu" role="menu" hidden>
+              <button role="menuitem" data-cm="builder">App builder</button>
+              <button role="menuitem" data-cm="workspace">Workspace</button>
+              <button role="menuitem" data-cm="image">Upload image</button>
+              <button role="menuitem" data-cm="file">Upload file</button>
+              <button role="menuitem" data-cm="new">New chat</button>
+            </div>
           </div>
           <label class="cmodel-wrap" title="Model for this chat — the same setting as in Settings"><span>model</span><input id="cmodel" value="free:auto" list="modellist" autocomplete="off" spellcheck="false" aria-label="Model for this chat"></label>
           <span class="cmodel-wrap" style="margin-left:8px" title="Run the same prompt on several models at once; a judge picks the winner, or you do">
@@ -1510,10 +1617,7 @@ select.tool-form-in { background: var(--bg-3); color: var(--fg); }
           </div>
           <div class="row" style="flex-wrap:nowrap">
             <input type="file" id="cfile" accept="image/*" multiple hidden>
-            <button class="btn q" id="cattach" title="Attach images" aria-label="Attach images"><svg aria-hidden="true"><use href="#i-img"/></svg><span class="btxt">img</span></button>
-            <button class="btn q" id="ctools-btn" title="Run a tool in this chat" aria-label="Tools"><svg aria-hidden="true"><use href="#i-tool"/></svg><span class="btxt">tools</span></button>
-            <button class="btn q" id="cappbuilder-btn" title="Build Application with Tech Stack" aria-label="Build App"><svg aria-hidden="true"><use href="#i-sparkles"/></svg><span class="btxt">build</span></button>
-            <button class="btn q" id="cworkspace-btn" title="Workspace — durable files, conversations, GitHub" aria-label="Workspace"><svg aria-hidden="true"><use href="#i-file"/></svg><span class="btxt">files</span></button>
+            <input type="file" id="cupload" multiple hidden>
             <button class="btn q" id="cexpand" title="Expand / contract editor mode" aria-label="Expand editor"><svg aria-hidden="true"><use href="#i-expand"/></svg></button>
             <button class="btn q" id="cside" title="Settings" aria-label="Open settings"><svg aria-hidden="true"><use href="#i-sliders"/></svg><span class="btxt">settings</span></button>
             <button class="btn" id="csend" aria-label="Send"><span class="btxt">send</span><svg aria-hidden="true"><use href="#i-up"/></svg></button>
@@ -1557,13 +1661,40 @@ select.tool-form-in { background: var(--bg-3); color: var(--fg); }
   </section>
 
   <section class="view full" id="v-community" hidden>
+   <div class="cm">
+    <div class="ttabs cm-tabs" role="tablist" aria-label="Community sections">
+      <button role="tab" data-ctab="dashboard" aria-selected="false">Dashboard</button>
+      <button role="tab" data-ctab="posts" aria-selected="true">Posts</button>
+      <button role="tab" data-ctab="chat" aria-selected="false">Chat</button>
+      <span class="grow"></span><span class="dim" id="cm-stat"></span>
+    </div>
+    <div class="cm-page" data-cpage="dashboard" hidden><div id="cm-dash"></div></div>
+    <div class="cm-page" data-cpage="posts">
+      <div class="cm-posts">
+        <div class="cm-bar">
+          <div class="cm-sort" role="radiogroup" aria-label="Sort posts">
+            <button data-sort="hot" aria-checked="true" role="radio">hot</button><button data-sort="new" aria-checked="false" role="radio">new</button><button data-sort="top" aria-checked="false" role="radio">top</button>
+          </div>
+          <span class="grow"></span>
+          <button class="btn" id="cm-new">+ new post</button>
+        </div>
+        <form class="cm-compose" id="cm-compose" hidden>
+          <input id="cm-title" maxlength="200" placeholder="title" aria-label="Post title" required>
+          <textarea id="cm-body" rows="5" maxlength="20000" placeholder="text — markdown and code blocks render" aria-label="Post body"></textarea>
+          <div class="row"><button class="btn" type="submit">post as <span id="cm-as"></span></button><button class="btn q" type="button" id="cm-cancel">cancel</button></div>
+        </form>
+        <div id="cm-list"></div>
+        <div id="cm-detail" hidden></div>
+      </div>
+    </div>
+    <div class="cm-page cm-chat" data-cpage="chat" hidden>
     <div class="community-layout">
       <!-- Channels & User Sidebar -->
       <aside class="comm-sidebar">
         <div class="comm-side-header">
           <div class="comm-brand">
             <svg viewBox="0 0 24 24" class="comm-icon"><use href="#i-users"/></svg>
-            <b>People Chat</b>
+            <b>Chat</b>
           </div>
           <span class="dim" style="font-size:11px">Local &amp; Mesh Relay</span>
         </div>
@@ -1617,6 +1748,8 @@ select.tool-form-in { background: var(--bg-3); color: var(--fg); }
         </div>
       </div>
     </div>
+    </div>
+   </div>
   </section>
 
   <section class="view full" id="v-architect" hidden>
@@ -1633,7 +1766,7 @@ select.tool-form-in { background: var(--bg-3); color: var(--fg); }
     <div class="row" style="margin-bottom:12px;align-items:stretch">
       <textarea id="mprompt" class="grow" rows="2" aria-label="Image prompt"></textarea>
       <div style="display:grid;gap:6px">
-        <div class="row"><select id="mmodel" aria-label="Image model"><option>nokey-image</option><option>nokey-image-flux</option><option>nokey-image-horde</option></select>
+        <div class="row"><select id="mmodel" aria-label="Image model" style="max-width:340px"><option>nokey-image</option><option>nokey-image-flux</option><option>nokey-image-gen</option><option>nokey-image-horde</option></select>
           <select id="msize" aria-label="Size"><option>1024x1024</option><option>1024x576</option><option>576x1024</option><option>1792x1024</option><option>1024x1792</option><option>512x512</option></select>
           <select id="mn" aria-label="Count"><option>1</option><option>2</option><option>3</option><option>4</option></select></div>
         <button class="btn" id="mgo">generate</button>
@@ -1668,7 +1801,17 @@ select.tool-form-in { background: var(--bg-3); color: var(--fg); }
   </section>
 
   <section class="view" id="v-tools" hidden>
-    <!-- Top toolbar & KPIs -->
+    <div class="ttabs" role="tablist" aria-label="Tools sections">
+      <button role="tab" data-ttab="dashboard" aria-selected="false">Dashboard</button>
+      <button role="tab" data-ttab="tools" aria-selected="true">Tools</button>
+      <button role="tab" data-ttab="forge" aria-selected="false">Forge</button>
+      <span class="grow"></span><span class="dim" id="tstat"></span>
+    </div>
+    <div data-tpage="dashboard" hidden>
+      <div class="kpis" id="tkpis"></div>
+      <div class="tdash" id="tdash"></div>
+    </div>
+    <div data-tpage="tools">
     <div class="row" style="margin-bottom:12px;gap:10px">
       <input id="tfilter" size="24" placeholder="Filter tools by name, kind, desc…" aria-label="Filter tools">
       <select id="tflavor" aria-label="Vendor wire format">
@@ -1679,12 +1822,9 @@ select.tool-form-in { background: var(--bg-3); color: var(--fg); }
       </select>
       <button class="btn q" id="treload">reload</button>
       <button class="btn q" id="twire">copy wire</button>
-      <span class="grow"></span>
-      <span class="dim" id="tstat"></span>
     </div>
-
-    <div class="kpis" id="tkpis"></div>
-
+    </div>
+    <div data-tpage="forge" hidden>
     <!-- Forge a tool: the router creates its own tools on the fly (admin) -->
     <div class="examples-card" id="forge-card" style="margin-bottom:12px">
       <div class="examples-card-head">
@@ -1745,6 +1885,8 @@ return { words: t.split(/\s+/).filter(Boolean).length, chars: t.length };</texta
       </div>
     </div>
 
+    </div>
+    <div data-tpage="tools">
     <!-- Master-Detail Modern Workbench -->
     <div class="tools-layout">
       <!-- Left: Tools Explorer Sidebar -->
@@ -1810,18 +1952,19 @@ return { words: t.split(/\s+/).filter(Boolean).length, chars: t.length };</texta
         <!-- Curated Example Requests & Responses -->
         <div class="examples-card" id="wb-examples-box">
           <div class="examples-card-head">
-            <span class="lbl">Example Request &amp; Expected Response</span>
+            <span class="lbl">Examples</span>
             <div class="row" style="gap:6px">
-              <button class="btn q" id="btn-run-example" style="font-size:11px;padding:2px 8px">▶ Run This Example</button>
+              <button class="btn q" id="btn-run-example" style="font-size:11px;padding:2px 8px">▶ Run selected</button>
             </div>
           </div>
+          <div class="ex-chips" id="ex-chips" role="listbox" aria-label="Examples for this tool"></div>
           <div class="examples-split">
             <div class="example-pane">
               <div class="example-pane-title"><span>Example Request</span><span class="dim" id="ex-req-hint">JSON</span></div>
               <pre class="wrap" id="ex-req-code" style="padding:8px 10px;margin:0;background:var(--bg-3)"><code>{}</code></pre>
             </div>
             <div class="example-pane">
-              <div class="example-pane-title"><span>Expected Response</span><span class="dim" id="ex-res-hint">Schema</span></div>
+              <div class="example-pane-title"><span>Response</span><span class="dim" id="ex-res-hint">expected</span></div>
               <pre class="wrap" id="ex-res-code" style="padding:8px 10px;margin:0;background:var(--bg-3)"><code>{}</code></pre>
             </div>
           </div>
@@ -1854,9 +1997,10 @@ return { words: t.split(/\s+/).filter(Boolean).length, chars: t.length };</texta
       </main>
     </div>
 
-    <!-- Collapsible Full Registry Table -->
-    <details class="rs" style="margin-top:16px" id="all-tools-table-details">
-      <summary>Complete Registry Table (Click column headers to sort)</summary>
+    </div>
+    <div data-tpage="dashboard" hidden>
+    <details class="rs" style="margin-top:16px" id="all-tools-table-details" open>
+      <summary>Registry — every tool (click a column header to sort)</summary>
       <div class="rb" style="padding:0">
         <table>
           <thead><tr>
@@ -1868,6 +2012,7 @@ return { words: t.split(/\s+/).filter(Boolean).length, chars: t.length };</texta
         </table>
       </div>
     </details>
+    </div>
   </section>
 
   <section class="view" id="v-harvester" hidden>
@@ -1883,14 +2028,26 @@ return { words: t.split(/\s+/).filter(Boolean).length, chars: t.length };</texta
     <div id="hout"></div>
   </section>
 
-  <section class="view" id="v-traces" hidden>
-    <div class="row" style="margin-bottom:10px">
-      <button class="btn" id="tlive" aria-pressed="false">live</button><button class="btn q" id="tload">load</button>
-      <input id="trfilter" size="28" aria-label="Filter traces">
-      <label class="row" style="gap:4px"><input type="checkbox" id="terr"><span class="mid">errors</span></label>
-      <span class="grow"></span><span class="dim" id="tcount"></span>
+  <section class="view full" id="v-traces" hidden>
+    <div class="trx" id="trx">
+      <div class="row trx-bar">
+        <button class="btn" id="tlive" aria-pressed="false">live</button><button class="btn q" id="tload">load</button>
+        <input id="trfilter" size="28" aria-label="Filter traces" placeholder="filter: model, tuple, mode, id">
+        <label class="row" style="gap:4px"><input type="checkbox" id="terr"><span class="mid">errors</span></label>
+        <span class="grow"></span><span class="dim" id="tcount"></span>
+      </div>
+      <div class="trx-top tl" id="tlist" role="listbox" aria-label="Traces" tabindex="0"></div>
+      <div class="split-y" id="trx-split" role="separator" aria-orientation="horizontal" aria-label="Resize trace list and details" tabindex="0"></div>
+      <div class="trx-bot">
+        <div class="trx-tabs" role="tablist" aria-label="Trace detail">
+          <button role="tab" data-tt="request" aria-selected="true">request</button>
+          <button role="tab" data-tt="response" aria-selected="false">response</button>
+          <button role="tab" data-tt="spans" aria-selected="false">spans</button>
+          <span class="grow"></span><span class="dim" id="trx-meta"></span>
+        </div>
+        <div class="trx-out" id="trx-out" role="tabpanel"><div class="dim trx-empty">select a trace above</div></div>
+      </div>
     </div>
-    <div class="split"><div class="tl" id="tlist" role="listbox" aria-label="Traces"></div><div><div class="wf" id="wf"></div><pre id="tattrs" hidden style="margin-top:8px"></pre></div></div>
   </section>
 
   <section class="view" id="v-ops" hidden>
@@ -1906,12 +2063,12 @@ return { words: t.split(/\s+/).filter(Boolean).length, chars: t.length };</texta
   <section class="view" id="v-source" hidden>
     <div class="row" style="margin-bottom:10px">
       <select id="sfile" aria-label="File"><option>main.ts</option><option>math.ts</option><option>learning.ts</option><option>trace.ts</option><option>index.html</option><option>openapi.json</option><option>CHANGES.md</option><option>services.json</option><option>deno.json</option></select>
-      <button class="btn" id="sload">read</button><input id="sgrep" size="28" aria-label="Filter lines" placeholder="filter lines in this file"><span class="dim" id="smeta"></span>
+      <input id="sq" class="grow" style="min-width:220px" aria-label="Search source" placeholder="search — enter: this file · shift+enter: all files">
+      <button class="btn" id="sin" title="Filter the selected file to matching lines (Enter)">this file</button>
+      <button class="btn q" id="sall" title="Search every source file (Shift+Enter)">all files</button>
+      <span class="dim" id="smeta"></span>
     </div>
-    <div class="row" style="margin-bottom:8px">
-      <input id="sall" size="32" aria-label="Search all files" placeholder="search every file's contents…"><span class="dim" id="sallstat"></span>
-    </div>
-    <div id="sallout" style="display:flex;flex-direction:column;gap:4px;max-height:300px;overflow:auto;margin-bottom:10px"></div>
+    <div id="sallout" class="sallout" hidden></div>
     <pre class="src" id="sout"></pre>
   </section>
 
@@ -2171,7 +2328,7 @@ return { words: t.split(/\s+/).filter(Boolean).length, chars: t.length };</texta
     </div>
   </div>
 </dialog>
-<dialog id="app-builder-drawer" class="sheet" style="max-width:640px" aria-label="App Builder Studio">
+<dialog id="app-builder-drawer" class="sheet sheet-full" aria-label="App Builder Studio">
   <div class="sheet-h">
     <h2>⚡ App Builder Studio</h2>
     <span class="grow"></span>
@@ -2226,15 +2383,6 @@ return { words: t.split(/\s+/).filter(Boolean).length, chars: t.length };</texta
         <input type="file" id="techpack-file-in" accept=".json" hidden>
       </div>
 
-      <div>
-        <div class="row" style="justify-content:space-between;margin-bottom:6px">
-          <span class="lbl">4. Project Files</span>
-          <button class="btn q" id="builder-open-ws" style="font-size:10.5px;padding:2px 8px">Open workspace</button>
-        </div>
-        <div id="builder-files" style="display:flex;flex-direction:column;gap:4px"></div>
-        <div class="dim" style="font-size:11px;margin-top:4px">The durable workspace as a folder tree — workspace-mode generations write here, and while this panel is open the tree refreshes itself and reports created / updated files below.</div>
-        <div id="builder-activity" style="display:grid;gap:2px;margin-top:4px"></div>
-      </div>
     </div>
   </div>
 </dialog>
@@ -2436,12 +2584,15 @@ const ORIGIN = /^https?:/.test(location.protocol) ? location.origin : "https://n
 const creds = () => { const c = store.get("creds", {}); return { url: (c.url || ORIGIN).replace(/\/+$/, ""), key: c.key || "", admin: c.admin || "" }; };
 // A stable per-browser session scopes the tool plane's namespace, so
 // memory, RAG and files compound across chats instead of resetting.
+// The tool-plane session (durable workspace, clipboard, tasks) is per chat:
+// a new chat gets a fresh one, a saved conversation carries its own. The
+// browser's original session id stays with the chat that was live when this
+// was introduced, so existing files are not orphaned.
+const newSessionId = () => "chat-" + Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
 function sessionId() {
-  let id = store.get("session_id", "");
-  if (!id) {
-    id = "dash-" + Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
-    store.set("session_id", id);
-  }
+  let id = store.get("chat_session", "") || store.get("session_id", "");
+  if (!id) id = newSessionId();
+  store.set("chat_session", id);
   return id;
 }
 function headers(admin = false, json = true) {
@@ -2523,9 +2674,10 @@ function highlightCode(code, lang = "") {
   const trimmed = code.trim();
 
   if (lang === "json" || lang === "jsonc" || (!lang && (trimmed.startsWith("{") || trimmed.startsWith("[")) && (trimmed.endsWith("}") || trimmed.endsWith("]")))) {
-    return escH(code).replace(/(&quot;(\\u[a-zA-Z0-9]{4}|\\[^u]|[^\\&])*&quot;(\s*:)?|\b(true|false|null)\b|-?\d+(?:\.\d*)?(?:[eE][+\-]?\d+)?)/g, (match) => {
+    // escH leaves quotes alone, so strings are matched on a literal quote.
+    return escH(code).replace(/("(\\u[a-zA-Z0-9]{4}|\\[^u]|[^\\"])*"(\s*:)?|\b(true|false|null)\b|-?\d+(?:\.\d*)?(?:[eE][+\-]?\d+)?)/g, (match) => {
       let cls = "hl-num";
-      if (/^&quot;/.test(match)) {
+      if (/^"/.test(match)) {
         if (/:$/.test(match)) cls = "hl-key";
         else cls = "hl-str";
       } else if (/true|false/.test(match)) cls = "hl-bool";
@@ -3464,14 +3616,49 @@ $("#cexpand").onclick = () => {
   $("#cinput").focus();
 };
 
-$("#cquick-tools")?.addEventListener("click", (e) => {
-  const btn = e.target.closest("button[data-quick-tool]");
-  if (btn) { openChatToolsDrawer(btn.dataset.quickTool); return; }
-  const appBtn = e.target.closest("button[data-quick-app]");
-  if (appBtn) { if (appBtn.dataset.quickApp === "workspace") openWorkspace(); else openAppBuilder(); return; }
+// ---- composer menu ----
+const cmenu = $("#cmenu"), cmenuBtn = $("#cmenu-btn");
+function cmenuOpen(on) {
+  cmenu.hidden = !on;
+  cmenuBtn.setAttribute("aria-expanded", String(on));
+  if (on) $("button", cmenu).focus();
+}
+cmenuBtn.onclick = () => cmenuOpen(cmenu.hidden);
+document.addEventListener("pointerdown", (e) => { if (!cmenu.hidden && !e.target.closest(".cmenu-wrap")) cmenuOpen(false); });
+cmenu.addEventListener("keydown", (e) => {
+  const items = $$("button", cmenu), i = items.indexOf(document.activeElement);
+  if (e.key === "Escape") { cmenuOpen(false); cmenuBtn.focus(); }
+  else if (e.key === "ArrowDown" || e.key === "ArrowUp") { e.preventDefault(); items[(i + (e.key === "ArrowDown" ? 1 : items.length - 1)) % items.length].focus(); }
 });
-$("#ctools-btn").onclick = () => openChatToolsDrawer();
-$("#cappbuilder-btn").onclick = () => openAppBuilder();
+cmenu.addEventListener("click", (e) => {
+  const b = e.target.closest("[data-cm]");
+  if (!b) return;
+  cmenuOpen(false);
+  ({ builder: () => openAppBuilder(), workspace: () => openWorkspace(), image: () => $("#cfile").click(), file: () => $("#cupload").click(), new: () => newChat() })[b.dataset.cm]();
+});
+// Files go into this chat's durable workspace (uploads/), byte-exact, and the
+// composer gets a reference the agent can read with fs_read.
+async function uploadFiles(files) {
+  const done = [];
+  for (const file of files) {
+    if (file.size > 2 * 1024 * 1024) { toast(`${file.name}: over the 2 MiB workspace file limit`, true); continue; }
+    const path = "uploads/" + file.name.replace(/[^\w.\-]+/g, "_");
+    try {
+      const buf = new Uint8Array(await file.arrayBuffer());
+      let bin = "";
+      for (let i = 0; i < buf.length; i += 0x8000) bin += String.fromCharCode.apply(null, buf.subarray(i, i + 0x8000));
+      await wsExec("fs_write", { path, content: btoa(bin), encoding: "base64" });
+      done.push(`${path} (${file.size} B)`);
+    } catch (err) { toast(`upload ${file.name} failed: ${err.message}`, true); }
+  }
+  if (!done.length) return;
+  const input = $("#cinput");
+  input.value = (input.value ? input.value.replace(/\s*$/, "\n") : "") + done.map((d) => `[uploaded to workspace: ${d}]`).join("\n") + "\n";
+  autosize(input); input.focus();
+  toast(`uploaded ${done.length} file${done.length > 1 ? "s" : ""} to this chat's workspace`);
+  if (wsp.open) wsRefresh(true);
+}
+$("#cupload").onchange = (e) => { uploadFiles([...e.target.files]); e.target.value = ""; };
 
 // ---- attachments ----
 function renderAttach() {
@@ -3486,7 +3673,6 @@ function addFiles(files) {
     r.readAsDataURL(file);
   }
 }
-$("#cattach").onclick = () => $("#cfile").click();
 $("#cfile").onchange = (e) => { addFiles(e.target.files); e.target.value = ""; };
 $("#cinput").addEventListener("paste", (e) => { const fl = [...e.clipboardData.files]; if (fl.length) { e.preventDefault(); addFiles(fl); } });
 const chatView = $("#v-chat");
@@ -3494,7 +3680,20 @@ chatView.addEventListener("dragover", (e) => { if ([...e.dataTransfer.types].inc
 chatView.addEventListener("dragleave", (e) => { if (e.target === chatView || !chatView.contains(e.relatedTarget)) chatView.classList.remove("drop"); });
 chatView.addEventListener("drop", (e) => { e.preventDefault(); chatView.classList.remove("drop"); addFiles(e.dataTransfer.files); });
 
-function newChat() { if (chatCtl) chatCtl.abort(); conv.messages = []; saveConv(); renderThread(); updateModelHint(); $("#cinput").focus(); }
+function switchChatSession(id) {
+  store.set("chat_session", id);
+  wsp.cache.clear(); wsp.sel = null; wsp.editing = null; wsp.dirty = false; wsp.entry = ""; wsp.page = ""; wsp.sig = ""; wsp.sigs = null;
+  wsFiles = []; wsPrev = null;
+  if (wsp.open) { wspRenderTree(); wspInspect(); wsRefresh(true).then(() => wspBuild()); }
+}
+function newChat() {
+  wspGuard(() => {
+    if (chatCtl) chatCtl.abort();
+    conv.messages = []; saveConv(); renderThread(); updateModelHint();
+    switchChatSession(newSessionId());
+    $("#cinput").focus();
+  });
+}
 $("#cnew").onclick = newChat;
 $("#cexport").onclick = exportChat;
 $("#set-export").onclick = exportChat;
@@ -3916,7 +4115,7 @@ async function genMedia() {
   const t0 = performance.now();
   try {
     const d = await req("/v1/images/generations", { method: "POST", body: { prompt, model: $("#mmodel").value, size: $("#msize").value, n: Number($("#mn").value) } });
-    for (const it of d.data ?? []) gallery.unshift({ src: it.url || "data:image/png;base64," + it.b64_json, prompt, model: $("#mmodel").value, ms: performance.now() - t0, degraded: d.nokey?.degraded, trace: d.nokey?.trace_id });
+    (d.data ?? []).forEach((it, i) => gallery.unshift({ src: it.url || "data:image/png;base64," + it.b64_json, prompt, model: $("#mmodel").value, backend: d.nokey?.backends?.[i] ?? "", ms: performance.now() - t0, degraded: d.nokey?.degraded, trace: d.nokey?.trace_id }));
     renderGallery();
     if (d.nokey?.degraded) toast("all image backends failed — placeholder returned", true);
   } catch (e) { toast(e.message, true); }
@@ -3924,9 +4123,26 @@ async function genMedia() {
 }
 function renderGallery() {
   $("#mgal").innerHTML = gallery.map((g) => `<figure><a href="${esc(g.src)}" target="_blank" rel="noopener"><img src="${esc(g.src)}" alt="${esc(g.prompt)}" loading="lazy"></a>
-    <figcaption><span title="${esc(g.prompt)}">${esc(g.prompt)}</span>${g.degraded ? `<b class="warn">degraded</b>` : ""}<b>${ms(g.ms)}</b>${g.trace ? `<a href="#" data-tr="${esc(g.trace)}">trace</a>` : ""}<a href="${esc(g.src)}" download="nokey-${Date.now()}.png">save</a></figcaption></figure>`).join("");
+    <figcaption><span title="${esc(g.prompt)}">${esc(g.prompt)}</span>${g.degraded ? `<b class="warn">degraded</b>` : g.backend ? `<b title="backend that produced this image">${esc(g.backend.split("::").pop())}</b>` : ""}<b>${ms(g.ms)}</b>${g.trace ? `<a href="#" data-tr="${esc(g.trace)}">trace</a>` : ""}<a href="${esc(g.src)}" download="nokey-${Date.now()}.png">save</a></figcaption></figure>`).join("");
 }
 $("#mgo").onclick = genMedia;
+// Built-in backends first, then every OpenAI-standard image model discovered on
+// configured providers (grouped by provider). Any of them can be pinned.
+let mediaModelsLoaded = false;
+enter.media = async () => {
+  if (mediaModelsLoaded) return;
+  try {
+    const all = (await req("/v1/models")).data ?? [];
+    const img = all.filter((m) => String(m.owned_by).startsWith("nokey-image:"));
+    if (!img.length) return;
+    const by = new Map();
+    for (const m of img) { const p = m.id.split("::")[0].replace(/^services_json_/, ""); by.set(p, [...(by.get(p) ?? []), m.id]); }
+    const sel = $("#mmodel"), keep = sel.value;
+    sel.insertAdjacentHTML("beforeend", [...by].map(([p, ids]) => `<optgroup label="${esc(p)}">${ids.map((id) => `<option value="${esc(id)}">${esc(id.split("::").pop())}</option>`).join("")}</optgroup>`).join(""));
+    sel.value = keep;
+    mediaModelsLoaded = true;
+  } catch { /* the built-in backends still work */ }
+};
 $("#mprompt").addEventListener("keydown", (e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) genMedia(); });
 $("#mgal").onclick = (e) => { const a = e.target.closest("[data-tr]"); if (a) { e.preventDefault(); openTrace(a.dataset.tr); } };
 
@@ -4273,7 +4489,7 @@ function drawTrack(cv, cs) {
   });
 }
 async function pollLanes() {
-  try { const t = performance.now(); await ping(); record(health); kpis(health); lanes(health); $("#lstat").textContent = `${new Date().toLocaleTimeString()} · ${ms(performance.now() - t)}`; $("#lstat").className = "dim"; }
+  try { const t = performance.now(); await ping(); record(health); kpis(health); lanes(health); const cv = health.coverage ?? {}; $("#lstat").textContent = `${new Date().toLocaleTimeString()} · ${ms(performance.now() - t)}${cv.providers_active ? ` · ${cv.providers_ranked}/${cv.providers_active} providers ranked (the rest are reached by the exhaustive sweep)` : ""}`; $("#lstat").className = "dim"; }
   catch (e) { $("#lstat").textContent = e.message; $("#lstat").className = "no"; }
 }
 function scheduleLanes() {
@@ -4315,7 +4531,7 @@ let activeTool = null, currentToolCat = "all", toolMode = "form";
 const TOOL_SEEDS = {
   calculate: { expression: "(23*19)+14" },
   data: { op: "query", data: { a: { b: [10, 20, 30] } }, path: "$.a.b[1]" },
-  text: { op: "similarity", query: "gpt-4o-mini", candidates: ["gpt-4o", "claude-3-5-sonnet", "gpt-4o-mini-2024"] },
+  text: { op: "similarity", text: "gpt-4o-mini", candidates: ["gpt-4o", "claude-3-5-sonnet", "gpt-4o-mini-2024"] },
   time: { op: "now" },
   crypto: { op: "digest", algorithm: "sha-256", data: "nokey-router" },
   web_search: { query: "deno kv", limit: 3 },
@@ -4325,10 +4541,10 @@ const TOOL_SEEDS = {
   fs_read: { path: "notes.md" },
   fs_list: { path: "" },
   fs_grep: { pattern: "tool" },
-  fs_patch: { path: "notes.md", edits: [{ find: "plane", replace: "plane v2" }] },
+  fs_patch: { path: "notes.md", edits: [{ old: "plane", new: "plane v2" }] },
   fs_delete: { path: "notes.md" },
-  clipboard: { op: "set", slot: "draft", content: "hello clipboard" },
-  task: { op: "add", title: "ship ASCK-T v2", priority: "high" },
+  clipboard: { op: "set", slot: "draft", text: "hello clipboard" },
+  task: { op: "add", title: "ship ASCK-T v2", priority: 1 },
   memory_write: { text: "The user prefers TypeScript.", tags: ["user"], importance: 0.8 },
   memory_recall: { query: "what does the user prefer?", k: 3 },
   memory_forget: { query: "typescript" },
@@ -4365,7 +4581,7 @@ const TOOL_EXAMPLES = {
     title: "Semantic & string similarity ranking",
     request: {
       op: "similarity",
-      query: "fast inference router",
+      text: "fast inference router",
       candidates: ["high speed llm gateway", "database migration script", "realtime text router"]
     },
     response: { ok: true, best: "high speed llm gateway", score: 0.84, ranked: [{ candidate: "high speed llm gateway", score: 0.84 }] }
@@ -4417,7 +4633,7 @@ const TOOL_EXAMPLES = {
   },
   fs_patch: {
     title: "Atomic find-and-replace patch",
-    request: { path: "app.config.json", edits: [{ find: '"ocean"', replace: '"violet"' }] },
+    request: { path: "app.config.json", edits: [{ old: '"ocean"', new: '"violet"' }] },
     response: { ok: true, path: "app.config.json", applied: 1, bytes: 50 }
   },
   fs_delete: {
@@ -4432,8 +4648,8 @@ const TOOL_EXAMPLES = {
   },
   task: {
     title: "Add a task to the durable task board",
-    request: { op: "add", title: "Revamp Tools Tab and add People Chat", priority: "high" },
-    response: { ok: true, task_id: "tsk-001", status: "todo", priority: "high" }
+    request: { op: "add", title: "Revamp Tools Tab and add People Chat", priority: 1 },
+    response: { ok: true, task_id: "tsk-001", status: "todo", priority: 1 }
   },
   memory_write: {
     title: "Record durable semantic memory fact",
@@ -4514,7 +4730,141 @@ const TOOL_EXAMPLES = {
 
 const pct = (v) => (v === null || v === undefined ? "\u2014" : `${(v * 100).toFixed(1)}%`);
 
+// Several loadable examples per tool, each exercising a different capability.
+// Ordered so stateful sequences (fs, clipboard, memory, rag, task) run top to bottom.
+const TOOL_EXAMPLE_SETS = {
+  calculate: [
+    { title: "Precedence", args: { expression: "(23*19)+14" } },
+    { title: "Functions in degrees", args: { expression: "sin(30) + sqrt(2)^2 + log(1000)", angle: "deg" } },
+    { title: "Batch with variables", args: { expressions: ["a*b", "a/b", "gcd(a,b)"], variables: { a: 84, b: 36 } } },
+    { title: "Statistics & quantiles", args: { values: [12, 15, 11, 19, 42, 14, 13], quantiles: [0.25, 0.5, 0.9] } },
+  ],
+  clipboard: [
+    { title: "Set a slot", args: { op: "set", slot: "draft", text: "hello clipboard" } },
+    { title: "Append", args: { op: "append", slot: "draft", text: " — appended" } },
+    { title: "Get", args: { op: "get", slot: "draft" } },
+    { title: "List slots", args: { op: "list" } },
+    { title: "Undo last change", args: { op: "undo", slot: "draft" } },
+  ],
+  crypto: [
+    { title: "SHA-256 digest", args: { op: "digest", algorithm: "sha-256", data: "nokey-router" } },
+    { title: "HMAC", args: { op: "hmac", algorithm: "sha-256", key: "secret", data: "message" } },
+    { title: "UUIDv7 ×3", args: { op: "id", id_kind: "uuid7", count: 3 } },
+    { title: "base64url encode", args: { op: "encode", encoding: "base64url", data: "hello world?" } },
+    { title: "Sign a JWT", args: { op: "jwt_sign", payload: { sub: "42", role: "admin" }, secret: "s3cret" } },
+  ],
+  data: [
+    { title: "JSONPath filter", args: { op: "query", data: { users: [{ name: "Ada", role: "admin" }, { name: "Bo", role: "user" }] }, path: "$.users[?(@.role == 'admin')].name" } },
+    { title: "CSV → JSON", args: { op: "convert", data: "name,age\nAda,36\nBo,29", from: "csv", to: "json" } },
+    { title: "Sort, pick, limit", args: { op: "transform", data: [{ n: "b", v: 2 }, { n: "a", v: 5 }, { n: "c", v: 1 }], sort_by: "v", sort_desc: true, pick: ["n", "v"], limit: 2 } },
+    { title: "Validate + coerce", args: { op: "validate", data: { age: "36" }, schema: { type: "object", properties: { age: { type: "integer" } }, required: ["age"] }, coerce: true } },
+  ],
+  embed: [
+    { title: "Semantic comparison", args: { text: "fast inference router", compare_to: ["low latency llm gateway", "banana bread recipe"] } },
+    { title: "Embedding summary", args: { text: "vector embeddings for retrieval", format: "summary" } },
+  ],
+  fs_write: [
+    { title: "Create a file", args: { path: "notes/todo.md", content: "# Todo\n- ship tool tabs\n- test fs_move\n" } },
+    { title: "Append mode", args: { path: "notes/todo.md", content: "- append a line\n", mode: "append" } },
+    { title: "Scratch file", args: { path: "scratch.txt", content: "temporary" } },
+  ],
+  fs_read: [
+    { title: "Read whole file", args: { path: "notes/todo.md" } },
+    { title: "Line range", args: { path: "notes/todo.md", offset: 2, limit: 2 } },
+  ],
+  fs_list: [
+    { title: "Workspace root", args: {} },
+    { title: "Glob *.md", args: { glob: "**/*.md" } },
+  ],
+  fs_grep: [
+    { title: "Regex with context", args: { pattern: "ship|test", flags: "i", context: 1 } },
+    { title: "Scoped to a folder", args: { pattern: "todo", path: "notes", flags: "i" } },
+  ],
+  fs_patch: [
+    { title: "Dry-run an edit", args: { path: "notes/todo.md", edits: [{ old: "ship tool tabs", new: "shipped tool tabs" }], dry_run: true } },
+    { title: "Apply an edit", args: { path: "notes/todo.md", edits: [{ old: "ship tool tabs", new: "shipped tool tabs" }] } },
+  ],
+  fs_move: [
+    { title: "Rename a file", args: { from: "notes/todo.md", to: "notes/done.md" } },
+    { title: "Move a folder", args: { from: "notes", to: "archive/notes" } },
+  ],
+  fs_delete: [
+    { title: "Delete a file", args: { path: "scratch.txt" } },
+    { title: "Delete a folder", args: { path: "archive", recursive: true } },
+  ],
+  http_request: [
+    { title: "GET text", args: { method: "GET", url: "https://api.github.com/zen" } },
+    { title: "POST JSON", args: { method: "POST", url: "https://httpbin.org/post", json: { hello: "world" } } },
+    { title: "HEAD only", args: { method: "HEAD", url: "https://example.com" } },
+  ],
+  memory_write: [
+    { title: "Store a preference", args: { text: "Prefers brutalist, minimal interfaces", tags: ["prefs"], kind: "preference", importance: 0.8 } },
+    { title: "Store a decision", args: { text: "Lanes rank by credibility-shrunk IQ", tags: ["router"], kind: "decision" } },
+  ],
+  memory_recall: [
+    { title: "Semantic recall", args: { query: "interface preferences", k: 5 } },
+    { title: "Filter by tag & kind", args: { query: "router ranking", tags: ["router"], kind: "decision" } },
+  ],
+  memory_graph: [
+    { title: "Graph stats", args: { op: "stats" } },
+  ],
+  memory_forget: [
+    { title: "Forget by query", args: { query: "brutalist", limit: 1 } },
+    { title: "Forget by tag", args: { tag: "router" } },
+  ],
+  rag_index: [
+    { title: "Index two documents", args: { collection: "docs", docs: [{ id: "hedge", text: "The router hedges requests across endpoints using survival-quantile optimal stopping." }, { id: "iq", text: "Effective IQ is the model-name prior shrunk toward the population mean by earned trust." }] } },
+  ],
+  rag_search: [
+    { title: "Hybrid search", args: { query: "how does hedging work", collection: "docs", k: 3 } },
+    { title: "BM25 only", args: { query: "population mean", collection: "docs", mode: "bm25", k: 2 } },
+  ],
+  rag_collections: [
+    { title: "List collections", args: {} },
+  ],
+  task: [
+    { title: "Add a task", args: { op: "add", title: "Ship tool tabs", priority: 1 } },
+    { title: "List with done", args: { op: "list", include_done: true } },
+  ],
+  text: [
+    { title: "Extract emails", args: { op: "extract", kind: "emails", text: "Mail ada@x.io or bo@y.dev for access." } },
+    { title: "Similarity ranking", args: { op: "similarity", text: "fast inference router", candidates: ["high speed llm gateway", "database migration script", "realtime text router"] } },
+    { title: "Line diff", args: { op: "diff", text: "alpha\nbeta\ngamma", other: "alpha\nBETA\ngamma\ndelta" } },
+    { title: "Regex replace", args: { op: "replace", text: "2026-11-05", pattern: "(\\d+)-(\\d+)-(\\d+)", replacement: "$3/$2/$1" } },
+    { title: "Template", args: { op: "template", text: "Hi {{user.name}}, you have {{count}} alerts", vars: { user: { name: "Ada" }, count: 3 } } },
+    { title: "Corpus stats", args: { op: "stats", text: "The quick brown fox jumps over the lazy dog. The dog sleeps." } },
+  ],
+  time: [
+    { title: "Now in a zone", args: { op: "now", zone: "America/Chicago" } },
+    { title: "Parse ISO", args: { op: "parse", value: "2026-11-05T06:26:00-06:00" } },
+    { title: "Add a duration", args: { op: "add", value: "2026-11-05", duration: "P1DT2H" } },
+    { title: "Difference in days", args: { op: "diff", value: "2026-01-01", other: "2026-11-05", unit: "d" } },
+    { title: "Convert zone", args: { op: "convert", value: "2026-11-05T12:00:00Z", zone: "Asia/Tokyo" } },
+  ],
+  web_fetch: [
+    { title: "Page as markdown", args: { url: "https://example.com", format: "markdown" } },
+    { title: "JSON API", args: { url: "https://api.github.com/repos/denoland/deno", format: "json" } },
+  ],
+  web_search: [
+    { title: "Quick search", args: { query: "deno kv", limit: 3 } },
+    { title: "Wikipedia engine", args: { query: "Kalman filter", engine: "wikipedia", limit: 3 } },
+    { title: "Search + read pages", args: { query: "openai images api", limit: 3, fetch_pages: 1 } },
+  ],
+  router_health: [{ title: "Best tuples", args: { section: "best" } }, { title: "Coverage", args: { section: "coverage" } }],
+  router_catalog: [{ title: "Code lane top 5", args: { mode: "code", limit: 5 } }, { title: "Min IQ filter", args: { mode: "smart", min_iq: 0.7, limit: 5 } }],
+  router_lane: [{ title: "Route a prompt", args: { prompt: "write a quicksort in rust", limit: 5 } }],
+  router_models: [{ title: "Filter models", args: { filter: "qwen", limit: 10 } }],
+  router_endpoints: [{ title: "Endpoints", args: { limit: 10 } }],
+  router_capabilities: [{ title: "File tools", args: { kind: "files" } }],
+  router_trace: [{ title: "Recent traces", args: { limit: 5 } }],
+  forge_tool: [{ title: "Forge word_count", args: { name: "word_count", description: "Counts words and characters in a text.", parameters: { type: "object", properties: { text: { type: "string" } }, required: ["text"] }, code: "const t = String(args.text ?? \"\");\nreturn { words: t.split(/\\s+/).filter(Boolean).length, chars: t.length };" } }],
+  retire_tool: [{ title: "Retire word_count", args: { name: "word_count" } }],
+};
+
+let exIdx = 0, exTool = "";
+const exRuns = new Map(); // "tool#idx" -> last response, shown in the response pane
 function exampleArgs(name) {
+  if (TOOL_EXAMPLE_SETS[name]?.length) return TOOL_EXAMPLE_SETS[name][Math.min(exIdx, TOOL_EXAMPLE_SETS[name].length - 1)].args;
   if (TOOL_EXAMPLES[name]?.request) return TOOL_EXAMPLES[name].request;
   if (TOOL_SEEDS[name]) return TOOL_SEEDS[name];
   const props = toolList.find((t) => t.name === name)?.parameters?.properties ?? {};
@@ -4534,6 +4884,7 @@ function exampleArgs(name) {
   return out;
 }
 
+const CAT_COLOR = { compute: "--blue", data: "--vio", system: "--warn", web: "--ok", memory: "--vio", router: "--acc" };
 function toolCategoryOf(t) {
   const n = t.name, k = t.kind || "";
   if (["calculate", "crypto", "time"].includes(n) || k.includes("compute")) return "compute";
@@ -4587,12 +4938,10 @@ function renderActiveTool(t) {
     s?.repair_rate !== undefined ? `<span class="wb-kpi-chip">repair ${pct(s.repair_rate)}</span>` : "",
   ].filter(Boolean).join("");
 
-  // Examples
-  const ex = TOOL_EXAMPLES[t.name] || { request: exampleArgs(t.name), response: { ok: true } };
-  const exReq = ex.request;
-  const exRes = ex.response;
-  $("#ex-req-code").innerHTML = `<code>${highlightCode(JSON.stringify(exReq, null, 2), "json")}</code>`;
-  $("#ex-res-code").innerHTML = `<code>${highlightCode(JSON.stringify(exRes, null, 2), "json")}</code>`;
+  // A registry reload re-creates tool objects; the selection is keyed by name.
+  if (exTool !== t.name) exIdx = 0;
+  exTool = t.name;
+  renderExamples(t);
 
   // Schema code
   $("#wb-schema-code").innerHTML = `<code>${highlightCode(JSON.stringify(t.parameters ?? {}, null, 2), "json")}</code>`;
@@ -4600,6 +4949,27 @@ function renderActiveTool(t) {
   // Build Dynamic Form Controls
   buildToolFormControls(t);
 }
+
+// The examples card: one chip per curated example; the response pane shows
+// this example's last live run, else the curated expected response.
+function renderExamples(t) {
+  const set = TOOL_EXAMPLE_SETS[t.name] ?? [{ title: TOOL_EXAMPLES[t.name]?.title ?? "Example", args: exampleArgs(t.name) }];
+  exIdx = Math.min(exIdx, set.length - 1);
+  $("#ex-chips").innerHTML = set.map((e, i) => `<button class="ex-chip" role="option" data-ex="${i}" aria-selected="${i === exIdx}">${esc(e.title)}</button>`).join("");
+  $("#ex-req-code").innerHTML = `<code>${highlightCode(JSON.stringify(set[exIdx].args, null, 2), "json")}</code>`;
+  const run = exRuns.get(t.name + "#" + exIdx);
+  const curated = exIdx === 0 ? TOOL_EXAMPLES[t.name]?.response : undefined;
+  $("#ex-res-hint").textContent = run ? "last run" : curated ? "expected" : "";
+  $("#ex-res-code").innerHTML = run || curated ? `<code>${highlightCode(JSON.stringify(run ?? curated, null, 2), "json")}</code>` : `<code class="dim">run it to see the response</code>`;
+}
+function loadExample(i) {
+  if (!activeTool) return;
+  exIdx = i;
+  $("#trargs").value = JSON.stringify(exampleArgs(activeTool.name), null, 2);
+  buildToolFormControls(activeTool);
+  renderExamples(activeTool);
+}
+$("#ex-chips").addEventListener("click", (e) => { const b = e.target.closest("[data-ex]"); if (b) loadExample(Number(b.dataset.ex)); });
 
 function buildToolFormControls(t) {
   const container = $("#tool-form-controls");
@@ -4632,7 +5002,12 @@ function buildToolFormControls(t) {
   propKeys.forEach((k) => {
     const p = props[k];
     const isReq = required.has(k);
-    const type = Array.isArray(p.type) ? p.type[0] : (p.type || "string");
+    // Untyped or union types that admit structure, holding a non-string value,
+    // edit as JSON so the value survives the round trip unchanged.
+    const types = Array.isArray(p.type) ? p.type : p.type ? [p.type] : [];
+    const structural = !types.length || types.some((x) => x === "object" || x === "array");
+    const type = structural && curVals[k] !== undefined && typeof curVals[k] !== "string" && !types.includes("number") && !types.includes("integer") && !types.includes("boolean")
+      ? "json" : (types[0] || "string");
     const group = document.createElement("div");
     group.className = "tool-form-group";
 
@@ -4649,11 +5024,19 @@ function buildToolFormControls(t) {
     }
 
     let inputEl;
-    const curVal = curVals[k] !== undefined ? curVals[k] : (p.default !== undefined ? p.default : "");
+    // Only fields present in the arguments (or required) are emitted; the
+    // schema default is a placeholder, not a value the form invents.
+    const present = curVals[k] !== undefined;
+    const curVal = present ? curVals[k] : "";
 
     if (p.enum && Array.isArray(p.enum)) {
       inputEl = document.createElement("select");
       inputEl.className = "tool-form-in";
+      if (!isReq) {
+        const none = document.createElement("option");
+        none.value = ""; none.textContent = p.default !== undefined ? `— default: ${p.default}` : "— unset";
+        inputEl.appendChild(none);
+      }
       p.enum.forEach((opt) => {
         const o = document.createElement("option");
         o.value = opt; o.textContent = opt;
@@ -4665,7 +5048,7 @@ function buildToolFormControls(t) {
       row.className = "row";
       inputEl = document.createElement("input");
       inputEl.type = "checkbox";
-      inputEl.checked = Boolean(curVal);
+      inputEl.checked = present ? Boolean(curVal) : Boolean(p.default);
       const span = document.createElement("span");
       span.textContent = "Enable";
       span.className = "mid";
@@ -4676,12 +5059,13 @@ function buildToolFormControls(t) {
       inputEl = document.createElement("input");
       inputEl.type = "number";
       inputEl.className = "tool-form-in";
-      inputEl.value = curVal !== undefined ? curVal : 0;
+      inputEl.value = present ? curVal : "";
+      if (p.default !== undefined) inputEl.placeholder = `default ${p.default}`;
       if (p.minimum !== undefined) inputEl.min = p.minimum;
       if (p.maximum !== undefined) inputEl.max = p.maximum;
       if (type === "number") inputEl.step = "any";
     } else if (type === "string") {
-      const isMulti = (p.description && /expression|content|script|body|code/i.test(p.description)) || k === "content" || k === "expression" || k === "query";
+      const isMulti = (typeof curVal === "string" && curVal.includes("\n")) || /^(text|other|content|body|code|expression|query|prompt|template|patch|notes|replacement)$/.test(k) || (p.description && /expression|content|script|body|code/i.test(p.description));
       if (isMulti) {
         inputEl = document.createElement("textarea");
         inputEl.rows = 3;
@@ -4695,13 +5079,15 @@ function buildToolFormControls(t) {
         inputEl.value = typeof curVal === "string" ? curVal : (curVal !== undefined ? String(curVal) : "");
       }
     } else {
-      // array or object
+      // array, object, or a structural union (JSON)
       inputEl = document.createElement("textarea");
       inputEl.rows = 3;
       inputEl.className = "tool-form-in";
       inputEl.style.fontFamily = "var(--mono)";
-      inputEl.value = typeof curVal === "object" ? JSON.stringify(curVal, null, 2) : String(curVal ?? "");
+      inputEl.value = present ? (typeof curVal === "string" ? curVal : JSON.stringify(curVal, null, 2)) : "";
+      inputEl.placeholder = type === "array" ? "[ … ]  (JSON)" : type === "object" ? "{ … }  (JSON)" : "JSON value";
     }
+    if (inputEl && (present || isReq)) inputEl.dataset.set = "1";
 
     if (inputEl && inputEl.type !== "checkbox") group.appendChild(inputEl);
 
@@ -4724,8 +5110,9 @@ function buildToolFormControls(t) {
         inputEl.dataset.notchLabel = `${t.name} — ${k}`;
         inputEl.dataset.notchContext = `Argument "${k}" of the router tool "${t.name}" — ${t.description || "a router tool"}. Type: ${type}${isReq ? " (required)" : " (optional)"}.${p.description ? " " + p.description : ""}${Array.isArray(p.enum) ? " Must be one of: " + p.enum.join(", ") + "." : ""} This control and the Arguments JSON view stay in sync — applying an AI answer here updates both, and the workbench validates the call against the tool schema when it runs.`;
       }
-      inputEl.addEventListener("input", syncToArgs);
-      inputEl.addEventListener("change", syncToArgs);
+      const touch = () => { inputEl.dataset.set = "1"; syncToArgs(); };
+      inputEl.addEventListener("input", touch);
+      inputEl.addEventListener("change", touch);
     }
 
     container.appendChild(group);
@@ -4741,22 +5128,27 @@ function syncToArgsFromForm(t) {
   $("#trargs").value = JSON.stringify(obj, null, 2);
 }
 
+// Emits exactly the fields that carry a value: set by the arguments, required,
+// or touched. Clearing an optional field removes it; required fields are
+// always sent so the server reports what is missing.
 function collectFormValues(t) {
   const container = $("#tool-form-controls");
-  const props = t.parameters?.properties ?? {};
+  const required = new Set(t.parameters?.required ?? []);
   const obj = {};
   for (const el of container.querySelectorAll("[data-field]")) {
     const k = el.dataset.field;
     const type = el.dataset.type;
-    if (el.type === "checkbox") {
-      obj[k] = el.checked;
-    } else if (type === "number" || type === "integer") {
-      const n = Number(el.value);
-      obj[k] = Number.isFinite(n) ? n : 0;
-    } else if (type === "object" || type === "array") {
-      try { obj[k] = JSON.parse(el.value); } catch { obj[k] = el.value; }
+    if (!el.dataset.set) continue;
+    if (el.type === "checkbox") { obj[k] = el.checked; continue; }
+    const raw = el.value;
+    if (raw === "" && !required.has(k)) continue;
+    if (type === "number" || type === "integer") {
+      const n = Number(raw);
+      obj[k] = raw !== "" && Number.isFinite(n) ? n : raw;
+    } else if (type === "object" || type === "array" || type === "json") {
+      try { obj[k] = JSON.parse(raw); } catch { obj[k] = raw; }
     } else {
-      obj[k] = el.value;
+      obj[k] = raw;
     }
   }
   return obj;
@@ -4789,6 +5181,7 @@ function renderTools() {
     + `<div class="kpi"><b class="${toolEnabled ? "ok" : "no"}">${toolEnabled ? "on" : "off"}</b><span>${esc(toolPlane)}</span></div>`
     + `<div class="kpi"><b>${esc(toolAgent.auto_tools?.length ?? 0)}</b><span>auto tools</span></div>`;
   $("#tstat").textContent = `${rows.length}/${toolList.length} tools \u00b7 wire ${toolWire.flavor} \u00b7 ${toolEnabled ? "agent loop on" : "plane disabled"}`;
+  if (ttabCur === "dashboard") renderToolDashboard();
 
   // Render Left Tool Items List
   const listEl = $("#tool-list-items");
@@ -4798,7 +5191,7 @@ function renderTools() {
       const comp = s?.competence;
       const compClass = comp >= 0.8 ? "good" : comp < 0.5 ? "bad" : "mid";
       const isSel = activeTool && activeTool.name === x.name;
-      return `<div class="tool-item-card ${isSel ? "active" : ""}" data-tool="${esc(x.name)}">
+      return `<div class="tool-item-card ${isSel ? "active" : ""}" data-tool="${esc(x.name)}" style="--cat:var(${CAT_COLOR[toolCategoryOf(x)] ?? "--line"})">
         <div class="tool-item-header">
           <span class="tool-item-name">${esc(x.name)}</span>
           <div class="tool-item-badges">
@@ -4840,7 +5233,9 @@ function renderTools() {
   }
 }
 
+let lastToolRun = null;
 async function runToolCall() {
+  lastToolRun = null;
   const name = $("#trname").value.trim() || activeTool?.name;
   if (!name) { toast("name a tool first", true); return; }
   const raw = $("#trargs").value.trim();
@@ -4862,7 +5257,8 @@ async function runToolCall() {
     
     const out = $("#trout");
     out.hidden = false;
-    const formatted = JSON.stringify(r.ok ? r.result : { error: r.error, code: r.code, issues: r.issues ?? [] }, null, 2);
+    lastToolRun = r.ok ? r.result : { error: r.error, code: r.code, issues: r.issues ?? [] };
+    const formatted = JSON.stringify(lastToolRun, null, 2);
     out.innerHTML = `<code>${highlightCode(formatted.slice(0, 40000), "json")}</code>`;
     loadTools();
   } catch (e) {
@@ -4908,20 +5304,12 @@ $("#btn-mode-raw")?.addEventListener("click", () => {
   $("#tool-raw-view").hidden = false;
 });
 
-$("#wb-btn-example")?.addEventListener("click", () => {
+$("#wb-btn-example")?.addEventListener("click", () => loadExample(exIdx));
+$("#btn-run-example")?.addEventListener("click", async () => {
   if (!activeTool) return;
-  const ex = TOOL_EXAMPLES[activeTool.name]?.request ?? exampleArgs(activeTool.name);
-  $("#trargs").value = JSON.stringify(ex, null, 2);
-  buildToolFormControls(activeTool);
-  toast(`Loaded example for ${activeTool.name}`);
-});
-
-$("#btn-run-example")?.addEventListener("click", () => {
-  if (!activeTool) return;
-  const ex = TOOL_EXAMPLES[activeTool.name]?.request ?? exampleArgs(activeTool.name);
-  $("#trargs").value = JSON.stringify(ex, null, 2);
-  buildToolFormControls(activeTool);
-  runToolCall();
+  loadExample(exIdx);
+  await runToolCall();
+  if (lastToolRun) { exRuns.set(activeTool.name + "#" + exIdx, lastToolRun); renderExamples(activeTool); }
 });
 
 $("#wb-btn-reset")?.addEventListener("click", () => {
@@ -4971,7 +5359,56 @@ $("#ttb").onclick = (ev) => {
     if (tool) { renderActiveTool(tool); $("#tool-workbench")?.scrollIntoView({ block: "nearest" }); }
   }
 };
-enter.tools = () => { if (!toolList.length) loadTools(); else renderTools(); };
+// ---- tabs ----
+let ttabCur = store.get("tools.tab", "tools");
+function showToolsTab(name) {
+  ttabCur = name;
+  store.set("tools.tab", name);
+  for (const b of $$("#v-tools [data-ttab]")) b.setAttribute("aria-selected", String(b.dataset.ttab === name));
+  for (const p of $$("#v-tools [data-tpage]")) p.hidden = p.dataset.tpage !== name;
+  if (name === "dashboard") renderToolDashboard();
+}
+$("#v-tools .ttabs").addEventListener("click", (e) => { const b = e.target.closest("[data-ttab]"); if (b) showToolsTab(b.dataset.ttab); });
+
+// ---- dashboard: statistics from the plane's learned skill memory ----
+function renderToolDashboard() {
+  const box = $("#tdash");
+  if (!box) return;
+  const rows = toolList.map((t) => ({ t, s: toolSkills[t.name], cat: toolCategoryOf(t) }));
+  const used = rows.filter((r) => r.s?.calls);
+  const calls = used.reduce((a, r) => a + r.s.calls, 0);
+  const errs = used.reduce((a, r) => a + r.s.errors, 0);
+  const comp = calls ? used.reduce((a, r) => a + r.s.competence * r.s.calls, 0) / calls : 0;
+  const bars = (title, list, val, fmt, color) => {
+    const max = Math.max(1e-9, ...list.map(val));
+    return `<div class="td-card"><h4>${title}</h4>${list.length ? list.map((r) => `<div class="td-bar"><span class="td-n">${esc(r.t?.name ?? r.name)}</span><span class="td-track"><i style="width:${(val(r) / max * 100).toFixed(1)}%;background:var(${typeof color === "function" ? color(r) : color})"></i></span><span class="td-v">${fmt(r)}</span></div>`).join("") : `<div class="dim">no data yet</div>`}</div>`;
+  };
+  const byCat = Object.entries(rows.reduce((m, r) => { m[r.cat] = (m[r.cat] ?? 0) + (r.s?.calls ?? 0); return m; }, {})).map(([name, n]) => ({ name, n })).sort((a, b) => b.n - a.n);
+  const errAgg = {};
+  for (const r of used) for (const e of r.s.top_errors ?? []) errAgg[e.code] = (errAgg[e.code] ?? 0) + e.count;
+  const errList = Object.entries(errAgg).map(([name, n]) => ({ name, n })).sort((a, b) => b.n - a.n);
+  const top = [...used].sort((a, b) => b.s.calls - a.s.calls).slice(0, 10);
+  const failing = used.filter((r) => r.s.success_rate < 0.9).sort((a, b) => a.s.success_rate - b.s.success_rate).slice(0, 10);
+  const slow = [...used].sort((a, b) => (b.s.p95_ms ?? 0) - (a.s.p95_ms ?? 0)).slice(0, 10);
+  const untested = rows.filter((r) => !r.s?.calls).map((r) => r.t.name);
+  box.innerHTML = `<div class="td-sum"><span><b>${calls}</b> calls</span><span><b class="${errs / Math.max(1, calls) > 0.1 ? "no" : "ok"}">${(errs / Math.max(1, calls) * 100).toFixed(1)}%</b> error rate</span><span><b>${(comp * 100).toFixed(1)}%</b> call-weighted competence</span><span><b>${used.length}/${rows.length}</b> tools exercised</span></div>
+    <div class="td-grid">
+      ${bars("Most used", top, (r) => r.s.calls, (r) => r.s.calls, (r) => CAT_COLOR[r.cat])}
+      ${bars("Competence", top, (r) => r.s.competence, (r) => pct(r.s.competence), (r) => r.s.competence >= 0.8 ? "--ok" : r.s.competence < 0.5 ? "--bad" : "--warn")}
+      ${bars("Slowest (p95)", slow, (r) => r.s.p95_ms ?? 0, (r) => ms(r.s.p95_ms ?? 0), "--blue")}
+      ${bars("Lowest success", failing, (r) => 1 - r.s.success_rate, (r) => pct(r.s.success_rate) + (r.s.last_error ? " · " + r.s.last_error.slice(0, 40) : ""), "--bad")}
+      ${bars("Calls by category", byCat, (r) => r.n, (r) => r.n, (r) => CAT_COLOR[r.name] ?? "--mid")}
+      ${bars("Error codes", errList, (r) => r.n, (r) => r.n, "--bad")}
+    </div>
+    <div class="td-card"><h4>Not exercised yet (${untested.length})</h4><div class="td-tags">${untested.map((n) => `<button class="ex-chip" data-goto-tool="${esc(n)}">${esc(n)}</button>`).join("") || '<span class="dim">every tool has been called</span>'}</div></div>`;
+}
+$("#tdash")?.addEventListener("click", (e) => {
+  const b = e.target.closest("[data-goto-tool]");
+  if (!b) return;
+  const t = toolList.find((x) => x.name === b.dataset.gotoTool);
+  if (t) { showToolsTab("tools"); renderActiveTool(t); renderTools(); }
+});
+enter.tools = () => { showToolsTab(ttabCur); if (!toolList.length) loadTools(); else renderTools(); };
 
 // =====================================================================
 // CHAT TOOLS INTEGRATION & DRAWER
@@ -5066,8 +5503,6 @@ const appBuilderDrawer = $("#app-builder-drawer");
 function openAppBuilder() {
   renderAppBuilderLists();
   openSheet(appBuilderDrawer);
-  wsRefresh(true);
-  wsWatch(true);
 }
 
 function getSavedTechniques() {
@@ -5910,9 +6345,114 @@ $("#comm-thread")?.addEventListener("click", (e) => {
   }
 });
 
-enter.community = () => {
-  initCommunityChat();
-};
+// ---- community tabs: dashboard · posts · chat ----
+const commVoter = (() => { let v = store.get("comm_voter", ""); if (!v) { v = crypto.randomUUID(); store.set("comm_voter", v); } return v; })();
+let cmTab = store.get("community.tab", "posts"), cmSort = "hot", cmOpen = null, commChatStarted = false;
+const ago = (iso) => { const s = (Date.now() - Date.parse(iso)) / 1000; return s < 60 ? "just now" : s < 3600 ? Math.floor(s / 60) + "m ago" : s < 86400 ? Math.floor(s / 3600) + "h ago" : Math.floor(s / 86400) + "d ago"; };
+function showCommTab(name) {
+  cmTab = name;
+  store.set("community.tab", name);
+  for (const b of $$("#v-community [data-ctab]")) b.setAttribute("aria-selected", String(b.dataset.ctab === name));
+  for (const p of $$("#v-community [data-cpage]")) p.hidden = p.dataset.cpage !== name;
+  if (name === "chat" && !commChatStarted) { commChatStarted = true; initCommunityChat(); }
+  if (name === "posts") cmOpen ? openPost(cmOpen) : loadPosts();
+  if (name === "dashboard") loadCommStats();
+}
+$("#v-community .cm-tabs").addEventListener("click", (e) => { const b = e.target.closest("[data-ctab]"); if (b) showCommTab(b.dataset.ctab); });
+function voteBox(p) {
+  const cls = p.score > 0 ? "pos" : p.score < 0 ? "neg" : "";
+  return `<div class="cm-vote" data-post="${esc(p.id)}"><button data-v="1" aria-pressed="${p.myVote === 1}" aria-label="Upvote">▲</button><b class="${cls}">${p.score}</b><button data-v="-1" aria-pressed="${p.myVote === -1}" aria-label="Downvote">▼</button></div>`;
+}
+async function loadPosts() {
+  $("#cm-detail").hidden = true;
+  $("#cm-list").hidden = false;
+  $(".cm-bar").hidden = false;
+  try {
+    const j = await req(`/v1/community/posts?sort=${cmSort}&voter=${encodeURIComponent(commVoter)}`);
+    const posts = j.posts ?? [];
+    $("#cm-stat").textContent = `${posts.length} posts`;
+    $("#cm-list").innerHTML = posts.length ? posts.map((p) => `<article class="cm-post">${voteBox(p)}<div><button class="cm-title" data-open="${esc(p.id)}">${esc(p.title)}</button>
+      <div class="cm-meta"><b>${esc(p.user)}</b> · ${ago(p.createdAt)} · ${p.comments} comment${p.comments === 1 ? "" : "s"}</div>${p.body ? `<div class="cm-prev">${esc(p.body.slice(0, 300))}</div>` : ""}</div></article>`).join("")
+      : `<div class="cm-empty">no posts yet — start the first thread</div>`;
+  } catch (e) { $("#cm-list").innerHTML = `<div class="cm-empty no">${esc(e.message)}</div>`; }
+}
+async function openPost(id) {
+  cmOpen = id;
+  const box = $("#cm-detail");
+  $("#cm-list").hidden = true;
+  $(".cm-bar").hidden = true;
+  $("#cm-compose").hidden = true;
+  box.hidden = false;
+  try {
+    const j = await req(`/v1/community/posts/${encodeURIComponent(id)}?voter=${encodeURIComponent(commVoter)}`);
+    const p = j.post;
+    box.innerHTML = `<button class="cm-back" data-back>← all posts</button><article class="cm-post" style="border-top:1px solid var(--line)">${voteBox(p)}<div><div class="cm-title" style="cursor:default">${esc(p.title)}</div>
+      <div class="cm-meta"><b>${esc(p.user)}</b> · ${ago(p.createdAt)} · ${p.comments} comment${p.comments === 1 ? "" : "s"}</div><div class="cm-body md"></div></div></article>
+      <div class="cm-cmts">${(j.comments ?? []).map((c) => `<div class="cm-cmt"><div class="cm-meta"><b>${esc(c.user)}</b> · ${ago(c.createdAt)}</div><div class="md" data-c="${esc(c.id)}"></div></div>`).join("") || `<div class="cm-meta" style="padding:10px 0">no comments yet</div>`}</div>
+      <form class="cm-cbox" data-comment="${esc(p.id)}"><textarea rows="3" maxlength="5000" placeholder="comment as ${esc(getCommUser())}" aria-label="Comment"></textarea><div><button class="btn" type="submit">comment</button></div></form>`;
+    renderMd($(".cm-body", box), p.body || "", true);
+    for (const c of j.comments ?? []) renderMd($(`[data-c="${CSS.escape(c.id)}"]`, box), c.body, true);
+  } catch (e) { box.innerHTML = `<button class="cm-back" data-back>← all posts</button><div class="cm-empty no">${esc(e.message)}</div>`; }
+}
+$("#cm-detail").addEventListener("click", (e) => { if (e.target.closest("[data-back]")) { cmOpen = null; loadPosts(); } });
+$("#cm-list").addEventListener("click", (e) => { const t = e.target.closest("[data-open]"); if (t) openPost(t.dataset.open); });
+// Votes apply optimistically and reconcile with the server's count.
+$("#v-community").addEventListener("click", async (e) => {
+  const b = e.target.closest(".cm-vote button");
+  if (!b) return;
+  const box = b.closest(".cm-vote"), id = box.dataset.post, want = Number(b.dataset.v);
+  const value = b.getAttribute("aria-pressed") === "true" ? 0 : want;
+  try {
+    const j = await req(`/v1/community/posts/${encodeURIComponent(id)}/vote`, { method: "POST", body: { voter: commVoter, value } });
+    box.outerHTML = voteBox(j.post);
+  } catch (err) { toast("vote failed: " + err.message, true); }
+});
+$("#v-community").addEventListener("submit", async (e) => {
+  const f = e.target.closest("[data-comment]");
+  if (!f) return;
+  e.preventDefault();
+  const ta = $("textarea", f), text = ta.value.trim();
+  if (!text) return;
+  try {
+    await req(`/v1/community/posts/${encodeURIComponent(f.dataset.comment)}/comments`, { method: "POST", body: { user: getCommUser(), body: text } });
+    openPost(f.dataset.comment);
+  } catch (err) { toast("comment failed: " + err.message, true); }
+});
+$(".cm-sort").addEventListener("click", (e) => {
+  const b = e.target.closest("[data-sort]");
+  if (!b) return;
+  cmSort = b.dataset.sort;
+  for (const x of $$(".cm-sort [data-sort]")) x.setAttribute("aria-checked", String(x === b));
+  loadPosts();
+});
+$("#cm-new").addEventListener("click", () => { const f = $("#cm-compose"); f.hidden = !f.hidden; $("#cm-as").textContent = getCommUser(); if (!f.hidden) $("#cm-title").focus(); });
+$("#cm-cancel").addEventListener("click", () => { $("#cm-compose").hidden = true; });
+$("#cm-compose").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const title = $("#cm-title").value.trim();
+  if (!title) return;
+  try {
+    const j = await req("/v1/community/posts", { method: "POST", body: { user: getCommUser(), title, body: $("#cm-body").value } });
+    $("#cm-title").value = ""; $("#cm-body").value = ""; $("#cm-compose").hidden = true;
+    openPost(j.post.id);
+  } catch (err) { toast("post failed: " + err.message, true); }
+});
+async function loadCommStats() {
+  const box = $("#cm-dash");
+  try {
+    const j = await req("/v1/community/stats");
+    const rows = (list, cols) => list.length ? `<table><tbody>${list.map((r) => `<tr>${cols(r)}</tr>`).join("")}</tbody></table>` : `<div class="dim">nothing yet</div>`;
+    box.innerHTML = `<div class="cm-kpis">${[["members", j.members], ["active · 24h", j.active_24h], ["posts", j.posts], ["comments", j.comments], ["votes", j.votes], ["chat messages", j.messages]].map(([k, v]) => `<span><b>${v}</b>${k}</span>`).join("")}</div>
+      <div class="cm-grid">
+        <div class="td-card"><h4>Top posts</h4>${rows(j.top_posts, (p) => `<td class="l"><button class="cm-title" style="font-size:13px" data-goto-post="${esc(p.id)}">${esc(p.title)}</button><div class="cm-meta">${esc(p.user)} · ${p.comments} comments</div></td><td>${p.score}</td>`)}</div>
+        <div class="td-card"><h4>Most active</h4>${rows(j.top_people, (p) => `<td class="l">${esc(p.user)}</td><td>${p.posts} posts</td><td>${p.comments} comments</td><td>${p.messages} msgs</td>`)}</div>
+        <div class="td-card"><h4>Chat rooms</h4>${rows(Object.entries(j.rooms).map(([room, n]) => ({ room, n })), (r) => `<td class="l">#${esc(r.room)}</td><td>${r.n} messages</td>`)}</div>
+      </div>`;
+    $("#cm-stat").textContent = `${j.members} members`;
+  } catch (e) { box.innerHTML = `<div class="cm-empty no">${esc(e.message)}</div>`; }
+}
+$("#cm-dash").addEventListener("click", (e) => { const b = e.target.closest("[data-goto-post]"); if (b) { showCommTab("posts"); openPost(b.dataset.gotoPost); } });
+enter.community = () => showCommTab(cmTab);
 
 // =====================================================================
 // TRACES — live tail + span waterfall
@@ -5944,8 +6484,64 @@ function renderTraces() {
   }
   $("#tlist").innerHTML = rows.join("");
   $("#tcount").textContent = `${rows.length}/${traces.size}`;
-  if (tsel) renderWaterfall(tsel);
+  if (tsel) renderTraceDetail();
 }
+// ---- detail pane: request / response / spans, highlighted JSON ----
+let ttab = "request", tspan = null;
+function traceIo(id) {
+  const t = traces.get(id);
+  for (const sp of t?.values() ?? []) if (sp.io) return sp.io;
+  return null;
+}
+let tdetailKey = "";
+function renderTraceDetail(force = false) {
+  const out = $("#trx-out"), t = traces.get(tsel);
+  const rr = t && rootOf(t), io = t && traceIo(tsel);
+  const key = [tsel, ttab, tspan, t?.size, rr?.end, io?.request?.length, io?.response?.length, ttab === "spans" ? [...(t?.values() ?? [])].map((x) => x.end ?? 0).join() : ""].join("|");
+  if (!force && key === tdetailKey) return;
+  tdetailKey = key;
+  for (const b of $$(".trx-tabs [data-tt]")) b.setAttribute("aria-selected", String(b.dataset.tt === ttab));
+  if (!t) { out.innerHTML = `<div class="dim trx-empty">select a trace above</div>`; $("#trx-meta").textContent = ""; return; }
+  const r = rootOf(t);
+  $("#trx-meta").textContent = `${tsel.slice(0, 12)}… · ${r ? ms((r.end ?? Date.now()) - r.start) : ""} · ${t.size} spans`;
+  const json = (text) => `<pre><code>${highlightCode(text, "json")}</code></pre>`;
+  if (ttab === "spans") {
+    out.innerHTML = `<div class="wf" id="wf"></div>${tspan && t.get(tspan) ? json(JSON.stringify(t.get(tspan), null, 2)) : `<div class="dim trx-empty">select a span for its attributes and events</div>`}`;
+    renderWaterfall(tsel);
+    return;
+  }
+  const body = io?.[ttab];
+  out.innerHTML = body ? json(body)
+    : `<div class="dim trx-empty">${io ? `no ${ttab} recorded yet${r?.end === null ? " — still running" : ""}` : "this trace carries no bodies (recorded for chat completions, image generations and tool executions); see spans"}</div>`;
+}
+$(".trx-tabs").addEventListener("click", (e) => { const b = e.target.closest("[data-tt]"); if (b) { ttab = b.dataset.tt; renderTraceDetail(true); } });
+function selectTrace(id) {
+  tsel = id; tspan = null;
+  renderTraces();
+  $(`#tlist [data-id="${CSS.escape(id)}"]`)?.scrollIntoView({ block: "nearest" });
+  // The live tail and the list carry spans; bodies arrive with the full trace.
+  if (!traceIo(id)) req("/v1/traces/" + id, { admin: true }).then((full) => { for (const sp of full.spans ?? []) upsert(id, sp); renderTraces(); }).catch(() => {});
+}
+$("#tlist").addEventListener("keydown", (e) => {
+  if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
+  e.preventDefault();
+  const ids = $$("#tlist [data-id]").map((n) => n.dataset.id);
+  if (!ids.length) return;
+  const i = ids.indexOf(tsel);
+  selectTrace(ids[Math.max(0, Math.min(ids.length - 1, i < 0 ? 0 : i + (e.key === "ArrowDown" ? 1 : -1)))]);
+});
+const trxPref = { top: store.get("traces.top", 0.42) };
+const trxLayout = () => $("#trx").style.setProperty("--trx-top", (trxPref.top * 100).toFixed(2) + "%");
+trxLayout();
+splitter($("#trx-split"), {
+  axis: "y",
+  get: () => $("#tlist").getBoundingClientRect().height,
+  set: (px) => { trxPref.top = px / Math.max(1, $("#trx").clientHeight - 60); },
+  min: () => 60, max: () => Math.max(60, $("#trx").clientHeight - 140),
+  reset: () => { trxPref.top = 0.42; },
+  layout: trxLayout,
+  save: () => store.set("traces.top", trxPref.top),
+});
 function renderWaterfall(id) {
   const t = traces.get(id); if (!t) return;
   const spans = [...t.values()], root = rootOf(t);
@@ -5997,8 +6593,8 @@ $("#tlive").onclick = toggleLive;
 $("#tload").onclick = loadTraces;
 $("#trfilter").oninput = renderTraces;
 $("#terr").onchange = renderTraces;
-$("#tlist").onclick = (ev) => { const it = ev.target.closest("[data-id]"); if (it) { tsel = it.dataset.id; $("#tattrs").hidden = true; renderTraces(); } };
-$("#wf").onclick = (ev) => { const r = ev.target.closest("[data-sid]"); if (!r) return; const pre = $("#tattrs"); pre.hidden = false; pre.textContent = JSON.stringify(traces.get(tsel)?.get(r.dataset.sid), null, 2); };
+$("#tlist").onclick = (ev) => { const it = ev.target.closest("[data-id]"); if (it) selectTrace(it.dataset.id); };
+$("#trx-out").addEventListener("click", (ev) => { const r = ev.target.closest("[data-sid]"); if (!r) return; tspan = r.dataset.sid; renderTraceDetail(); });
 enter.traces = () => { renderTraces(); if (!traces.size && creds().admin) loadTraces(); };
 cmd("toggle live traces", () => { go("traces"); toggleLive(); });
 
@@ -6032,34 +6628,52 @@ async function loadSource() {
     renderSource();
   } catch (e) { toast(e.message, true); }
 }
+// One query, two scopes: "this file" filters the open file's lines (an empty
+// query shows the whole file), "all files" lists matches across every file;
+// a result opens its file filtered to the same query.
+let srcFilter = "";
 function renderSource() {
-  const q = $("#sgrep").value.toLowerCase();
-  $("#sout").innerHTML = srcLines.map((l, i) => (!q || l.toLowerCase().includes(q)) ? `<span style="counter-set:l ${i}">${esc(l) || " "}</span>` : "").join("");
+  const q = srcFilter.toLowerCase();
+  let hits = 0;
+  $("#sout").innerHTML = srcLines.map((l, i) => {
+    if (q && !l.toLowerCase().includes(q)) return "";
+    hits++;
+    const body = q ? esc(l).replace(new RegExp(esc(srcFilter).replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "gi"), (m) => `<mark>${m}</mark>`) : esc(l);
+    return `<span style="counter-set:l ${i}">${body || " "}</span>`;
+  }).join("");
+  if (q) $("#smeta").textContent = `${hits} of ${srcLines.length} lines match`;
 }
-$("#sload").onclick = loadSource;
-$("#sfile").onchange = loadSource;
-$("#sgrep").oninput = renderSource;
+function searchThisFile() {
+  srcFilter = $("#sq").value.trim();
+  $("#sallout").hidden = true;
+  if (!srcLines.length) loadSource(); else renderSource();
+}
+$("#sfile").onchange = () => { srcFilter = ""; loadSource(); };
+$("#sin").onclick = searchThisFile;
+$("#sq").addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); e.shiftKey ? searchAllFiles() : searchThisFile(); } });
 
 // Search across ALL source files at once; a click jumps to the match by
 // loading that file with the line filter set to the same query.
-let sallTimer = 0;
 async function searchAllFiles() {
-  const q = $("#sall").value.trim();
+  const q = $("#sq").value.trim();
   const out = $("#sallout");
-  if (q.length < 2) { out.innerHTML = ""; $("#sallstat").textContent = ""; return; }
-  $("#sallstat").textContent = "searching…";
+  if (q.length < 2) { toast("type at least 2 characters", true); return; }
+  out.hidden = false;
+  out.innerHTML = `<div class="dim">searching…</div>`;
   try {
     const j = await req("/v1/source/search?q=" + encodeURIComponent(q), { admin: true });
-    $("#sallstat").textContent = `${j.count} match${j.count === 1 ? "" : "es"}${j.truncated ? " (capped at 200)" : ""} across all files`;
-    out.innerHTML = (j.results ?? []).map((r) => `<button class="btn q" data-sall-file="${esc(r.file)}" style="justify-content:flex-start;font-size:11.5px;text-align:left"><span style="font-family:var(--mono);flex-shrink:0">${esc(r.file)}:${r.line}</span><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(r.text)}</span></button>`).join("");
-  } catch (e) { $("#sallstat").textContent = "search failed: " + e.message; out.innerHTML = ""; }
+    const rows = j.results ?? [];
+    out.innerHTML = `<div class="dim sall-h">${j.count} match${j.count === 1 ? "" : "es"}${j.truncated ? " (capped at 200)" : ""} across all files</div>` +
+      rows.map((r) => `<button class="sall-r" data-sall-file="${esc(r.file)}"><b>${esc(r.file)}:${r.line}</b><span>${esc(r.text)}</span></button>`).join("");
+  } catch (e) { out.innerHTML = `<div class="no">search failed: ${esc(e.message)}</div>`; }
 }
-$("#sall").addEventListener("input", () => { clearTimeout(sallTimer); sallTimer = setTimeout(searchAllFiles, 250); });
+$("#sall").onclick = searchAllFiles;
+enter.source = () => { if (!srcLines.length) loadSource(); };
 $("#sallout").addEventListener("click", (e) => {
   const b = e.target.closest("[data-sall-file]");
   if (!b) return;
   $("#sfile").value = b.dataset.sallFile;
-  $("#sgrep").value = $("#sall").value.trim();
+  srcFilter = $("#sq").value.trim();
   loadSource();
 });
 
@@ -6112,7 +6726,7 @@ req = (...args) => {
 // ---- view metadata (mobile sheet) ----
 const VIEW_META = [
   ["chat", "Chat", "Stream completions", "#i-chat"],
-  ["community", "People Chat", "Real-time peer chat", "#i-users"],
+  ["community", "Community", "Posts, votes and chat", "#i-users"],
   ["architect", "Architect", "Agentic admin tools", "#i-wand"],
   ["media", "Media", "Image generation", "#i-image"],
   ["plugins", "Plugins", "Mounted widgets", "#i-plug"],
@@ -6475,8 +7089,8 @@ async function wsExec(name, args) {
 
 // ---- file & folder tree -----------------------------------------------------
 // The workspace is a project, not a bag of paths: render it as a tree
-// (folders as collapsible <details>, files as open buttons) in both the
-// Workspace drawer and the App Builder's Project Files section.
+// (folders as collapsible <details>, files as open buttons) in the
+// Workspace drawer.
 function buildFileTree(files) {
   const root = { dirs: new Map(), files: [] };
   for (const file of files) {
@@ -6499,7 +7113,8 @@ function fileTreeHTML(node) {
 }
 function renderFileTrees() {
   const html = wsFiles.length ? fileTreeHTML(buildFileTree(wsFiles)) : `<div class="dim" style="font-size:12px">No files yet — ask the chat to build something (the agent writes here with its fs tools), create a file below, pull from GitHub, or import.</div>`;
-  for (const sel of ["#ws-files", "#builder-files"]) { const box = $(sel); if (box) box.innerHTML = html; }
+  const box = $("#ws-files");
+  if (box) box.innerHTML = html;
 }
 function renderWsFiles() { renderFileTrees(); }
 
@@ -6513,7 +7128,8 @@ function noteWsActivity(kind, path) {
   wsActivity.unshift({ kind, path, t: Date.now() });
   if (wsActivity.length > 12) wsActivity.length = 12;
   const html = wsActivity.map((a) => `<div class="ws-act">${a.kind === "created" ? "✚ created" : a.kind === "updated" ? "✎ updated" : "✖ deleted"} ${esc(a.path)} <span class="dim">${new Date(a.t).toLocaleTimeString()}</span></div>`).join("");
-  for (const sel of ["#ws-activity", "#builder-activity"]) { const box = $(sel); if (box) box.innerHTML = html; }
+  const box = $("#ws-activity");
+  if (box) box.innerHTML = html;
 }
 function diffWsFiles(next) {
   if (!wsPrev) { wsPrev = new Map(next.map((f) => [f.path, f.bytes + ":" + (f.mtime || "")])); return; }
@@ -7130,7 +7746,6 @@ function wspShow(on) {
   wsp.open = on;
   $("#v-chat").classList.toggle("wsp-on", on);
   $("#wsp").hidden = $("#wsp-split").hidden = !on;
-  $("#cworkspace-btn")?.setAttribute("aria-pressed", String(on));
   wspSave();
   if (!on) { wsWatch(false); $("#wsp-frame").srcdoc = ""; return; }
   wspLayout();
@@ -7169,14 +7784,14 @@ function dragShield(axis, move, done, handle, pointerId) {
 }
 // One splitter primitive: pointer drag (shielded), arrows
 // (shift = coarse), Home/End to the limits, double-click to the default.
-function splitter(handle, { axis, get, set, min, max, reset }) {
-  const apply = (v) => { set(Math.round(Math.min(max(), Math.max(min(), v)))); wspLayout(); };
+function splitter(handle, { axis, get, set, min, max, reset, layout = wspLayout, save = wspSave }) {
+  const apply = (v) => { set(Math.round(Math.min(max(), Math.max(min(), v)))); layout(); };
   handle.addEventListener("pointerdown", (e) => {
     if (e.button !== 0) return;
     e.preventDefault();
     const start = axis === "x" ? e.clientX : e.clientY, v0 = get();
     handle.classList.add("drag");
-    dragShield(axis, (ev) => apply(v0 + (axis === "x" ? ev.clientX : ev.clientY) - start), () => { handle.classList.remove("drag"); wspSave(); }, handle, e.pointerId);
+    dragShield(axis, (ev) => apply(v0 + (axis === "x" ? ev.clientX : ev.clientY) - start), () => { handle.classList.remove("drag"); save(); }, handle, e.pointerId);
   });
   armSplit(handle);
   handle.addEventListener("keydown", (e) => {
@@ -7185,9 +7800,9 @@ function splitter(handle, { axis, get, set, min, max, reset }) {
     if (k === undefined) return;
     e.preventDefault();
     apply(k);
-    wspSave();
+    save();
   });
-  handle.addEventListener("dblclick", () => { reset(); wspLayout(); wspSave(); });
+  handle.addEventListener("dblclick", () => { reset(); layout(); save(); });
 }
 const wspW = () => $("#v-chat").clientWidth;
 splitter($("#wsp-split"), {
@@ -7271,11 +7886,6 @@ $("#ws-files")?.addEventListener("click", (e) => {
 });
 $("#ws-refresh")?.addEventListener("click", wsRefresh);
 $("#ws-analyze")?.addEventListener("click", analyzeWorkspace);
-$("#builder-open-ws")?.addEventListener("click", () => openWorkspace());
-$("#builder-files")?.addEventListener("click", (e) => {
-  const b = e.target.closest("[data-ws-open]");
-  if (b) openWorkspace(b.dataset.wsOpen);
-});
 // ---- rename / move + folders ----------------------------------------------
 // There is no fs_move tool: a rename is write-new + delete-old through
 // the plane, using the editor buffer so unsaved edits move with the
@@ -7442,7 +8052,7 @@ $("#ws-save-conv")?.addEventListener("click", () => {
   const first = conv.messages.find((m) => m.role === "user");
   const title = (typeof first?.content === "string" ? first.content : "Conversation").slice(0, 60) || "Conversation";
   const lib = store.get("chat_library", []);
-  lib.unshift({ id: "c" + Date.now().toString(36), title, saved: Date.now(), messages: JSON.parse(JSON.stringify(conv.messages)) });
+  lib.unshift({ id: "c" + Date.now().toString(36), title, saved: Date.now(), session: sessionId(), messages: JSON.parse(JSON.stringify(conv.messages)) });
   store.set("chat_library", lib.slice(0, 30));
   renderWsConvs();
   toast("conversation saved to the library");
@@ -7455,6 +8065,7 @@ $("#ws-convs")?.addEventListener("click", (e) => {
     if (!item) return;
     conv.messages = JSON.parse(JSON.stringify(item.messages ?? []));
     saveConv(); renderThread(); updateModelHint();
+    if (item.session) switchChatSession(item.session);
     closeSheets(); go("chat");
     toast("conversation loaded");
     return;
@@ -7671,7 +8282,7 @@ function wsDrawerOpen() {
   openSheet(wsDrawer);
   wsRefresh();
 }
-$("#cworkspace-btn")?.addEventListener("click", () => { if (wspSupported()) wspGuard(() => { wsp.editing = null; wspShow(!wsp.open); }); else wsDrawerOpen(); });
+
 wsDrawer?.addEventListener("click", (e) => { if (e.target.closest("[data-close]")) closeSheets(); });
 $("#ws-open-builder")?.addEventListener("click", () => openAppBuilder());
 cmd("workspace", () => openWorkspace(), "builder");

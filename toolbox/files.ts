@@ -406,6 +406,44 @@ export const fileTools: ToolSpec[] = [
     },
   },
   {
+    name: "fs_move",
+    kind: "files",
+    aliases: ["fs_rename", "fs_mv", "rename_file", "move_file", "mv", "rename"],
+    argAliases: { oldpath: "from", old_path: "from", source: "from", src: "from", path: "from", newpath: "to", new_path: "to", destination: "to", dest: "to", target: "to" },
+    description:
+      "Move or rename a workspace file, or a whole directory (every file under it). Fails if a target exists unless overwrite=true. Content, binary or text, moves byte-for-byte.",
+    parameters: {
+      type: "object",
+      properties: {
+        from: { type: "string", description: "Existing file or directory path." },
+        to: { type: "string", description: "New path." },
+        overwrite: { type: "boolean", default: false },
+      },
+      required: ["from", "to"],
+      additionalProperties: false,
+    },
+    run: async (args, ctx) => {
+      const s = store(ctx.caps);
+      const from = normalizePath(String(args.from ?? ""));
+      const to = normalizePath(String(args.to ?? ""));
+      if (!from || !to) throw new Error("from and to are required");
+      if (from === to) return { from, to, moved: 0 };
+      const exact = await manifest(s, from);
+      const pairs: Array<[Manifest, string]> = exact
+        ? [[exact, to]]
+        : (await allManifests(s)).filter((m) => m.path.startsWith(from + "/")).map((m) => [m, to + m.path.slice(from.length)]);
+      if (pairs.length === 0) throw new Error(`no such file or directory: ${from}`);
+      if (to.startsWith(from + "/")) throw new Error("cannot move a directory into itself");
+      if (args.overwrite !== true) {
+        for (const [, dst] of pairs) if (await manifest(s, dst)) throw new Error(`${dst} exists; pass overwrite=true`);
+      }
+      // Copy everything first, then delete: a failure part-way leaves the sources intact.
+      for (const [m, dst] of pairs) await putFile(s, dst, await readAll(s, m));
+      for (const [m] of pairs) await removeFile(s, m.path);
+      return { from, to, moved: pairs.length, files: pairs.slice(0, 50).map(([m, dst]) => ({ from: m.path, to: dst })) };
+    },
+  },
+  {
     name: "fs_delete",
     kind: "files",
     aliases: ["delete_file", "rm", "remove_file", "unlink"],

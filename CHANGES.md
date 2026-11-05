@@ -1,3 +1,26 @@
+# Eighteen-item pass: tool calls, IQ/lanes, images, traces, tools, community, chat — 2026-11-05
+
+**Router.**
+- Tool timeout cap 120 s → 10,000 s, and an explicit `timeout_ms` now overrides the per-tool deadline (it was clamped to it, so the cap did nothing).
+- Text-format tool calls (Qwen3-Coder `<tool_call><function=…><parameter=…>`, Hermes `<tool_call>{json}</tool_call>`, bare `<function=…>`) are lifted into real `tool_calls` when the request declared tools, in every path (buffered, streaming head, late tail), so they run instead of showing as text.
+- New `fs_move` tool (aliases `fs_rename`, `mv`, `rename_file`…; `oldpath`/`newpath` accepted) moves files or folders byte-exact. Tool argument synonyms are a generic `argAliases` hook.
+- **IQ** was prior × trust starting at 0.55, so an unverified frontier model read ≈0.54. It is now the prior shrunk toward the population mean (0.56) by earned trust: unverified keeps 40% of its distance, full trust keeps all of it.
+- **Lanes:** coding specialists are code-tuned models only (generalists had been flagged and the code lane collapsed into smart). Image, video and audio models are excluded from chat (Bria and friends were in the fast lane) and evicted on sync. Lanes show 8 rows. /health reports ranked vs configured providers.
+- **Images:** discovered image models on configured providers (481 locally: Cloudflare Workers AI, DeepInfra, BlockRun, Gemini image…) are tried through the OpenAI-standard `POST {v1}/images/generations`, ordered by learned success. `gen.pollinations.ai` is added as a backend. Responses name the winning backend, and /v1/models lists them.
+- Traces keep capped request/response bodies (chat, images, tool executions), in memory only and never exported to OTel.
+- Community posts (KV): create, one vote per voter applied atomically (flip and clear), comments, stats.
+
+**Dashboard.**
+- Source: one search box with "this file" / "all files" buttons; matches highlighted.
+- Traces: list above, draggable split, request / response / spans tabs below, both panes scroll, highlighted JSON. Live tail no longer resets your scroll.
+- JSON highlighting was broken everywhere (it matched `&quot;`, which the escaper never produces); keys and strings now colour.
+- Tools: Dashboard (usage, competence, latency, failures, categories, error codes, untested) · Tools (78 loadable examples across 34 tools, each verified against the live plane) · Forge. The form ↔ JSON round trip is exact: it used to emit every field (`""` for arrays and objects, enum defaults), flatten multi-line strings and stringify untyped fields, which caused the `text` tool's INVALID_ARGUMENTS. Seeds for text, fs_patch, task and clipboard used wrong argument names. Lighter type, category colours.
+- Community: renamed; Dashboard / Posts (hot/new/top, votes, comments, markdown) / Chat.
+- Chat composer: one menu (App builder, Workspace, Upload image, Upload file, New chat) replaces the chips and four buttons. Uploads go byte-exact into the chat's workspace.
+- The durable workspace is per chat: a new chat starts empty, saved conversations carry theirs, and existing files stay with the current chat.
+- App Builder is full-page; Project Files and the created/updated feed are removed.
+- A quick-search browser extension's injected `dse-quicksearch` box is hidden.
+
 # Tool calls never land on the user — 2026-11-04
 
 With `tools: "auto"` the dashboard declares no client tools, yet two

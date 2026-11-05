@@ -39,3 +39,28 @@ Deno.test("community messages: requires content", async () => {
   }));
   assert(badRes.status === 400, "empty content returns 400");
 });
+
+Deno.test("community posts: create, one vote per voter, comments, stats", async () => {
+  const call = async (path: string, body?: unknown) => {
+    const r = await app.fetch(new Request("http://x" + path, body === undefined ? {} : { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }));
+    return { status: r.status, json: await r.json() };
+  };
+  assert((await call("/v1/community/posts", { user: "Ada", title: "" })).status === 400, "title required");
+  const { json: created } = await call("/v1/community/posts", { user: "Ada", title: "Hedging deep dive", body: "How the router hedges." });
+  const id = created.post.id;
+  const up1 = await call(`/v1/community/posts/${id}/vote`, { voter: "v1", value: 1 });
+  const up1again = await call(`/v1/community/posts/${id}/vote`, { voter: "v1", value: 1 });
+  assert(up1.json.post.score === 1 && up1again.json.post.score === 1, "a repeated vote does not double count");
+  const flip = await call(`/v1/community/posts/${id}/vote`, { voter: "v1", value: -1 });
+  assert(flip.json.post.score === -1 && flip.json.post.up === 0 && flip.json.post.down === 1, "flip moves the vote");
+  await call(`/v1/community/posts/${id}/vote`, { voter: "v2", value: 1 });
+  await call(`/v1/community/posts/${id}/vote`, { voter: "v3", value: 1 });
+  const cmt = await call(`/v1/community/posts/${id}/comments`, { user: "Bo", body: "Great write-up" });
+  assert(cmt.status === 200, "comment ok");
+  const { json: one } = await call(`/v1/community/posts/${id}?voter=v1`);
+  assert(one.post.score === 1 && one.post.comments === 1 && one.post.myVote === -1 && one.comments[0].user === "Bo", JSON.stringify(one));
+  const { json: list } = await call("/v1/community/posts?sort=top&voter=v2");
+  assert(list.posts.some((p: { id: string; myVote: number }) => p.id === id && p.myVote === 1), "list carries my vote");
+  const { json: stats } = await call("/v1/community/stats");
+  assert(stats.posts >= 1 && stats.comments >= 1 && stats.top_people.some((p: { user: string }) => p.user === "Ada"), JSON.stringify(stats).slice(0, 300));
+});
