@@ -1,4 +1,5 @@
 import { Hono, type Context, type MiddlewareHandler } from "hono";
+import { compile, type Complete } from "./compiler/index.ts";
 import { type Attrs, currentSpan, getTrace, listTraces, type Span, startTrace, subscribe } from "./trace.ts";
 import { cors } from "hono/cors";
 import { bodyLimit } from "hono/body-limit";
@@ -4379,6 +4380,34 @@ honoApp.get("/v1/models", async (c) => c.json(await buildModelList()));
 
 const TOOL_FLAVORS = ["openai", "openai-strict", "anthropic", "gemini"] as const;
 
+/** One direct tool execution: traced, executed with the caller's admin and
+ *  session scope, and recorded (awaited, so a response's `totals` include it). */
+async function runTracedTool(
+  c: Context,
+  parent: Span,
+  call: { id: string; name: string; arguments: unknown },
+  o: { locals: Json; timeoutMs?: number; signal?: AbortSignal },
+): Promise<ToolExecution> {
+  const span = parent.child("tool", { name: call.name, id: call.id });
+  const execution = await executeTool(call.name, call.arguments, {
+    admin: isAdminContext(c),
+    locals: o.locals,
+    caps: { kv, namespace: toolNamespace(c) },
+    timeoutMs: o.timeoutMs,
+    signal: o.signal,
+    now: Date.now(),
+    event: (name, attrs) => span.event(name, traceAttrs(attrs ?? {})),
+  });
+  span.end(execution.ok ? "ok" : "error", {
+    ms: execution.ms,
+    strategy: execution.strategy ?? "",
+    repairs: (execution.repairs ?? []).join(",").slice(0, 160),
+    ...(execution.ok ? { bytes: execution.bytes, truncated: execution.truncated } : { code: execution.code }),
+  });
+  await recordToolExecution(execution.tool ?? call.name, execution).catch(logErr);
+  return execution;
+}
+
 honoApp.get("/v1/tools", async (c) => {
   const now = Date.now();
   await hydrateToolSkills().catch((err) => console.error("tool skill hydrate:", err));
@@ -4421,7 +4450,6 @@ honoApp.post("/v1/tools/execute", async (c) => {
   try {
     const body = await c.req.json().catch(() => ({} as Json)) as Json;
     root.io("request", body);
-    const admin = isAdminContext(c);
     const rawCalls = Array.isArray(body.calls) ? body.calls : [body];
     const calls = rawCalls
       .filter((entry) => entry && typeof entry === "object")
@@ -4449,24 +4477,7 @@ honoApp.post("/v1/tools/execute", async (c) => {
     let batchTail: Promise<unknown> = Promise.resolve();
     const results = await Promise.all(calls.map((call) => {
       const run = async () => {
-      const span = root.child("tool", { name: call.name, id: call.id });
-      const execution = await executeTool(call.name, call.arguments, {
-        admin,
-        locals,
-        caps: { kv, namespace: toolNamespace(c) },
-        timeoutMs,
-        now: Date.now(),
-        event: (name, attrs) => span.event(name, traceAttrs(attrs ?? {})),
-      });
-      span.end(execution.ok ? "ok" : "error", {
-        ms: execution.ms,
-        strategy: execution.strategy ?? "",
-        repairs: (execution.repairs ?? []).join(",").slice(0, 160),
-        ...(execution.ok ? { bytes: execution.bytes, truncated: execution.truncated } : { code: execution.code }),
-      });
-      // Every direct execution teaches the plane too, and it is awaited so the
-      // response's own `totals` already include this request.
-      await recordToolExecution(execution.tool ?? call.name, execution).catch(logErr);
+      const execution = await runTracedTool(c, root, call, { locals, timeoutMs });
       return {
         id: call.id,
         name: execution.tool ?? call.name,
@@ -4516,6 +4527,84 @@ honoApp.delete("/v1/tools/forge/:name", requireAdmin, async (c) => {
   return gone
     ? c.json({ retired: normalizeToolName(c.req.param("name")) })
     : c.json({ error: { message: "not a forged tool" } }, 404);
+});
+
+// ---------------------------------------------------------------------------
+// POST /v1/agent/compile  LLMCompiler-style agent over the tool plane:
+// BM25 tool retrieval → K sampled DAG plans → MBR selection → HEFT-ordered
+// parallel execution → join (answer | replan). Sub-calls run in-process
+// through this router, so they inherit routing, learning, quota and traces.
+// ---------------------------------------------------------------------------
+
+honoApp.post("/v1/agent/compile", async (c) => {
+  const root = startTrace("agent.compile", {}, c.req.header("traceparent"));
+  const traceHeaders = { traceparent: root.traceparent };
+  const body = await c.req.json().catch(() => ({} as Json)) as Json;
+  root.io("request", body);
+  const messages = normalizeMessages(body.messages, body.prompt);
+  const lastUser = [...messages].reverse().find((m) => m.role === "user" && typeof m.content === "string");
+  const question = (typeof body.question === "string" ? body.question : String(lastUser?.content ?? "")).trim();
+  if (!question) {
+    root.end("error", { error: "no question" });
+    return c.json({ error: { message: "question (or a user message) is required" } }, 400, traceHeaders);
+  }
+  const model = typeof body.model === "string" && body.model ? body.model : "free:smart";
+  const ip = c.req.header("cf-connecting-ip") || c.req.header("x-forwarded-for")?.split(",")[0].trim() ||
+    (c.env as Deno.ServeHandlerInfo<Deno.NetAddr> | undefined)?.remoteAddr?.hostname || "anon";
+  // Forward the caller's identity so sub-calls are billed, scoped and rate-limited as the caller, not as the isolate.
+  const forward: Record<string, string> = { "content-type": "application/json", "x-forwarded-for": ip, traceparent: root.traceparent };
+  for (const h of ["authorization", "x-admin-secret", "x-nokey-session", "x-session-id"]) {
+    const v = c.req.header(h);
+    if (v) forward[h] = v;
+  }
+  // Samples rotate across lanes: independent models make MBR's errors less correlated than one model at K temperatures.
+  const lanes = model.startsWith("free:") ? [model, ...["free:smart", "free:fast", "free:code"].filter((l) => l !== model)] : [model];
+  const laneFor = (attempt: number) => lanes[attempt % lanes.length];
+  const complete: Complete = async (msgs, o) => {
+    const res = await honoApp.request("/v1/chat/completions", {
+      method: "POST",
+      headers: forward,
+      signal: o.signal,
+      body: JSON.stringify({ model: laneFor(o.attempt), messages: msgs, temperature: o.temperature, max_tokens: o.max_tokens, stream: false }),
+    });
+    if (res.status !== 200) throw new Error(`HTTP ${res.status}: ${(await res.text()).slice(0, 200)}`);
+    if (res.headers.get("x-nokey-degraded")) throw new Error("no upstream answered (degraded)");
+    const j = await res.json() as Json;
+    const msg = ((j.choices as Json[] | undefined)?.[0]?.message ?? {}) as Json;
+    return { content: typeof msg.content === "string" ? msg.content : "", model: typeof j.model === "string" ? j.model : undefined };
+  };
+
+  await hydrateToolSkills().catch(logErr);
+  await hydrateForgedTools().catch(logErr);
+  const skills = toolSkillsSnapshot();
+  const locals: Json = { tool_skills: Object.fromEntries([...TOOL_SKILLS.entries()]) as Json };
+  let seq = 0;
+  try {
+    const out = await compile({
+      question,
+      complete,
+      exec: async (tool, args, signal) => {
+        const x = await runTracedTool(c, root, { id: `node_${++seq}`, name: tool, arguments: args }, { locals, signal });
+        return x.ok ? { ok: true, result: x.result, ms: x.ms } : { ok: false, error: x.error, code: x.code, ms: x.ms };
+      },
+      samples: body.samples as number | undefined,
+      rounds: body.rounds as number | undefined,
+      concurrency: body.concurrency as number | undefined,
+      k: body.k as number | undefined,
+      tools: Array.isArray(body.tools) ? body.tools.filter((t): t is string => typeof t === "string") : undefined,
+      admin: isAdminContext(c),
+      fallbackTools: defaultAutoToolNames(),
+      estimateMs: (tool) => (skills[tool]?.calls ? Math.max(1, skills[tool].p50_ms) : 50),
+      budgetMs: body.budget_ms as number | undefined,
+      signal: c.req.raw.signal,
+    });
+    root.io("response", out);
+    root.end("ok", { rounds: out.rounds.length, llm_calls: out.usage.llm_calls, tool_calls: out.usage.tool_calls });
+    return c.json({ object: "agent.compile", model, ...out, trace_id: root.traceId }, 200, traceHeaders);
+  } catch (err) {
+    root.end("error", { error: errText(err).slice(0, 200) });
+    return c.json({ error: { message: errText(err) }, trace_id: root.traceId }, 502, traceHeaders);
+  }
 });
 
 honoApp.post("/v1/probe", requireAdmin, async (c) => {
