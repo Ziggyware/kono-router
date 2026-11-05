@@ -5795,7 +5795,6 @@ honoApp.post("/v1/chat/completions", async (c) => {
 const IMAGE_MODELS = [
   { id: "nokey-image", provider: "pollinations", upstreamModel: "turbo" },
   { id: "nokey-image-flux", provider: "pollinations", upstreamModel: "flux" },
-  { id: "nokey-image-gen", provider: "pollinations-gen", upstreamModel: "flux" },
   { id: "nokey-image-horde", provider: "horde", upstreamModel: "stable_diffusion" },
 ];
 
@@ -5807,6 +5806,27 @@ const IMAGE_MODELS = [
 const IMAGE_KV_PREFIX = "nokey_images";
 const IMAGE_CATALOG = new Map<string, string[]>();
 const IMAGE_STATS = new Map<string, { ok: number; fail: number }>();
+// Backends that answered 401/402/403 need a key or payment: kept out of the
+// list and the chain for a day, shared across isolates through KV.
+const IMAGE_BLOCKED = new Set<string>();
+const IMAGE_BLOCK_KV = "nokey_images_blocked";
+const IMAGE_BLOCK_MS = 24 * 3600 * 1000;
+let imageBlockHydrated = 0;
+async function hydrateImageBlocks(): Promise<void> {
+  if (Date.now() - imageBlockHydrated < 60_000) return;
+  imageBlockHydrated = Date.now();
+  IMAGE_BLOCKED.clear();
+  for await (const e of kv.list({ prefix: [IMAGE_BLOCK_KV] })) IMAGE_BLOCKED.add(String(e.key[1]));
+}
+async function noteImageOutcome(id: string, err?: unknown): Promise<void> {
+  const st = IMAGE_STATS.get(id) ?? { ok: 0, fail: 0 };
+  if (err === undefined) { st.ok++; IMAGE_STATS.set(id, st); return; }
+  st.fail++; IMAGE_STATS.set(id, st);
+  if (/HTTP (401|402|403)\b/.test(errText(err))) {
+    IMAGE_BLOCKED.add(id);
+    await kv.set([IMAGE_BLOCK_KV, id], Date.now(), { expireIn: IMAGE_BLOCK_MS }).catch(logErr);
+  }
+}
 const IMAGE_MODEL_RE = /flux|sdxl|stable-diffusion|\bsd-?3|dall-e|gpt-image|imagen|bria|recraft|ideogram|kandinsky|hidream|seedream|cogview|qwen-image|playground-v|midjourney|janus-pro|\bimage(?!-to-text|-?2-?text)\b/i;
 function isImageModelId(id: string): boolean {
   return IMAGE_MODEL_RE.test(id) && !/vision|\bvl\b|-vl-|caption|embed/i.test(id);
@@ -5819,6 +5839,7 @@ async function hydrateImageCatalog(): Promise<void> {
 }
 async function openAIImageBackends(): Promise<Array<{ id: string; url: string; headers: Record<string, string>; model: string }>> {
   await hydrateImageCatalog().catch(logErr);
+  await hydrateImageBlocks().catch(logErr);
   const providers = new Map((await activeProviderList()).map((p) => [p.id, p]));
   const out: Array<{ id: string; url: string; headers: Record<string, string>; model: string; rate: number }> = [];
   for (const [pid, models] of IMAGE_CATALOG) {
@@ -5826,6 +5847,7 @@ async function openAIImageBackends(): Promise<Array<{ id: string; url: string; h
     if (!p?.imagesUrl) continue;
     for (const model of models) {
       const id = `${pid}::${model}`;
+      if (IMAGE_BLOCKED.has(id)) continue;
       const st = IMAGE_STATS.get(id) ?? { ok: 0, fail: 0 };
       out.push({ id, url: p.imagesUrl, headers: p.imageHeaders ?? {}, model, rate: (st.ok + 1) / (st.ok + st.fail + 2) });
     }
@@ -5845,16 +5867,6 @@ async function generateViaOpenAIImages(url: string, headers: Record<string, stri
   if (typeof first?.url === "string" && /^(https?:|data:image\/)/.test(first.url)) return first.url;
   if (typeof first?.b64_json === "string" && first.b64_json.length > 512) return `data:image/png;base64,${first.b64_json}`;
   throw new Error("images response carried no image");
-}
-async function generateViaPollinationsGen(prompt: string, width: number, height: number, model: string, seed: number): Promise<string> {
-  const url = `https://gen.pollinations.ai/image/${encodeURIComponent(prompt)}?width=${width}&height=${height}&seed=${seed}&model=${model}&nologo=true`;
-  const res = await fetch(url, { signal: AbortSignal.timeout(45000) });
-  if (!res.ok) throw new Error(`gen.pollinations HTTP ${res.status}`);
-  const ct = (res.headers.get("content-type") ?? "").toLowerCase();
-  const buf = await res.arrayBuffer();
-  if (!ct.startsWith("image/") || buf.byteLength < 512) throw new Error(`gen.pollinations returned ${ct || "no content-type"}, ${buf.byteLength} bytes`);
-  // The image itself, not the URL: an authenticated-only host would not render the link client-side.
-  return `data:${ct.split(";")[0]};base64,${bytesToBase64(buf)}`;
 }
 
 function parseImageSize(size: unknown): { width: number; height: number } {
@@ -5970,6 +5982,32 @@ function placeholderImage(prompt: string, model: string, width: number, height: 
   return { url: `data:image/svg+xml;base64,${b64}`, b64 };
 }
 
+// Classify every discovered OpenAI-standard image backend with one small
+// generation each (16 at a time): keyless-working, needs key/payment
+// (blocked for a day), or failing. Admin, because it spends upstream quota.
+honoApp.post("/v1/images/probe", requireAdmin, async (c) => {
+  const backends = await openAIImageBackends();
+  const results: Array<{ id: string; ok: boolean; blocked: boolean; error?: string }> = [];
+  for (let i = 0; i < backends.length; i += 16) {
+    await Promise.all(backends.slice(i, i + 16).map(async (b) => {
+      try {
+        await generateViaOpenAIImages(b.url, b.headers, b.model, "a small red circle", "256x256");
+        await noteImageOutcome(b.id);
+        results.push({ id: b.id, ok: true, blocked: false });
+      } catch (e) {
+        await noteImageOutcome(b.id, e);
+        results.push({ id: b.id, ok: false, blocked: IMAGE_BLOCKED.has(b.id), error: errText(e).slice(0, 160) });
+      }
+    }));
+  }
+  return c.json({
+    probed: results.length,
+    working: results.filter((r) => r.ok).map((r) => r.id),
+    blocked: results.filter((r) => r.blocked).length,
+    failing: results.filter((r) => !r.ok && !r.blocked).map((r) => ({ id: r.id, error: r.error })),
+  });
+});
+
 honoApp.post("/v1/images/generations", async (c) => {
   const body = await c.req.json().catch(() => ({} as Json)) as Json;
   const prompt = String(body.prompt || "").trim() || "abstract geometric composition";
@@ -5984,18 +6022,18 @@ honoApp.post("/v1/images/generations", async (c) => {
   const root = startTrace("images.generations", { "model.requested": requestedModel, n, width, height, b64: wantB64 }, c.req.header("traceparent"));
   root.io("request", body);
 
-  // Every available backend is tried, in "requested model first" order, for
-  // ANY requested model id. Only a locally generated placeholder can end the
-  // request — it never errors out.
+  // Only a locally generated placeholder can end the request; it never errors out.
   type Variant = { id: string; provider: string; upstreamModel: string; url?: string; headers?: Record<string, string> };
   const asVariant = (b: typeof standard[number]): Variant => ({ id: b.id, provider: "openai-images", upstreamModel: b.model, url: b.url, headers: b.headers });
+  // A specific backend chosen by name runs alone: falling back would silently
+  // answer from a different model. Only "nokey-image" (the default), an unknown
+  // id, or fallback: true walks the whole chain.
+  const named = pinned ? asVariant(pinned) : IMAGE_MODELS.find((m) => m.id === requestedModel && m.id !== "nokey-image");
   const builtin: Variant[] = [spec, ...IMAGE_MODELS.filter((m) => m.id !== spec.id)];
-  const horde = builtin.filter((v) => v.provider === "horde");
-  const chain: Variant[] = [
-    ...(pinned ? [asVariant(pinned)] : []),
+  const chain: Variant[] = named && body.fallback !== true ? [named] : [
     ...builtin.filter((v) => v.provider !== "horde"),
-    ...standard.filter((b) => b !== pinned).slice(0, 6).map(asVariant),
-    ...horde,
+    ...standard.slice(0, 6).map(asVariant),
+    ...builtin.filter((v) => v.provider === "horde"),
   ];
   const errors: string[] = [];
   const data: Array<{ url?: string; b64_json?: string }> = [];
@@ -6010,13 +6048,10 @@ honoApp.post("/v1/images/generations", async (c) => {
         if (variant.provider === "horde") {
           url = await attempt.run(() => generateViaHorde(prompt, width, height));
         } else if (variant.provider === "openai-images") {
-          const st = IMAGE_STATS.get(variant.id) ?? { ok: 0, fail: 0 };
           try {
             url = await attempt.run(() => generateViaOpenAIImages(variant.url!, variant.headers ?? {}, variant.upstreamModel, prompt, sizeText));
-            st.ok++;
-          } catch (e) { st.fail++; throw e; } finally { IMAGE_STATS.set(variant.id, st); }
-        } else if (variant.provider === "pollinations-gen") {
-          url = await attempt.run(() => generateViaPollinationsGen(prompt, width, height, variant.upstreamModel, Math.floor(Math.random() * 1000000) + i));
+            await noteImageOutcome(variant.id);
+          } catch (e) { await noteImageOutcome(variant.id, e); throw e; }
         } else {
           const seed = Math.floor(Math.random() * 1000000) + i;
           url = await attempt.run(() => generateViaPollinations(prompt, width, height, variant.upstreamModel, seed));

@@ -1635,6 +1635,27 @@
           }
         }
       }
+    },
+    "/v1/images/probe": {
+      "post": {
+        "tags": [
+          "images"
+        ],
+        "operationId": "probeImageBackends",
+        "summary": "Classify every discovered image backend: working, needs key (blocked a day), failing",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {

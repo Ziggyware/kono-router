@@ -1,3 +1,18 @@
+# Images honour the selected model — 2026-11-05
+
+A named backend fell through silently to Pollinations on any failure, and
+picking AI Horde still put Pollinations ahead of it. A specifically chosen
+backend now runs alone. If it fails, the response is the honest placeholder
+with the backend's error, and the Media view shows that error. `nokey-image`
+(the default), an unknown id, or `fallback: true` still walk the whole chain.
+Discovered backends that answer 401/402/403 are marked as needing a key for
+24 h (shared through KV) and drop out of the list and the chain. The new
+`POST /v1/images/probe` (admin; "probe images" in Ops) classifies them all in
+one pass. Measured locally: 474 discovered backends, 0 work without a key
+(370 need payment or a key, 64 are rate-limited, the rest error).
+gen.pollinations.ai also requires a key, so it was removed. The working
+keyless generators are Pollinations and AI Horde.
+
 # Eighteen-item pass: tool calls, IQ/lanes, images, traces, tools, community, chat — 2026-11-05
 
 **Router.**
