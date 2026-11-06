@@ -82,6 +82,10 @@ async function runCheck(s: S, all: Manifest[], opts: { entry?: string; prefix?: 
   };
 }
 
+export async function workspaceSigFor(caps: ToolCaps): Promise<string> {
+  return await workspaceSig(store(caps));
+}
+
 export async function latestReport(s: S): Promise<RuntimeReport | null> {
   return await s.get<RuntimeReport>(["app", "runtime"]);
 }
@@ -111,6 +115,11 @@ export async function workspaceBrief(caps: ToolCaps, opts: { maxFiles?: number }
     } else {
       lines.push(`Live preview of ${r.page} (${state}, ${age}s ago) ran without errors.`);
     }
+  }
+  const t = await s.get<{ sig: string; at: number; passed: number; failed: number; failures: string[] }>(["app", "tests"]);
+  if (t) {
+    const state = t.sig === sig ? "current files" : "an older version of the files";
+    lines.push(`Last app_test run (${state}, ${Math.round((Date.now() - t.at) / 1000)}s ago): ${t.passed} passed, ${t.failed} failed${t.failures.length ? ` — ${t.failures.slice(0, 3).join("; ")}` : ""}.`);
   }
   return lines.join("\n");
 }

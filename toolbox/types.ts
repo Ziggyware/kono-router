@@ -29,7 +29,15 @@ export interface ToolCaps {
   namespace?: string;
   /** Injected fetch so tests never touch the network. */
   fetch?: typeof fetch;
+  /** Run a sub-agent (a full tool-using completion in the same session).
+   *  Absent inside a sub-agent: teams do not nest. */
+  subagent?: (task: SubagentTask, signal: AbortSignal) => Promise<SubagentResult>;
+  /** The requesting client runs app_test jobs in a browser (it said so with nokey_runner). */
+  runner?: boolean;
 }
+
+export interface SubagentTask { role: string; task: string; model?: string; rounds?: number }
+export interface SubagentResult { role: string; ok: boolean; content: string; model?: string; tool_rounds?: number; tools?: string[]; ms: number; error?: string }
 
 export interface ToolContext {
   signal: AbortSignal;

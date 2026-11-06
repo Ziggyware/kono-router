@@ -3464,6 +3464,8 @@ thread.onclick = async (e) => {
 
 // ---- completion ----
 function busy(on) { $("#csend").hidden = on; $("#cstop").hidden = !on; }
+// One-shot: the next reply runs the build gate even if it changes nothing (fix-errors).
+let gateAlways = false;
 async function complete() {
   const max = $("#pmax").value.trim();
   if (max && (!Number.isSafeInteger(Number(max)) || Number(max) < 1)) { toast("max tokens must be a positive whole number", true); return; }
@@ -3485,8 +3487,9 @@ async function complete() {
     // router's own tool plane and the router runs the agent loop server-
     // side. The dashboard never forwards client tool definitions and never
     // asks the user to hand-feed tool results into the prompt.
-    ...($("#pauto").checked ? { tools: "auto", nokey_rounds: 16 } : {}),
+    ...($("#pauto").checked ? { tools: "auto", nokey_rounds: 16, ...(wsp.runnerOk ? { nokey_runner: true } : {}), ...(gateAlways ? { nokey_gate: "always" } : {}) } : {}),
   };
+  gateAlways = false;
   const k = m._m, t0 = performance.now();
   let frame = 0;
   const repaint = () => { if (frame) return; frame = requestAnimationFrame(() => { frame = 0; const stick = nearBottom(); paint(el, m, i); if (stick) thread.scrollTop = thread.scrollHeight; }); };
@@ -3515,6 +3518,16 @@ async function complete() {
           k.rounds = j.nokey.round;
           k.toolRun = (j.nokey.tools ?? []).map((t) => `${t.name}${t.ok ? "" : " ✗"}`).join(", ");
           if ((j.nokey.tools ?? []).some((t) => WSP_TOUCH.test(t.name))) { k.touched = true; wspProbe(); }
+          repaint();
+          continue;
+        }
+        // The router's build gate sent the agent back: show why, keep streaming.
+        if (j.nokey?.type === "build_gate") {
+          const g = j.nokey;
+          k.gate = g.gate_round;
+          k.toolRun = `build gate ${g.gate_round}: ` + [g.static_errors ? `${g.static_errors} static` : "", g.runtime_errors ? `${g.runtime_errors} runtime` : "", g.tests?.failed ? `${g.tests.failed} failing tests` : "", !g.static_errors && !g.runtime_errors && !g.tests ? "untested" : ""].filter(Boolean).join(", ") + " — continuing";
+          k.touched = true;
+          wspProbe();
           repaint();
           continue;
         }
@@ -5817,7 +5830,7 @@ $("#btn-generate-app")?.addEventListener("click", async () => {
     `GENERATION MODE: ${mode.name}`,
     mode.directive,
     // Workspace modes end in the debug loop: the job is done when the app runs clean.
-    mode.multi ? "When the files are written, call app_debug with wait_ms 6000 and fix every static and runtime error it reports, repeating until it reports none." : "",
+    mode.multi ? "Work in parallel where the job splits: use agent_team (builders on independent areas, a tester writing tests/*.test.json UI cases and *.test.js unit tests for the requirements, a reviewer at the end). When the files are written, call app_debug with wait_ms 6000 and fix every static and runtime error; then run app_test {all: true} and fix until every test passes. The build is done only when it is clean and tested." : "",
     memoryBlock,
   ].filter(Boolean).join("\n");
   recordBuildDecision(mode, technique, tech, goal);
@@ -7840,6 +7853,7 @@ async function wspFix() {
   if (!wsp.errs) { toast("no errors to fix"); return; }
   $("#pauto").checked = true;
   $("#cinput").value = wspFixPrompt();
+  gateAlways = true;
   await sendChat();
 }
 // After an agent round that touched the workspace: refresh, and run the app
@@ -7850,7 +7864,252 @@ async function wspProbe() {
   wsp.probe = true;
   try { await wspBuild(); } finally { wsp.probe = false; }
 }
-const WSP_TOUCH = /^(fs_write|fs_patch|fs_move|fs_delete|app_debug|ws_check)$/;
+const WSP_TOUCH = /^(fs_write|fs_patch|fs_move|fs_delete|app_debug|ws_check|app_test|agent_team)$/;
+
+// ---- test runner -------------------------------------------------------------------
+// app_test queues a job on the router; this page takes it while a reply is
+// streaming or the workspace is open, runs every case in its own hidden
+// sandboxed frame (the visible preview is untouched) and posts the results.
+// The agent below is serialised into each test frame.
+function wspTestAgent() {
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  const fmt = (v) => { try { return typeof v === "string" ? JSON.stringify(v) : JSON.stringify(v) ?? String(v); } catch { return String(v); } };
+  const eq = (a, b) => {
+    if (Object.is(a, b)) return true;
+    if (typeof a !== "object" || typeof b !== "object" || !a || !b) return false;
+    if (Array.isArray(a) !== Array.isArray(b)) return false;
+    const ka = Object.keys(a), kb = Object.keys(b);
+    return ka.length === kb.length && ka.every((k) => Object.prototype.hasOwnProperty.call(b, k) && eq(a[k], b[k]));
+  };
+  // ---- unit-test API ----
+  const tests = [];
+  let prefix = "";
+  window.test = window.it = (name, fn) => tests.push({ name: prefix + name, fn });
+  window.describe = (name, fn) => { const p = prefix; prefix = p + name + " › "; try { fn(); } finally { prefix = p; } };
+  window.assert = (c, msg) => { if (!c) throw new Error(msg || "assertion failed"); };
+  const matchers = {
+    toBe: (v, e) => [Object.is(v, e), `expected ${fmt(v)} to be ${fmt(e)}`],
+    toEqual: (v, e) => [eq(v, e), `expected ${fmt(v)} to equal ${fmt(e)}`],
+    toBeTruthy: (v) => [Boolean(v), `expected ${fmt(v)} to be truthy`],
+    toBeFalsy: (v) => [!v, `expected ${fmt(v)} to be falsy`],
+    toBeNull: (v) => [v === null, `expected ${fmt(v)} to be null`],
+    toBeDefined: (v) => [v !== undefined, "expected a defined value"],
+    toBeUndefined: (v) => [v === undefined, `expected ${fmt(v)} to be undefined`],
+    toContain: (v, e) => [v != null && typeof v.includes === "function" && v.includes(e), `expected ${fmt(v)} to contain ${fmt(e)}`],
+    toHaveLength: (v, n) => [v != null && v.length === n, `expected length ${n}, got ${v?.length}`],
+    toMatch: (v, re) => [new RegExp(re).test(String(v)), `expected ${fmt(v)} to match ${re}`],
+    toBeGreaterThan: (v, n) => [v > n, `expected ${fmt(v)} > ${n}`],
+    toBeLessThan: (v, n) => [v < n, `expected ${fmt(v)} < ${n}`],
+    toBeCloseTo: (v, n, d = 2) => [Math.abs(v - n) < 10 ** -d / 2, `expected ${fmt(v)} ≈ ${n}`],
+    toThrow: (fn, m) => { try { fn(); } catch (e) { return [!m || String(e && e.message).includes(m), `expected the error to mention ${fmt(m)}, got ${fmt(e && e.message)}`]; } return [false, "expected the function to throw"]; },
+  };
+  window.expect = (v) => {
+    const build = (neg) => Object.fromEntries(Object.entries(matchers).map(([k, f]) => [k, (...a) => { const [pass, msg] = f(v, ...a); if (pass === neg) throw new Error(neg ? "not: " + msg : msg); }]));
+    return Object.assign(build(false), { not: build(true) });
+  };
+  async function runUnit() {
+    const out = [];
+    for (const t of tests) {
+      const t0 = performance.now();
+      try {
+        await Promise.race([Promise.resolve().then(t.fn), sleep(5000).then(() => { throw new Error("timed out after 5 s"); })]);
+        out.push({ name: t.name, ok: true, ms: Math.round(performance.now() - t0) });
+      } catch (e) {
+        out.push({ name: t.name, ok: false, ms: Math.round(performance.now() - t0), message: String((e && e.message) || e).slice(0, 600) });
+      }
+    }
+    return { tests: out, ok: out.length > 0 && out.every((t) => t.ok), ...(out.length ? {} : { failure: { message: "no test() registered — did the test file import correctly?" } }) };
+  }
+  // ---- UI steps ----
+  const $ = (sel) => document.querySelector(sel);
+  const visible = (el) => Boolean(el && el.isConnected && (el.checkVisibility ? el.checkVisibility() : el.getClientRects().length));
+  const textOf = (el) => (el ? (el.innerText ?? el.textContent ?? "") : "").replace(/\s+/g, " ").trim();
+  async function until(check, ms) {
+    const end = performance.now() + ms;
+    let last;
+    for (;;) {
+      try { last = await check(); if (last === true) return true; } catch (e) { last = String(e.message || e); }
+      if (performance.now() >= end) throw new Error(typeof last === "string" ? last : "timed out");
+      await sleep(50);
+    }
+  }
+  async function need(sel, ms) {
+    await until(() => ($(sel) ? true : `no element matches ${sel}`), ms);
+    return $(sel);
+  }
+  function setValue(el, v) {
+    const proto = el instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : el instanceof HTMLSelectElement ? HTMLSelectElement.prototype : HTMLInputElement.prototype;
+    const set = Object.getOwnPropertyDescriptor(proto, "value")?.set;
+    if (set) set.call(el, v); else el.value = v;
+    el.dispatchEvent(new Event("input", { bubbles: true }));
+    el.dispatchEvent(new Event("change", { bubbles: true }));
+  }
+  const key = (el, type, k) => el.dispatchEvent(new KeyboardEvent(type, { key: k, code: k.length === 1 ? "Key" + k.toUpperCase() : k, bubbles: true, cancelable: true }));
+  async function step(s, wait) {
+    const ms = Number(s.timeout_ms) || wait;
+    if ("click" in s || "dblclick" in s) {
+      const el = await need(s.click ?? s.dblclick, ms);
+      el.scrollIntoView?.({ block: "center" });
+      for (const t of ["pointerdown", "mousedown", "pointerup", "mouseup"]) el.dispatchEvent(new MouseEvent(t, { bubbles: true, cancelable: true }));
+      el.click();
+      if ("dblclick" in s) { el.click(); el.dispatchEvent(new MouseEvent("dblclick", { bubbles: true, cancelable: true })); }
+    } else if ("type" in s) {
+      const el = await need(s.type, ms);
+      el.focus?.();
+      const text = String(s.text ?? "");
+      if (el.isContentEditable) { el.textContent = s.clear === false ? el.textContent + text : text; el.dispatchEvent(new Event("input", { bubbles: true })); }
+      else setValue(el, s.clear === false ? el.value + text : text);
+    } else if ("press" in s) {
+      const el = s.on ? await need(s.on, ms) : document.activeElement || document.body;
+      const k = String(s.press);
+      const go = key(el, "keydown", k);
+      key(el, "keypress", k);
+      key(el, "keyup", k);
+      // Synthetic keys never submit forms; do what the browser would.
+      if (go && k === "Enter" && el.form && el.tagName === "INPUT") el.form.requestSubmit();
+    } else if ("select" in s) {
+      const el = await need(s.select, ms);
+      setValue(el, String(s.value ?? ""));
+    } else if ("check" in s) {
+      const el = await need(s.check, ms);
+      const want = s.value !== false;
+      if (el.checked !== want) el.click();
+    } else if ("wait" in s) {
+      await sleep(Math.min(10000, Number(s.wait) || 0));
+    } else if ("wait_for" in s) {
+      await until(() => (visible($(s.wait_for)) ? true : `${s.wait_for} did not become visible`), ms);
+    } else if ("expect" in s) {
+      const sel = s.expect;
+      await until(() => {
+        const all = document.querySelectorAll(sel);
+        const el = all[0];
+        if (s.exists === false) return all.length === 0 ? true : `expected no element for ${sel}, found ${all.length}`;
+        if (typeof s.count === "number") return all.length === s.count ? true : `expected ${s.count} × ${sel}, found ${all.length}`;
+        if (!el) return `no element matches ${sel}`;
+        if (s.visible !== undefined && visible(el) !== Boolean(s.visible)) return `${sel} is ${visible(el) ? "visible" : "not visible"}`;
+        if (s.text !== undefined && !textOf(el).includes(String(s.text))) return `${sel} text is ${fmt(textOf(el).slice(0, 200))}, expected it to contain ${fmt(s.text)}`;
+        if (s.equals !== undefined && textOf(el) !== String(s.equals)) return `${sel} text is ${fmt(textOf(el).slice(0, 200))}, expected exactly ${fmt(s.equals)}`;
+        if (s.value !== undefined && String(el.value) !== String(s.value)) return `${sel} value is ${fmt(el.value)}, expected ${fmt(s.value)}`;
+        return true;
+      }, ms);
+    } else if ("eval" in s) {
+      const v = await new Function("return (" + s.eval + ")")();
+      if ("equals" in s) { if (!eq(v, s.equals)) throw new Error(`eval returned ${fmt(v)}, expected ${fmt(s.equals)}`); }
+      else if (v === false) throw new Error("eval returned false");
+    } else throw new Error("unknown step " + fmt(s));
+  }
+  async function runSteps(steps) {
+    for (let i = 0; i < steps.length; i++) {
+      const s = steps[i];
+      try { await step(s, 2000); }
+      catch (e) {
+        const sel = s.click ?? s.dblclick ?? s.type ?? s.on ?? s.select ?? s.check ?? s.wait_for ?? s.expect;
+        const el = typeof sel === "string" ? $(sel) : null;
+        return { ok: false, steps_run: i, failure: { step: i + 1, action: Object.keys(s).find((k) => k !== "timeout_ms") , message: String((e && e.message) || e).slice(0, 600), text: textOf(document.body).slice(0, 800), html: (el || document.body).outerHTML.slice(0, 1500) } };
+      }
+    }
+    return { ok: true, steps_run: steps.length };
+  }
+  addEventListener("message", async (e) => {
+    const d = e.data;
+    if (!d || d.__wsp_test !== 1) return;
+    let out;
+    try { out = d.kind === "unit" ? await runUnit() : await runSteps(d.steps || []); }
+    catch (err) { out = { ok: false, failure: { message: String((err && err.message) || err) } }; }
+    parent.postMessage(Object.assign({ __wsp_test_result: d.id }, out), "*");
+  });
+}
+const WSP_TEST_AGENT = "<scr" + "ipt>(" + wspTestAgent.toString() + ")();</scr" + "ipt>";
+
+async function wspTestDoc(c) {
+  if (c.kind === "unit") {
+    // A synthetic entry that imports every test module; it lives in the cache only while assembling.
+    const entry = "__nokey_tests__.js";
+    wsp.cache.set(entry, { sig: "", content: c.files.map((f) => `import "./${f}";`).join("\n") + "\n", binary: false, mime: "text/javascript" });
+    try { return await wspAssemble(entry); } finally { wsp.cache.delete(entry); }
+  }
+  const page = c.page || wspEntry();
+  if (!page || !wsp.cache.has(page)) throw new Error(`page ${page || "(no entry point)"} is not in the workspace`);
+  return await wspAssemble(page);
+}
+async function wspRunCase(c, id) {
+  const t0 = performance.now();
+  let doc = sbxWrap(await wspTestDoc(c));
+  try { doc = (await sbxTranspileDoc(doc)).doc; } catch { /* run untranspiled */ }
+  doc = doc.replace(SBX_BRIDGE, () => SBX_BRIDGE + WSP_TEST_AGENT);
+  const fr = document.createElement("iframe");
+  fr.setAttribute("sandbox", "allow-scripts allow-forms");
+  fr.setAttribute("aria-hidden", "true");
+  fr.tabIndex = -1;
+  fr.style.cssText = "position:fixed;left:-12000px;top:0;width:1024px;height:768px;border:0;opacity:0;pointer-events:none";
+  const errors = [], warnings = [];
+  let resolveResult;
+  const result = new Promise((r) => { resolveResult = r; });
+  const onMsg = (e) => {
+    if (e.source !== fr.contentWindow || !e.data) return;
+    const d = e.data;
+    if (d.__wsp_test_result === id) { resolveResult(d); return; }
+    if (d.__sbx === 1 && (d.level === "error" || d.level === "warn")) {
+      const loc = wspLocate(d);
+      const item = { message: String(d.text).slice(0, 500), kind: d.kind || "console", ...(loc ? { path: loc.path, line: loc.line || undefined, col: loc.col || undefined } : {}) };
+      (d.level === "error" ? errors : warnings).length < 20 && (d.level === "error" ? errors : warnings).push(item);
+    }
+  };
+  addEventListener("message", onMsg);
+  try {
+    const loaded = new Promise((r) => fr.addEventListener("load", r, { once: true }));
+    fr.srcdoc = doc;
+    document.body.appendChild(fr);
+    await Promise.race([loaded, new Promise((r) => setTimeout(r, 10000))]);
+    await new Promise((r) => setTimeout(r, 400)); // first render and effects settle
+    fr.contentWindow.postMessage({ __wsp_test: 1, id, kind: c.kind, steps: c.steps }, "*");
+    const out = await Promise.race([result, new Promise((r) => setTimeout(() => r({ ok: false, failure: { message: "the test did not finish within 20 s (a step hung, or the page never loaded the test agent)" } }), 20000))]);
+    await new Promise((r) => setTimeout(r, 150)); // let errors raised by the last step arrive
+    const fatal = errors.filter((e) => e.kind === "exception" || e.kind === "rejection" || e.kind === "resource" || e.kind === "transpile");
+    const ok = Boolean(out.ok) && fatal.length === 0;
+    const failure = out.failure ?? (fatal.length ? { message: "uncaught error while testing: " + fatal[0].message } : undefined);
+    return { name: c.name, kind: c.kind, ok, ms: Math.round(performance.now() - t0), ...(out.steps_run !== undefined ? { steps_run: out.steps_run, steps: c.steps.length } : {}), ...(failure ? { failure } : {}), ...(out.tests ? { tests: out.tests } : {}), ...(errors.length ? { errors } : {}), ...(warnings.length ? { warnings: warnings.slice(0, 5) } : {}) };
+  } finally {
+    removeEventListener("message", onMsg);
+    fr.remove();
+  }
+}
+async function wspRunJob(job) {
+  await wsRefresh(true);
+  const live = wsFiles.filter((f) => !/(^|\/)\.gitkeep$/.test(f.path));
+  await wspFetch(live.filter((f) => wsp.cache.get(f.path)?.sig !== wspSig(f)));
+  const results = [];
+  for (const [i, c] of job.cases.entries()) {
+    try { results.push(await wspRunCase(c, `${job.id}:${i}`)); }
+    catch (e) { results.push({ name: c.name, kind: c.kind, ok: false, failure: { message: e.message } }); }
+  }
+  const failed = results.filter((r) => !r.ok).length;
+  wspLog({ level: failed ? "error" : "info", static: true, text: `[test] ${results.length - failed}/${results.length} case${results.length === 1 ? "" : "s"} passed${failed ? " — " + results.filter((r) => !r.ok).map((r) => `${r.name}: ${r.failure?.message ?? "failed"}`).join(" · ").slice(0, 400) : ""}` });
+  return { results };
+}
+// Poll while someone could be waiting on a test: a streaming reply or an open workspace.
+let wspTicks = 0;
+// wsp.runnerOk: this page may run test jobs (app_runner is admin-only); it is
+// what lets a chat request promise the router a browser test runner.
+async function wspRunnerTick(force = false) {
+  // Every tick while a reply streams; every ~4 s with only the workspace open (Tools-tab runs).
+  wspTicks++;
+  if (wsp.jobBusy || (!force && (document.hidden || !(chatCtl || (wsp.open && wspTicks % 4 === 0))))) return;
+  wsp.jobBusy = true;
+  let job = null;
+  try {
+    try { job = (await wsExec("app_runner", { op: "take" }))?.job; wsp.runnerOk = true; }
+    catch (e) { if (/40[13]|admin/i.test(e.message)) wsp.runnerOk = false; throw e; }
+    if (job) {
+      let result;
+      try { result = await wspRunJob(job); } catch (e) { result = { error: e.message }; }
+      await wsExec("app_runner", { op: "done", id: job.id, result });
+    }
+  } catch { /* router unreachable or not admin: no runner */ }
+  finally { wsp.jobBusy = false; }
+}
+setInterval(wspRunnerTick, 900);
+setTimeout(() => wspRunnerTick(true), 1500);
 
 function wspLog(d) {
   const body = $("#wsp-con-b");

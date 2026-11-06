@@ -2269,6 +2269,29 @@
             "type": "boolean",
             "default": true,
             "description": "Prepend a one-line system message describing the attached tools. Set false to leave the message list untouched."
+          },
+          "nokey_rounds": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 32,
+            "description": "Server-side agent rounds for tools:\"auto\" (default NOKEY_TOOL_ROUNDS, 8). The build gate extends it while it sends the agent back to work."
+          },
+          "nokey_gate": {
+            "oneOf": [{ "type": "boolean" }, { "type": "string", "enum": ["always"] }],
+            "default": true,
+            "description": "Build gate. When an agent turn changed the session workspace, the final answer is checked: static diagnostics, runtime errors of the current files and app_test results (and, with a test runner, that a test run passed against the current files). While anything is unmet the findings go back to the agent as a user turn and the loop continues (status frame `nokey.type = build_gate` on streams). false disables it; \"always\" checks even when nothing changed."
+          },
+          "nokey_gate_rounds": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 12,
+            "default": 6,
+            "description": "Most times the build gate may send the agent back in one request."
+          },
+          "nokey_runner": {
+            "type": "boolean",
+            "default": false,
+            "description": "The client runs app_test jobs in a browser (the dashboard's hidden preview, via the admin app_runner tool) for the duration of this request. Lets app_test wait for results and makes the gate require a passing test run."
           }
         }
       },

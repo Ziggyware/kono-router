@@ -1286,7 +1286,10 @@ export const WORKSPACE_DISCIPLINE = [
   "Read before editing (fs_read, or fs_grep to locate), then fs_patch with `old` copied exactly from what you read and expect_sha256 set to the sha256 you read; one fs_patch call can carry several edits to a file.",
   "If an edit is refused, the error says where the anchor diverged or why — correct that edit, do not rewrite the file.",
   "After a set of changes run ws_check (or app_debug, which adds what the live preview observed at runtime), fix every error it reports, and repeat until it is clean; use app_debug with wait_ms to confirm the preview runs the new files.",
+  "Then open the app and test it: write tests/<flow>.test.json UI cases for the behaviour the user asked for (and *.test.js unit tests for non-trivial logic), run app_test {all: true}, and fix until they pass. A build is finished only when it is clean and its tests pass; the router checks this and will send you back if not.",
 ].join(" ");
+
+export const TEAM_DISCIPLINE = "Use agent_team to work in parallel whenever a job has independent parts: builders on separate files or areas, a tester writing tests while you build, a reviewer or researcher alongside; give each agent a self-contained task, then integrate and verify their work.";
 
 export function toolPreamble(names?: string[]): string {
   const tools = names?.length ? names.map((n) => getTool(n)?.name ?? normalizeToolName(n)) : listTools().filter((t) => !t.admin).map((t) => t.name);
@@ -1296,6 +1299,7 @@ export function toolPreamble(names?: string[]): string {
     "Call them with a single valid JSON object of arguments; the router executes them and returns the result as a tool message.",
     "Prefer tools to guessing: web_search/web_fetch for current facts, fs_* for durable files, memory_* across conversations, rag_* for large documents, calculate/data/time/crypto for exact computation.",
     ...(tools.includes("fs_patch") ? [WORKSPACE_DISCIPLINE] : []),
+    ...(tools.includes("agent_team") ? [TEAM_DISCIPLINE] : []),
   ].join(" ");
 }
 
@@ -1869,7 +1873,9 @@ export function mergeToolDeclarations(clientTools: unknown[], options: { names?:
  *  Chosen for agentic utility, not novelty: web, files, memory, retrieval,
  *  clipboard, planning and exact compute. Admin tools are never auto-attached. */
 export const DEFAULT_AUTO_TOOLS = [
+  "agent_team",
   "app_debug",
+  "app_test",
   "calculate",
   "clipboard",
   "crypto",
