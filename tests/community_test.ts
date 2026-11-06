@@ -64,3 +64,11 @@ Deno.test("community posts: create, one vote per voter, comments, stats", async 
   const { json: stats } = await call("/v1/community/stats");
   assert(stats.posts >= 1 && stats.comments >= 1 && stats.top_people.some((p: { user: string }) => p.user === "Ada"), JSON.stringify(stats).slice(0, 300));
 });
+
+Deno.test("community posts: listing with a voter works past KV's 10-key getMany limit", async () => {
+  const post = (title: string) => app.fetch(new Request("http://x/v1/community/posts", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ user: "Ada", title, body: "b" }) }));
+  for (let i = 0; i < 12; i++) await post(`batch ${i}`);
+  const r = await app.fetch(new Request("http://x/v1/community/posts?sort=new&limit=50&voter=v9"));
+  const j = await r.json();
+  assert(r.status === 200 && j.posts.length >= 12 && j.posts.every((p: { myVote: number }) => p.myVote === 0), `list ${r.status}`);
+});
