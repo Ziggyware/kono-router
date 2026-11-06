@@ -333,11 +333,9 @@ tbody tr[aria-selected="true"] td:first-child { box-shadow: inset 2px 0 var(--ac
 .p2.open > .p2a { flex: 0 0 var(--p2, 55%); }
 .p2 > .p2b { flex: 1; min-width: 230px; display: flex; flex-direction: column; background: var(--bg-2); }
 .p2:not(.open) > .split-x, .p2:not(.open) > .p2b { display: none; }
-.p2b-h { flex: none; display: flex; align-items: center; gap: 10px; min-height: 32px; padding-left: 12px; border-bottom: 1px solid var(--line); font: 600 12px var(--mono); color: var(--fg); }
+.p2b-h { flex: none; display: flex; align-items: center; gap: 10px; min-height: 32px; padding: 0 12px 0 20px; border-bottom: 1px solid var(--line); font: 600 12px var(--mono); color: var(--fg); }
 .p2b-h .p { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .p2b-h .x { display: flex; gap: 6px; font-weight: 400; }
-.p2b-h .p2-x { align-self: stretch; border: 0; border-left: 1px solid var(--line); background: none; color: var(--dim); padding: 0 12px; cursor: pointer; font: inherit; }
-.p2b-h .p2-x:hover, .p2b-h .p2-x:focus-visible { color: var(--acc); outline: none; }
 .p2b-b { flex: 1; min-height: 0; overflow: auto; padding: 10px 12px; font: 400 12px/1.55 var(--mono); }
 .p2b-b .wi-kv { padding: 0 0 10px; }
 .p2b-b .chips { display: flex; flex-wrap: wrap; gap: 4px; }
@@ -742,7 +740,8 @@ input[type="color"]::-webkit-color-swatch { border: none; border-radius: 7px; }
 .split { display: grid; grid-template-columns: minmax(300px, 34%) 1fr; gap: 14px; align-items: start; }
 .trx { flex: 1; min-width: 0; display: flex; flex-direction: column; padding: 14px 20px 16px; gap: 0; }
 .trx-bar { flex: none; margin-bottom: 10px; }
-.trx-top.tl { flex: 0 0 var(--trx-top, 42%); min-height: 60px; max-height: none; border-radius: 0; outline: none; }
+.trx-top { flex: 0 0 var(--trx-top, 42%); min-height: 60px; }
+.trx-top > .tl { flex: 1; min-height: 0; max-height: none; border-radius: 0; outline: none; }
 .trx-bot { flex: 1; min-height: 60px; display: flex; flex-direction: column; border: 1px solid var(--line); background: var(--bg-2); }
 .trx-tabs { flex: none; display: flex; align-items: stretch; border-bottom: 1px solid var(--line); font: 400 11px var(--mono); }
 .trx-tabs button { border: 0; border-right: 1px solid var(--line); background: none; color: var(--dim); padding: 6px 14px; cursor: pointer; font: inherit; letter-spacing: .08em; text-transform: uppercase; }
@@ -941,6 +940,51 @@ dialog .row { margin-top: 4px; }
 .model-filter { display: flex; gap: 6px; margin-top: 6px; }
 .model-filter > * { flex: 1; width: 50%; }
 /* ---------- responsive ---------- */
+/* ---------- panel notches ----------
+   [data-fold="left|right|top|bottom"] marks a control panel by the side it
+   sits on. Folded, it shrinks to a 12px rail in place and only its notch
+   remains; the notch sits on the edge that faces the content and toggles. */
+[data-fold] { position: relative; }
+.fold-box { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+.fold-box > * { flex: 1; min-height: 0; }
+.pnotch { position: absolute; z-index: 7; display: grid; place-items: center; padding: 0; border: 1px solid var(--line-2); background: var(--bg-2); color: var(--dim); cursor: pointer; opacity: 0; transition: opacity .15s, color .12s, background .12s, border-color .12s; }
+.pnotch::before { content: ""; width: 5px; height: 5px; border: solid currentColor; border-width: 0 1.5px 1.5px 0; transform: rotate(var(--chev)); }
+[data-fold="left"] > .pnotch, [data-fold="right"] > .pnotch { top: 50%; width: 12px; height: 40px; margin-top: -20px; }
+[data-fold="top"] > .pnotch, [data-fold="bottom"] > .pnotch { left: 50%; width: 40px; height: 12px; margin-left: -20px; }
+[data-fold="left"] > .pnotch { right: 0; border-right: 0; border-radius: 6px 0 0 6px; --chev: 135deg; }
+[data-fold="right"] > .pnotch { left: 0; border-left: 0; border-radius: 0 6px 6px 0; --chev: -45deg; }
+[data-fold="top"] > .pnotch { bottom: 0; border-bottom: 0; border-radius: 6px 6px 0 0; --chev: -135deg; }
+[data-fold="bottom"] > .pnotch { top: 0; border-top: 0; border-radius: 0 0 6px 6px; --chev: 45deg; }
+[data-fold="left"].folded > .pnotch { --chev: -45deg; }
+[data-fold="right"].folded > .pnotch { --chev: 135deg; }
+[data-fold="top"].folded > .pnotch { --chev: 45deg; }
+[data-fold="bottom"].folded > .pnotch { --chev: -135deg; }
+[data-fold]:hover > .pnotch, [data-fold].folded > .pnotch, .pnotch:focus-visible { opacity: 1; }
+.pnotch:hover, .pnotch:focus-visible { color: var(--acc); background: var(--acc-soft); border-color: var(--acc-line); outline: none; }
+@media (hover: none) { .pnotch { opacity: .7; } }
+[data-fold].folded { padding: 0 !important; border-color: transparent !important; background: none !important; box-shadow: none !important; overflow: visible !important; }
+[data-fold].folded > :not(.pnotch) { display: none !important; }
+[data-fold="left"].folded, [data-fold="right"].folded { flex: 0 0 12px !important; width: 12px !important; min-width: 12px !important; max-width: 12px !important; min-height: 44px; }
+[data-fold="top"].folded, [data-fold="bottom"].folded { flex: 0 0 12px !important; height: 12px !important; min-height: 12px !important; max-height: 12px !important; min-width: 44px; }
+[data-fold].folded::after { content: ""; position: absolute; background: var(--line); pointer-events: none; }
+[data-fold="left"].folded::after, [data-fold="right"].folded::after { top: 0; bottom: 0; left: 50%; width: 1px; }
+[data-fold="top"].folded::after, [data-fold="bottom"].folded::after { left: 0; right: 0; top: 50%; height: 1px; }
+.fold-hide { display: none !important; }
+#pnotch-tip { position: fixed; inset: auto; margin: 0; padding: 3px 9px; border: 1px solid var(--acc-line); border-radius: 4px; background: var(--bg); color: var(--fg); font: 500 11px/1.4 var(--mono); letter-spacing: .06em; white-space: nowrap; pointer-events: none; box-shadow: 0 4px 16px rgba(0, 0, 0, .25); }
+/* the space a folded panel gives back */
+#v-chat.wsp-on:has(> #wsp.folded) .chat { flex: 1; }
+.wsp-left:has(> #wsp-insp-fold.folded) > .wsp-tree { flex: 1; }
+.p2.open:has(> .p2b.folded) > .p2a { flex: 1; }
+.tools-layout:has(> .tools-sidebar.folded) { grid-template-columns: 12px 1fr; }
+.tools-sidebar.folded { align-self: stretch; }
+.community-layout:has(> .comm-sidebar.folded) { grid-template-columns: 12px 1fr; }
+@media (max-width: 860px) {
+  .p2 > .p2b.folded { width: auto !important; max-width: none !important; min-width: 0 !important; height: 12px; }
+  .p2 > .p2b > .pnotch { top: 0; left: 50%; width: 40px; height: 12px; margin: 0 0 0 -20px; border: 1px solid var(--line-2); border-top: 0; border-radius: 0 0 6px 6px; --chev: 45deg; }
+  .p2 > .p2b.folded > .pnotch { --chev: -135deg; }
+  .p2 > .p2b.folded::after { top: 50%; bottom: auto; left: 0; right: 0; width: auto; height: 1px; }
+}
+
 /* ---------- AI field notches ---------- */
 .notch-host { position: relative; }
 .ai-notch {
@@ -1674,7 +1718,7 @@ select.tool-form-in { background: var(--bg-3); color: var(--fg); }
       </div>
     </div>
     <div class="split-x" id="wsp-split" role="separator" aria-orientation="vertical" aria-label="Resize chat and workspace" tabindex="0" hidden></div>
-    <aside class="wsp" id="wsp" aria-label="Workspace" hidden>
+    <aside class="wsp" id="wsp" aria-label="Workspace" data-fold="right" data-fold-label="Workspace" data-fold-split="prev" hidden>
       <div class="wsp-bar">
         <b>WORKSPACE</b>
         <select id="wsp-entry" aria-label="Entry point" title="Entry point the live view runs"></select>
@@ -1687,10 +1731,10 @@ select.tool-form-in { background: var(--bg-3); color: var(--fg); }
         <button id="wsp-close" title="Close workspace" aria-label="Close workspace">✕</button>
       </div>
       <div class="wsp-body" id="wsp-body">
-        <div class="wsp-left" id="wsp-left">
+        <div class="wsp-left" id="wsp-left" data-fold="left" data-fold-label="Files" data-fold-split="next">
           <div class="wsp-tree" id="wsp-tree" role="tree" aria-label="Files" tabindex="0"></div>
           <div class="split-y" id="wsp-split-y" role="separator" aria-orientation="horizontal" aria-label="Resize files and inspector" tabindex="0"></div>
-          <div class="wsp-insp" id="wsp-insp" aria-label="Inspector"></div>
+          <div class="fold-box" id="wsp-insp-fold" data-fold="bottom" data-fold-label="Inspector" data-fold-split="prev"><div class="wsp-insp" id="wsp-insp" aria-label="Inspector"></div></div>
         </div>
         <div class="split-x" id="wsp-split-2" role="separator" aria-orientation="vertical" aria-label="Resize files pane" tabindex="0"></div>
         <div class="wsp-main">
@@ -1741,7 +1785,7 @@ select.tool-form-in { background: var(--bg-3); color: var(--fg); }
     <div class="cm-page cm-chat" data-cpage="chat" hidden>
     <div class="community-layout">
       <!-- Channels & User Sidebar -->
-      <aside class="comm-sidebar">
+      <aside class="comm-sidebar" id="comm-side" data-fold="left" data-fold-label="Channels">
         <div class="comm-side-header">
           <div class="comm-brand">
             <svg viewBox="0 0 24 24" class="comm-icon"><use href="#i-users"/></svg>
@@ -1814,7 +1858,7 @@ select.tool-form-in { background: var(--bg-3); color: var(--fg); }
   </section>
 
   <section class="view" id="v-media" hidden>
-    <div class="row" style="margin-bottom:12px;align-items:stretch">
+    <div class="row" id="mctl" data-fold="top" data-fold-label="Image controls" style="margin-bottom:12px;align-items:stretch">
       <textarea id="mprompt" class="grow" rows="2" aria-label="Image prompt"></textarea>
       <div style="display:grid;gap:6px">
         <div class="row"><select id="mmodel" aria-label="Image model" style="max-width:340px"><option>nokey-image</option><option>nokey-image-flux</option><option>nokey-image-horde</option></select>
@@ -1837,18 +1881,18 @@ select.tool-form-in { background: var(--bg-3); color: var(--fg); }
 
   <section class="view p2v" id="v-catalog" hidden>
     <div class="row" style="margin-bottom:10px"><input id="cfilter" size="32" aria-label="Filter models"><button class="btn q" id="creload">reload</button><span class="grow"></span><span class="dim" id="ccount"></span></div>
-    <div class="p2" id="cp2"><div class="p2a"><table><thead><tr><th class="l" data-k="id">model</th><th class="l" data-k="owned_by">provider</th><th data-k="iq_effective">iq</th><th data-k="context_window">ctx</th><th class="l" data-k="caps">caps</th></tr></thead><tbody id="ctb"></tbody></table></div><div class="split-x" role="separator" aria-orientation="vertical" aria-label="Resize model list and detail" tabindex="0"></div><div class="p2b" aria-label="Model detail"></div></div>
+    <div class="p2" id="cp2"><div class="p2a"><table><thead><tr><th class="l" data-k="id">model</th><th class="l" data-k="owned_by">provider</th><th data-k="iq_effective">iq</th><th data-k="context_window">ctx</th><th class="l" data-k="caps">caps</th></tr></thead><tbody id="ctb"></tbody></table></div><div class="split-x" role="separator" aria-orientation="vertical" aria-label="Resize model list and detail" tabindex="0"></div><div class="p2b" id="cp2-d" aria-label="Model detail" data-fold="right" data-fold-label="Model detail" data-fold-split="prev"></div></div>
   </section>
 
   <section class="view" id="v-lanes" hidden>
     <div class="row" style="margin-bottom:10px"><select id="every" aria-label="Poll interval"><option value="5000">5s</option><option value="15000" selected>15s</option><option value="60000">60s</option><option value="0">off</option></select><span class="dim" id="lstat"></span></div>
     <p class="dim" style="font-size:12.5px;line-height:1.55;max-width:74ch;margin:0 0 12px">A <b style="color:var(--fg)">lane</b> is a pool of free model endpoints grouped by job. Ask for <span style="font-family:var(--mono)">free:smart</span> and the router races that lane's best endpoints, learns from every request, and keeps the winners ranked here. <b style="color:var(--fg)">Reliability</b> is the learned chance an endpoint answers well; the first-token times come from its live latency model. Hover any row for the raw statistics.</p>
-    <div class="kpis" id="kpis"></div><div id="lanes"></div>
+    <div class="fold-box" id="kpis-fold" data-fold="top" data-fold-label="Lane metrics"><div class="kpis" id="kpis"></div></div><div id="lanes"></div>
   </section>
 
   <section class="view p2v" id="v-endpoints" hidden>
     <div class="row" style="margin-bottom:10px"><input id="efilter" size="32" aria-label="Filter endpoints"><button class="btn q" id="ereload">reload</button><span class="grow"></span><span class="dim" id="ecount"></span></div>
-    <div class="p2" id="ep2"><div class="p2a"><table><thead><tr><th class="l" data-k="name">endpoint</th><th class="l" data-k="id">id</th><th data-k="catalog_tuples">tuples</th><th data-k="models">hints</th><th class="l" data-k="url">url</th></tr></thead><tbody id="etb"></tbody></table></div><div class="split-x" role="separator" aria-orientation="vertical" aria-label="Resize endpoint list and detail" tabindex="0"></div><div class="p2b" aria-label="Endpoint detail"></div></div>
+    <div class="p2" id="ep2"><div class="p2a"><table><thead><tr><th class="l" data-k="name">endpoint</th><th class="l" data-k="id">id</th><th data-k="catalog_tuples">tuples</th><th data-k="models">hints</th><th class="l" data-k="url">url</th></tr></thead><tbody id="etb"></tbody></table></div><div class="split-x" role="separator" aria-orientation="vertical" aria-label="Resize endpoint list and detail" tabindex="0"></div><div class="p2b" id="ep2-d" aria-label="Endpoint detail" data-fold="right" data-fold-label="Endpoint detail" data-fold-split="prev"></div></div>
   </section>
 
   <section class="view" id="v-tools" hidden>
@@ -1859,7 +1903,7 @@ select.tool-form-in { background: var(--bg-3); color: var(--fg); }
       <span class="grow"></span><span class="dim" id="tstat"></span>
     </div>
     <div data-tpage="dashboard" hidden>
-      <div class="kpis" id="tkpis"></div>
+      <div class="fold-box" id="tkpis-fold" data-fold="top" data-fold-label="Tool metrics"><div class="kpis" id="tkpis"></div></div>
       <div class="tdash" id="tdash"></div>
     </div>
     <div data-tpage="tools">
@@ -1941,7 +1985,7 @@ return { words: t.split(/\s+/).filter(Boolean).length, chars: t.length };</texta
     <!-- Master-Detail Modern Workbench -->
     <div class="tools-layout">
       <!-- Left: Tools Explorer Sidebar -->
-      <aside class="tools-sidebar">
+      <aside class="tools-sidebar" id="tools-side" data-fold="left" data-fold-label="Tool list">
         <div class="tools-cat-tabs" id="tool-cats">
           <button class="tools-cat-btn active" data-cat="all">All</button>
           <button class="tools-cat-btn" data-cat="compute">Compute</button>
@@ -2067,7 +2111,7 @@ return { words: t.split(/\s+/).filter(Boolean).length, chars: t.length };</texta
   </section>
 
   <section class="view" id="v-harvester" hidden>
-    <div class="row" style="margin-bottom:12px;align-items:stretch">
+    <div class="row" id="hctl" data-fold="top" data-fold-label="Harvester input" style="margin-bottom:12px;align-items:stretch">
       <textarea id="hurls" data-notch data-notch-label="Harvester — endpoint URLs" data-notch-context="One endpoint base URL per line. The harvester probes each candidate — health endpoint, models list, then a tiny chat request — and turns the reachable ones into services.json registry entries for the router catalog. Include the scheme, e.g. https://api.example.com/v1 on its own line." class="grow" rows="4" spellcheck="false" aria-label="Endpoint URLs, one per line" placeholder="One endpoint base URL per line, e.g.&#10;https://api.example.com/v1&#10;https://api.another-llm.dev/v1"></textarea>
       <div style="display:grid;gap:6px;align-content:start">
         <input id="hkey" data-notch data-notch-label="Harvester — bearer key" data-notch-context="An optional bearer or API key sent to the harvested endpoints while verifying them. Leave it empty for keyless endpoints. It is used only for the harvest probe requests and is not stored." type="password" autocomplete="off" aria-label="Bearer key for these endpoints" placeholder="Bearer key — optional; leave empty for keyless endpoints">
@@ -2087,7 +2131,7 @@ return { words: t.split(/\s+/).filter(Boolean).length, chars: t.length };</texta
         <label class="row" style="gap:4px"><input type="checkbox" id="terr"><span class="mid">errors</span></label>
         <span class="grow"></span><span class="dim" id="tcount"></span>
       </div>
-      <div class="trx-top tl" id="tlist" role="listbox" aria-label="Traces" tabindex="0"></div>
+      <div class="trx-top fold-box" id="tlist-fold" data-fold="top" data-fold-label="Trace list" data-fold-split="next"><div class="tl" id="tlist" role="listbox" aria-label="Traces" tabindex="0"></div></div>
       <div class="split-y" id="trx-split" role="separator" aria-orientation="horizontal" aria-label="Resize trace list and details" tabindex="0"></div>
       <div class="trx-bot">
         <div class="trx-tabs" role="tablist" aria-label="Trace detail">
@@ -2119,12 +2163,12 @@ return { words: t.split(/\s+/).filter(Boolean).length, chars: t.length };</texta
       <button class="btn q" id="sall" title="Search every source file (Shift+Enter)">all files</button>
       <span class="dim" id="smeta"></span>
     </div>
-    <div class="p2" id="sp2"><div class="p2a"><pre class="src" id="sout"></pre></div><div class="split-x" role="separator" aria-orientation="vertical" aria-label="Resize source and search results" tabindex="0"></div><div class="p2b" aria-label="Search results"></div></div>
+    <div class="p2" id="sp2"><div class="p2a"><pre class="src" id="sout"></pre></div><div class="split-x" role="separator" aria-orientation="vertical" aria-label="Resize source and search results" tabindex="0"></div><div class="p2b" id="sp2-d" aria-label="Search results" data-fold="right" data-fold-label="Search results" data-fold-split="prev"></div></div>
   </section>
 
   <section class="view p2v" id="v-inspector" hidden>
     <div class="row" style="margin-bottom:10px"><input id="ifilter" size="32" aria-label="Filter requests"><button class="btn q" id="iclear">clear</button><span class="grow"></span><span class="dim" id="icount"></span></div>
-    <div class="p2" id="ip2"><div class="p2a"><table><thead><tr><th class="l">time</th><th class="l">method</th><th class="l">path</th><th>status</th><th>ms</th><th class="l">trace</th></tr></thead><tbody id="itb"></tbody></table></div><div class="split-x" role="separator" aria-orientation="vertical" aria-label="Resize request list and detail" tabindex="0"></div><div class="p2b" aria-label="Request detail"></div></div>
+    <div class="p2" id="ip2"><div class="p2a"><table><thead><tr><th class="l">time</th><th class="l">method</th><th class="l">path</th><th>status</th><th>ms</th><th class="l">trace</th></tr></thead><tbody id="itb"></tbody></table></div><div class="split-x" role="separator" aria-orientation="vertical" aria-label="Resize request list and detail" tabindex="0"></div><div class="p2b" id="ip2-d" aria-label="Request detail" data-fold="right" data-fold-label="Request detail" data-fold-split="prev"></div></div>
   </section>
 </main>
     <aside class="side" id="side" aria-label="Settings" hidden>
@@ -2392,7 +2436,7 @@ return { words: t.split(/\s+/).filter(Boolean).length, chars: t.length };</texta
         <div class="row" style="justify-content:space-between;margin-bottom:6px">
           <span class="lbl">0. Generation Mode</span>
         </div>
-        <div class="tech-cards-grid" id="builder-modes"></div>
+        <div class="fold-box" id="builder-modes-fold" data-fold="top" data-fold-label="Generation mode"><div class="tech-cards-grid" id="builder-modes"></div></div>
       </div>
 
       <div>
@@ -2400,7 +2444,7 @@ return { words: t.split(/\s+/).filter(Boolean).length, chars: t.length };</texta
           <span class="lbl">1. Build Technique</span>
           <button class="btn q" id="btn-add-technique" style="font-size:10.5px;padding:2px 8px">+ New Technique</button>
         </div>
-        <div class="tech-cards-grid" id="builder-techniques-list"></div>
+        <div class="fold-box" id="builder-techniques-list-fold" data-fold="top" data-fold-label="Build technique"><div class="tech-cards-grid" id="builder-techniques-list"></div></div>
       </div>
 
       <div>
@@ -2408,7 +2452,7 @@ return { words: t.split(/\s+/).filter(Boolean).length, chars: t.length };</texta
           <span class="lbl">2. Technology / Stack</span>
           <button class="btn q" id="btn-add-tech" style="font-size:10.5px;padding:2px 8px">+ New Technology</button>
         </div>
-        <div class="tech-cards-grid" id="builder-tech-list"></div>
+        <div class="fold-box" id="builder-tech-list-fold" data-fold="top" data-fold-label="Technology stack"><div class="tech-cards-grid" id="builder-tech-list"></div></div>
       </div>
 
       <div>
@@ -2452,8 +2496,8 @@ return { words: t.split(/\s+/).filter(Boolean).length, chars: t.length };</texta
           <span class="lbl">Workspace Intelligence</span>
           <button class="btn q" id="ws-analyze" style="font-size:10.5px;padding:2px 8px">Analyze</button>
         </div>
-        <div id="ws-intel"><div class="dim" style="font-size:12px">Not analyzed yet — Analyze reads the workspace files and maps folders, endpoints, dependencies, tests and open TODOs.</div></div>
-        <div class="dim" id="ws-intel-stat" style="font-size:11px;margin-top:4px"></div>
+        <div class="fold-box" id="ws-intel-fold" data-fold="top" data-fold-label="Workspace intelligence"><div id="ws-intel"><div class="dim" style="font-size:12px">Not analyzed yet — Analyze reads the workspace files and maps folders, endpoints, dependencies, tests and open TODOs.</div></div>
+        <div class="dim" id="ws-intel-stat" style="font-size:11px;margin-top:4px"></div></div>
       </div>
       <div>
         <div class="row" style="justify-content:space-between;margin-bottom:6px">
@@ -2494,7 +2538,7 @@ return { words: t.split(/\s+/).filter(Boolean).length, chars: t.length };</texta
           <span class="lbl">Conversations</span>
           <button class="btn q" id="ws-save-conv" style="font-size:10.5px;padding:2px 8px">Save current conversation</button>
         </div>
-        <div id="ws-convs" style="display:flex;flex-direction:column;gap:4px"></div>
+        <div class="fold-box" id="ws-convs-fold" data-fold="top" data-fold-label="Conversations"><div id="ws-convs" style="display:flex;flex-direction:column;gap:4px"></div></div>
         <div class="dim" style="font-size:11.5px;margin-top:5px">The chat keeps one live conversation. Snapshots saved here let you keep several projects' chats and switch between them.</div>
       </div>
       <div>
@@ -3015,11 +3059,12 @@ function pane2(id, def) {
     layout: lay, save: () => store.set("panes", paneW),
   });
   lay();
-  b.innerHTML = `<div class="p2b-h"><span class="p"></span><span class="x"></span><button class="p2-x" aria-label="Close detail">✕</button></div><div class="p2b-b"></div>`;
+  b.innerHTML = `<div class="p2b-h"><span class="p"></span><span class="x"></span></div><div class="p2b-b"></div>`;
   const pane = {
     key: null, sig: null, body: $(".p2b-b", b), onhide: null,
     show(key, title, html, { sig = null, extra = "", flush = false } = {}) {
       root.classList.add("open");
+      foldSet(b, false);
       if (pane.key === key && sig !== null && pane.sig === sig) return;
       const keep = pane.key === key ? pane.body.scrollTop : 0;
       pane.key = key; pane.sig = sig;
@@ -3032,7 +3077,6 @@ function pane2(id, def) {
     hide() { root.classList.remove("open"); pane.key = pane.sig = null; pane.onhide?.(); },
     get open() { return root.classList.contains("open"); },
   };
-  $(".p2-x", b).onclick = () => pane.hide();
   return pane;
 }
 // Marks the selected row without re-rendering the list (keeps dblclick and focus intact).
@@ -7090,6 +7134,74 @@ cmd("app builder studio", () => openAppBuilder(), "builder");
 cmd("tools workbench", () => go("tools"), "tools");
 cmd("all views", () => openSheet(moreSheet), "nav");
 
+// ---- panel notches ----------------------------------------------------------
+// One mechanism for every collapsible control panel. A panel declares the side
+// it sits on (data-fold), its name (data-fold-label) and optionally the
+// splitter beside it (data-fold-split = prev|next), hidden while folded. The
+// notch is appended to the panel itself; panels whose content is re-rendered
+// wholesale wear a .fold-box wrapper so the notch survives. Folded state
+// persists per panel; a "fold" event lets owners react (the workspace stops
+// its preview while folded). The name shows in a top-layer popover, so no
+// clipping container or sheet can hide it.
+const folds = store.get("folds", {});
+const notchTip = Object.assign(document.createElement("div"), { id: "pnotch-tip" });
+notchTip.setAttribute("popover", "manual");
+notchTip.setAttribute("role", "tooltip");
+document.body.append(notchTip);
+const foldKey = (p) => p.dataset.foldKey || p.id;
+function tipShow(n) {
+  const p = n.parentElement;
+  notchTip.textContent = p.dataset.foldLabel;
+  if (!notchTip.matches(":popover-open")) notchTip.showPopover();
+  const r = n.getBoundingClientRect(), t = notchTip.getBoundingClientRect(), gap = 8;
+  const side = matchMedia("(max-width: 860px)").matches && p.classList.contains("p2b") ? "bottom" : p.dataset.fold;
+  let x, y;
+  if (side === "left") { x = r.right + gap; y = r.top + r.height / 2 - t.height / 2; }
+  else if (side === "right") { x = r.left - t.width - gap; y = r.top + r.height / 2 - t.height / 2; }
+  else if (side === "top") { x = r.left + r.width / 2 - t.width / 2; y = r.bottom + gap; }
+  else { x = r.left + r.width / 2 - t.width / 2; y = r.top - t.height - gap; }
+  notchTip.style.left = Math.max(4, Math.min(innerWidth - t.width - 4, x)) + "px";
+  notchTip.style.top = Math.max(4, Math.min(innerHeight - t.height - 4, y)) + "px";
+}
+function tipHide() { if (notchTip.matches(":popover-open")) notchTip.hidePopover(); }
+function foldSet(p, folded, persist = true) {
+  if (p.classList.contains("folded") === folded) return;
+  p.classList.toggle("folded", folded);
+  const n = $(":scope > .pnotch", p);
+  n?.setAttribute("aria-expanded", String(!folded));
+  n?.setAttribute("aria-label", (folded ? "Show " : "Hide ") + p.dataset.foldLabel);
+  const split = p.dataset.foldSplit === "prev" ? p.previousElementSibling : p.dataset.foldSplit === "next" ? p.nextElementSibling : null;
+  split?.classList.toggle("fold-hide", folded);
+  if (persist && foldKey(p)) {
+    if (folded) folds[foldKey(p)] = 1; else delete folds[foldKey(p)];
+    store.set("folds", folds);
+  }
+  p.dispatchEvent(new CustomEvent("fold", { detail: { folded } }));
+  if (n && notchTip.matches(":popover-open")) requestAnimationFrame(() => n.matches(":hover, :focus-visible") ? tipShow(n) : tipHide());
+}
+const foldToggle = (p) => foldSet(p, !p.classList.contains("folded"));
+function foldMount(root = document) {
+  for (const p of $$("[data-fold]", root)) {
+    if ($(":scope > .pnotch", p)) continue;
+    const label = p.dataset.foldLabel;
+    const n = document.createElement("button");
+    n.type = "button";
+    n.className = "pnotch";
+    if (p.id) n.setAttribute("aria-controls", p.id);
+    n.setAttribute("aria-expanded", "true");
+    n.setAttribute("aria-label", "Hide " + label);
+    n.addEventListener("click", () => foldToggle(p));
+    n.addEventListener("pointerenter", () => tipShow(n));
+    n.addEventListener("pointerleave", tipHide);
+    n.addEventListener("focus", () => { if (n.matches(":focus-visible")) tipShow(n); });
+    n.addEventListener("blur", tipHide);
+    p.append(n);
+    if (folds[foldKey(p)]) foldSet(p, true, false);
+    cmd("toggle " + label.toLowerCase(), () => foldToggle(p), "panel");
+  }
+}
+addEventListener("scroll", tipHide, true);
+
 // ---- AI field notches -------------------------------------------------------
 // A small ✦ AI tab pinned to a field's top-right corner. Clicking it opens a
 // panel that knows the field's label, its purpose (data-notch-context) and
@@ -7502,7 +7614,7 @@ const WSP_PRELUDE = `(function(FS, DIR, HOST, LS){
 })(__ARGS__);`;
 
 async function wspBuild() {
-  if (!wsp.open || wsp.tab !== "preview") return;
+  if (!wsp.open || wsp.tab !== "preview" || $("#wsp").classList.contains("folded")) return;
   if (wsp.building) { wsp.queued = true; return; }
   wsp.building = true;
   try { do { wsp.queued = false; await wspBuildOnce(); } while (wsp.queued); }
@@ -7726,6 +7838,7 @@ function wspTab(t) {
 function wspCloseFile() {
   wspGuard(() => { wsp.editing = null; wsp.dirty = false; wsp.buffer = null; wsp.stale = null; wspTab("preview"); wspInspect(); });
 }
+$("#wsp").addEventListener("fold", (e) => { if (e.detail.folded) $("#wsp-frame").srcdoc = ""; else wspBuild(); });
 $("#wsp-tabs").addEventListener("click", (e) => {
   const t = e.target.closest("[data-t]")?.dataset.t;
   if (t === "close") wspCloseFile();
@@ -8465,7 +8578,8 @@ function openWorkspace(path) {
   closeSheets();
   go("chat");
   if (!wsp.open) wspShow(true);
-  if (path) path.endsWith("/") ? wspSelect(path) : wspEdit(path);
+  foldSet($("#wsp"), false);
+  if (path) { foldSet($("#wsp-left"), false); path.endsWith("/") ? wspSelect(path) : wspEdit(path); }
 }
 // Desktop: drawer files open in the docked editor beside the tree; phones keep the drawer editor.
 const wsOpenAny = (path) => wspSupported() ? openWorkspace(path) : wsOpen(path);
@@ -8667,6 +8781,7 @@ addEventListener("resize", navFit);
 // =====================================================================
 // BOOT
 // =====================================================================
+foldMount();
 armArchitect();
 go(location.hash.slice(1) || "chat");
 connState(null);
