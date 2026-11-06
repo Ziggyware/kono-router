@@ -1,3 +1,10 @@
+# Split panes: workspace editor column, preview toggle, list | detail views — 2026-11-05
+
+- **Workspace.** The panel is now files/inspector | editor | live preview. A single click on a file opens it in the editor column to the right of the tree (images open in a viewer there). Arrow-key navigation selects without closing the open file. The inspector keeps metadata and actions; the editor column owns save (Ctrl+S), revert and close. Renaming a file or its folder keeps it open under the new path with its current text. The drawer opens files in the docked editor on desktop; phones keep the drawer editor.
+- **Preview toggle.** `preview` in the bar hides the live view and its controls and stops building, so hidden apps do not keep running. The pop-out (⧉) still works while it is hidden: it assembles the current page on demand.
+- **Splits.** Every boundary drags, steps with the arrow keys (Shift = coarse), jumps with Home/End and resets on double-click, and all widths persist. The editor width shrinks before the preview drops below its minimum.
+- **List | detail panes.** One `pane2` primitive (on the existing `splitter`) replaces inline row expansion. Inspector shows the request/response tree beside the request list, refreshed in place as calls finish. Endpoints shows the endpoint with its model hints (click → use in chat). Catalog shows the model detail; double-click or "use in chat" switches to chat. Source puts all-files search hits beside the code; a hit opens the whole file scrolled to the flagged line. Phones stack list over detail.
+
 # Agent compiler: `POST /v1/agent/compile` — 2026-11-05
 
 The server-side loop runs ReAct: one sequential LLM round trip per tool step. The compiler emits the whole plan as a DAG in a single planner round trip and runs it in parallel (LLMCompiler, Kim et al. 2023). A DAG of depth *d* costs one plan plus one join instead of *d* + 1 sequential calls.
