@@ -322,6 +322,37 @@ tbody tr.click { cursor: pointer; }
 tr.x td { white-space: normal; color: var(--mid); text-align: left; background: var(--surface); }
 tr.x td pre { border: 0; background: transparent; padding: 0; }
 td.t { max-width: 44ch; overflow: hidden; text-overflow: ellipsis; }
+tbody tr[aria-selected="true"] td { background: var(--acc-soft); }
+tbody tr[aria-selected="true"] td:first-child { box-shadow: inset 2px 0 var(--acc); }
+
+/* ---------- split panes: list | detail ---------- */
+.view.p2v { display: flex; flex-direction: column; overflow: hidden; }
+.view.p2v > .row { flex: none; }
+.p2 { flex: 1; min-height: 0; display: flex; border: 1px solid var(--line); }
+.p2 > .p2a { flex: 1; min-width: 200px; overflow: auto; }
+.p2.open > .p2a { flex: 0 0 var(--p2, 55%); }
+.p2 > .p2b { flex: 1; min-width: 230px; display: flex; flex-direction: column; background: var(--bg-2); }
+.p2:not(.open) > .split-x, .p2:not(.open) > .p2b { display: none; }
+.p2b-h { flex: none; display: flex; align-items: center; gap: 10px; min-height: 32px; padding-left: 12px; border-bottom: 1px solid var(--line); font: 600 12px var(--mono); color: var(--fg); }
+.p2b-h .p { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.p2b-h .x { display: flex; gap: 6px; font-weight: 400; }
+.p2b-h .p2-x { align-self: stretch; border: 0; border-left: 1px solid var(--line); background: none; color: var(--dim); padding: 0 12px; cursor: pointer; font: inherit; }
+.p2b-h .p2-x:hover, .p2b-h .p2-x:focus-visible { color: var(--acc); outline: none; }
+.p2b-b { flex: 1; min-height: 0; overflow: auto; padding: 10px 12px; font: 400 12px/1.55 var(--mono); }
+.p2b-b .wi-kv { padding: 0 0 10px; }
+.p2b-b .chips { display: flex; flex-wrap: wrap; gap: 4px; }
+.p2b-b .chips button { border: 1px solid var(--line-2); background: none; color: var(--mid); padding: 2px 8px; cursor: pointer; font: inherit; font-size: 11px; }
+.p2b-b .chips button:hover, .p2b-b .chips button:focus-visible { color: var(--acc); border-color: var(--acc); outline: none; }
+.p2 pre.src { max-height: none; border: 0; margin: 0; }
+.p2b-b .sallout { max-height: none; margin: 0; border: 0; }
+.p2b-b.flush { padding: 0; }
+.p2b-b .sall-r[aria-current="true"] { background: var(--acc-soft); }
+@media (max-width: 860px) {
+  .p2 { flex-direction: column; }
+  .p2.open > .p2a { flex: 0 0 42%; min-width: 0; }
+  .p2 > .split-x { display: none !important; }
+  .p2 > .p2b { min-width: 0; border-top: 1px solid var(--line); }
+}
 
 /* ---------- kpis, lanes, charts ---------- */
 .kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(148px, 1fr)); gap: 10px; margin-bottom: 16px; }
@@ -433,6 +464,7 @@ pre.wrap { white-space: pre-wrap; word-break: break-word; }
 .sall-r:hover, .sall-r:focus-visible { background: var(--surface-2); color: var(--fg); outline: none; }
 .sall-r b { flex: none; font-weight: 500; color: var(--acc); }
 .sall-r span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+pre.src span.hit { background: var(--acc-soft); box-shadow: inset 2px 0 var(--acc); }
 pre.src mark { background: var(--acc-soft); color: var(--acc); box-shadow: 0 0 0 1px var(--acc-line); }
 /* ---------- workspace split: chat | tree/inspector | live view ---------- */
 #v-chat.wsp-on .chat { flex: 0 0 var(--chat-w, 44%); min-width: 300px; }
@@ -472,7 +504,22 @@ body.split-armed iframe { pointer-events: none; }
 .wsp-left { flex: 0 0 var(--tree-w, 260px); min-width: 150px; display: flex; flex-direction: column; }
 .wsp-tree { flex: 0 0 var(--tree-h, 58%); min-height: 48px; overflow: auto; padding: 3px 0; outline: none; }
 .wsp-insp { flex: 1; min-height: 48px; overflow: auto; display: flex; flex-direction: column; }
-.wsp-view { flex: 1; min-width: 200px; display: flex; flex-direction: column; }
+.wsp-main { flex: 1; min-width: 220px; display: flex; flex-direction: column; }
+.wsp-tabs { flex: 0 0 30px; display: flex; border-bottom: 1px solid var(--line-2); overflow-x: auto; scrollbar-width: none; }
+.wsp-tabs button { display: flex; align-items: center; gap: 7px; max-width: 300px; border: 0; border-right: 1px solid var(--line); background: none; padding: 0 12px; cursor: pointer; color: var(--dim); white-space: nowrap; outline: none; }
+.wsp-tabs button:hover, .wsp-tabs button:focus-visible { color: var(--fg); }
+.wsp-tabs button[aria-selected="true"] { color: var(--acc); background: var(--bg-2); box-shadow: inset 0 -2px var(--acc); }
+.wsp-tabs .nm { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.wsp-tabs .dirty, .wsp-tabs .note { color: var(--warn); }
+.wsp-tabs .note { font-size: 10.5px; }
+.wsp-tabs .x { padding: 0 2px; color: var(--dim); }
+.wsp-tabs .x:hover { color: var(--bad); }
+.wsp-view { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.wsp-view[hidden], .wsp-ed[hidden] { display: none; }
+.wsp-ed { flex: 1; min-height: 0; display: flex; flex-direction: column; background: var(--bg-2); }
+.wsp-ed .wi-ed { min-height: 0; }
+.wsp-ed .ed-path { margin-left: auto; min-width: 0; align-self: center; padding: 0 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--dim); }
+.wsp-ed .wi-img { margin: 10px; max-height: none; }
 .wsp-stage { flex: 1; min-height: 0; position: relative; display: flex; justify-content: center; background: var(--bg-2); }
 .wsp-stage iframe { flex: none; width: 100%; height: 100%; border: 0; background: #fff; }
 .wsp-stage[data-vp] iframe { width: var(--vp); max-width: 100%; box-shadow: 0 0 0 1px var(--line-2); }
@@ -1639,14 +1686,17 @@ select.tool-form-in { background: var(--bg-3); color: var(--fg); }
         <button id="wsp-more" title="Project: intelligence, conversations, GitHub, zip">⋯</button>
         <button id="wsp-close" title="Close workspace" aria-label="Close workspace">✕</button>
       </div>
-      <div class="wsp-body">
+      <div class="wsp-body" id="wsp-body">
         <div class="wsp-left" id="wsp-left">
           <div class="wsp-tree" id="wsp-tree" role="tree" aria-label="Files" tabindex="0"></div>
           <div class="split-y" id="wsp-split-y" role="separator" aria-orientation="horizontal" aria-label="Resize files and inspector" tabindex="0"></div>
           <div class="wsp-insp" id="wsp-insp" aria-label="Inspector"></div>
         </div>
-        <div class="split-x" id="wsp-split-2" role="separator" aria-orientation="vertical" aria-label="Resize files and live view" tabindex="0"></div>
-        <div class="wsp-view">
+        <div class="split-x" id="wsp-split-2" role="separator" aria-orientation="vertical" aria-label="Resize files pane" tabindex="0"></div>
+        <div class="wsp-main">
+        <div class="wsp-tabs" id="wsp-tabs" role="tablist" aria-label="Editor and preview"></div>
+        <div class="wsp-ed" id="wsp-ed" role="tabpanel" aria-label="Editor" hidden></div>
+        <div class="wsp-view" id="wsp-view" role="tabpanel" aria-label="Preview">
           <div class="wsp-stage" id="wsp-stage">
             <iframe id="wsp-frame" title="Live view" sandbox="allow-scripts allow-modals allow-forms allow-popups"></iframe>
             <div class="wsp-empty" id="wsp-empty" hidden></div>
@@ -1655,6 +1705,7 @@ select.tool-form-in { background: var(--bg-3); color: var(--fg); }
             <button class="wsp-con-h" id="wsp-con-h" aria-expanded="false"><span>CONSOLE</span><span id="wsp-con-n"></span><span class="grow"></span><span id="wsp-con-clr" role="button" title="Clear console">clear</span></button>
             <div class="wsp-con-b" id="wsp-con-b" hidden></div>
           </div>
+        </div>
         </div>
       </div>
     </aside>
@@ -1784,9 +1835,9 @@ select.tool-form-in { background: var(--bg-3); color: var(--fg); }
     <div class="cards" id="plgrid"></div>
   </section>
 
-  <section class="view" id="v-catalog" hidden>
+  <section class="view p2v" id="v-catalog" hidden>
     <div class="row" style="margin-bottom:10px"><input id="cfilter" size="32" aria-label="Filter models"><button class="btn q" id="creload">reload</button><span class="grow"></span><span class="dim" id="ccount"></span></div>
-    <table><thead><tr><th class="l" data-k="id">model</th><th class="l" data-k="owned_by">provider</th><th data-k="iq_effective">iq</th><th data-k="context_window">ctx</th><th class="l" data-k="caps">caps</th></tr></thead><tbody id="ctb"></tbody></table>
+    <div class="p2" id="cp2"><div class="p2a"><table><thead><tr><th class="l" data-k="id">model</th><th class="l" data-k="owned_by">provider</th><th data-k="iq_effective">iq</th><th data-k="context_window">ctx</th><th class="l" data-k="caps">caps</th></tr></thead><tbody id="ctb"></tbody></table></div><div class="split-x" role="separator" aria-orientation="vertical" aria-label="Resize model list and detail" tabindex="0"></div><div class="p2b" aria-label="Model detail"></div></div>
   </section>
 
   <section class="view" id="v-lanes" hidden>
@@ -1795,9 +1846,9 @@ select.tool-form-in { background: var(--bg-3); color: var(--fg); }
     <div class="kpis" id="kpis"></div><div id="lanes"></div>
   </section>
 
-  <section class="view" id="v-endpoints" hidden>
+  <section class="view p2v" id="v-endpoints" hidden>
     <div class="row" style="margin-bottom:10px"><input id="efilter" size="32" aria-label="Filter endpoints"><button class="btn q" id="ereload">reload</button><span class="grow"></span><span class="dim" id="ecount"></span></div>
-    <table><thead><tr><th class="l" data-k="name">endpoint</th><th class="l" data-k="id">id</th><th data-k="catalog_tuples">tuples</th><th data-k="models">hints</th><th class="l" data-k="url">url</th></tr></thead><tbody id="etb"></tbody></table>
+    <div class="p2" id="ep2"><div class="p2a"><table><thead><tr><th class="l" data-k="name">endpoint</th><th class="l" data-k="id">id</th><th data-k="catalog_tuples">tuples</th><th data-k="models">hints</th><th class="l" data-k="url">url</th></tr></thead><tbody id="etb"></tbody></table></div><div class="split-x" role="separator" aria-orientation="vertical" aria-label="Resize endpoint list and detail" tabindex="0"></div><div class="p2b" aria-label="Endpoint detail"></div></div>
   </section>
 
   <section class="view" id="v-tools" hidden>
@@ -2060,7 +2111,7 @@ return { words: t.split(/\s+/).filter(Boolean).length, chars: t.length };</texta
     <table id="otab"></table><pre id="oraw" hidden style="margin-top:10px"></pre>
   </section>
 
-  <section class="view" id="v-source" hidden>
+  <section class="view p2v" id="v-source" hidden>
     <div class="row" style="margin-bottom:10px">
       <select id="sfile" aria-label="File"><option>main.ts</option><option>math.ts</option><option>learning.ts</option><option>trace.ts</option><option>index.html</option><option>openapi.json</option><option>CHANGES.md</option><option>services.json</option><option>deno.json</option></select>
       <input id="sq" class="grow" style="min-width:220px" aria-label="Search source" placeholder="search — enter: this file · shift+enter: all files">
@@ -2068,13 +2119,12 @@ return { words: t.split(/\s+/).filter(Boolean).length, chars: t.length };</texta
       <button class="btn q" id="sall" title="Search every source file (Shift+Enter)">all files</button>
       <span class="dim" id="smeta"></span>
     </div>
-    <div id="sallout" class="sallout" hidden></div>
-    <pre class="src" id="sout"></pre>
+    <div class="p2" id="sp2"><div class="p2a"><pre class="src" id="sout"></pre></div><div class="split-x" role="separator" aria-orientation="vertical" aria-label="Resize source and search results" tabindex="0"></div><div class="p2b" aria-label="Search results"></div></div>
   </section>
 
-  <section class="view" id="v-inspector" hidden>
+  <section class="view p2v" id="v-inspector" hidden>
     <div class="row" style="margin-bottom:10px"><input id="ifilter" size="32" aria-label="Filter requests"><button class="btn q" id="iclear">clear</button><span class="grow"></span><span class="dim" id="icount"></span></div>
-    <table><thead><tr><th class="l">time</th><th class="l">method</th><th class="l">path</th><th>status</th><th>ms</th><th class="l">trace</th></tr></thead><tbody id="itb"></tbody></table>
+    <div class="p2" id="ip2"><div class="p2a"><table><thead><tr><th class="l">time</th><th class="l">method</th><th class="l">path</th><th>status</th><th>ms</th><th class="l">trace</th></tr></thead><tbody id="itb"></tbody></table></div><div class="split-x" role="separator" aria-orientation="vertical" aria-label="Resize request list and detail" tabindex="0"></div><div class="p2b" aria-label="Request detail"></div></div>
   </section>
 </main>
     <aside class="side" id="side" aria-label="Settings" hidden>
@@ -2927,7 +2977,6 @@ cmd("connection settings", () => $("#conn").click());
 cmd("open api reference", () => window.open("/docs", "_blank", "noopener"));
 
 // ---------- inspector ----------
-let iopen = null;
 // Visual JSON: a collapsible tree with typed, coloured values instead of a
 // raw dump. Strings/keys/values are capped so a huge payload stays light.
 function jsonTree(v, depth = 0) {
@@ -2949,24 +2998,78 @@ function jsonTree(v, depth = 0) {
   return `<span>${esc(String(v))}</span>`;
 }
 
+// ---- split panes: list | detail ----------------------------------------------
+// One primitive for every list/detail view: a persisted, draggable split built
+// on splitter(); the detail opens on demand and updates in place so its
+// scroll survives live list refreshes. Phones stack the two (CSS).
+const paneW = store.get("panes", {});
+function pane2(id, def) {
+  const root = $("#" + id), a = $(":scope > .p2a", root), bar = $(":scope > .split-x", root), b = $(":scope > .p2b", root);
+  const lay = () => root.style.setProperty("--p2", ((paneW[id] ?? def) * 100).toFixed(2) + "%");
+  splitter(bar, {
+    axis: "x",
+    get: () => a.getBoundingClientRect().width,
+    set: (px) => { paneW[id] = px / Math.max(1, root.clientWidth); },
+    min: () => 200, max: () => Math.max(200, root.clientWidth - 235),
+    reset: () => { delete paneW[id]; },
+    layout: lay, save: () => store.set("panes", paneW),
+  });
+  lay();
+  b.innerHTML = `<div class="p2b-h"><span class="p"></span><span class="x"></span><button class="p2-x" aria-label="Close detail">✕</button></div><div class="p2b-b"></div>`;
+  const pane = {
+    key: null, sig: null, body: $(".p2b-b", b), onhide: null,
+    show(key, title, html, { sig = null, extra = "", flush = false } = {}) {
+      root.classList.add("open");
+      if (pane.key === key && sig !== null && pane.sig === sig) return;
+      const keep = pane.key === key ? pane.body.scrollTop : 0;
+      pane.key = key; pane.sig = sig;
+      $(".p", b).textContent = title; $(".p", b).title = title;
+      $(".x", b).innerHTML = extra;
+      pane.body.classList.toggle("flush", flush);
+      pane.body.innerHTML = html;
+      pane.body.scrollTop = keep;
+    },
+    hide() { root.classList.remove("open"); pane.key = pane.sig = null; pane.onhide?.(); },
+    get open() { return root.classList.contains("open"); },
+  };
+  $(".p2-x", b).onclick = () => pane.hide();
+  return pane;
+}
+// Marks the selected row without re-rendering the list (keeps dblclick and focus intact).
+function markRow(tbody, attr, key) { for (const tr of tbody.querySelectorAll(`tr[${attr}]`)) tr.setAttribute("aria-selected", String(tr.getAttribute(attr) === key)); }
+
+const ipane = pane2("ip2", 0.56);
+ipane.onhide = () => markRow($("#itb"), "data-k", null);
+function inspectDetail(e) {
+  const k = `${e.t}-${e.path}`;
+  ipane.show(k, `${e.method} ${e.path}`, `<div class="wi-kv"><span>url</span><b>${esc(e.url)}</b><span>status</span><b class="${e.status >= 200 && e.status < 300 ? "ok" : e.status ? "no" : "dim"}">${e.status || "pending"}</b><span>time</span><b>${new Date(e.t).toLocaleTimeString()} · ${ms(e.ms)}</b>${e.trace ? `<span>trace</span><b><a href="#" data-tr="${e.trace}">${e.trace}</a></b>` : ""}</div>
+    <div class="jt-wrap"><div class="jt-sec">request</div>${jsonTree(e.req)}<div class="jt-sec">response</div>${jsonTree(e.res)}<details class="jt-raw"><summary>raw JSON</summary><pre class="wrap">${esc(JSON.stringify({ request: e.req, response: e.res }, null, 2).slice(0, 20000))}</pre></details></div>`,
+    { sig: `${e.status}|${e.ms}|${e.trace}` });
+}
+$("#ip2 .p2b").addEventListener("click", (ev) => { const a = ev.target.closest("[data-tr]"); if (a) { ev.preventDefault(); openTrace(a.dataset.tr); } });
+
 function renderInspector() {
   const q = $("#ifilter").value.trim().toLowerCase();
   const rows = ilog.filter((e) => !q || `${e.method} ${e.path} ${e.status} ${e.trace}`.toLowerCase().includes(q));
   $("#icount").textContent = `${rows.length}/${ilog.length}`;
   $("#itb").innerHTML = rows.map((e) => {
     const k = `${e.t}-${e.path}`;
-    const head = `<tr class="click" data-k="${esc(k)}"><td class="l">${new Date(e.t).toLocaleTimeString()}</td><td class="l">${e.method}</td><td class="l t" title="${esc(e.url)}">${esc(e.path)}</td>
+    const head = `<tr class="click" data-k="${esc(k)}" aria-selected="${ipane.key === k}"><td class="l">${new Date(e.t).toLocaleTimeString()}</td><td class="l">${e.method}</td><td class="l t" title="${esc(e.url)}">${esc(e.path)}</td>
       <td class="${e.status >= 200 && e.status < 300 ? "ok" : e.status ? "no" : "dim"}">${e.status || "…"}</td><td>${ms(e.ms)}</td><td class="l">${e.trace ? `<a href="#" data-tr="${e.trace}">${e.trace.slice(0, 12)}</a>` : ""}</td></tr>`;
-    return iopen === k ? head + `<tr class="x"><td colspan="6"><div class="jt-wrap"><div class="jt-sec">request</div>${jsonTree(e.req)}<div class="jt-sec">response</div>${jsonTree(e.res)}<details class="jt-raw"><summary>raw JSON</summary><pre class="wrap">${esc(JSON.stringify({ request: e.req, response: e.res }, null, 2).slice(0, 20000))}</pre></details></div></td></tr>` : head;
+    if (ipane.key === k) inspectDetail(e);
+    return head;
   }).join("");
 }
 $("#ifilter").oninput = renderInspector;
-$("#iclear").onclick = () => { ilog.length = 0; renderInspector(); };
+$("#iclear").onclick = () => { ilog.length = 0; ipane.hide(); renderInspector(); };
 $("#itb").onclick = (ev) => {
   const a = ev.target.closest("[data-tr]");
   if (a) { ev.preventDefault(); openTrace(a.dataset.tr); return; }
   const tr = ev.target.closest("tr[data-k]");
-  if (tr) { iopen = iopen === tr.dataset.k ? null : tr.dataset.k; renderInspector(); }
+  if (!tr) return;
+  if (ipane.key === tr.dataset.k) { ipane.hide(); return; }
+  const e = ilog.find((x) => `${x.t}-${x.path}` === tr.dataset.k);
+  if (e) { inspectDetail(e); markRow($("#itb"), "data-k", tr.dataset.k); }
 };
 enter.inspector = renderInspector;
 
@@ -4301,12 +4404,26 @@ function renderCatalog() {
   const key = (m) => csort.k === "caps" ? caps(m) : m[csort.k] ?? (csort.k === "iq_effective" || csort.k === "context_window" ? -1 : "");
   rows.sort((a, b) => { const x = key(a), y = key(b); return (typeof x === "number" ? x - y : String(x).localeCompare(String(y))) * csort.d; });
   $("#ccount").textContent = `${rows.length}/${catalog.length}`;
-  $("#ctb").innerHTML = rows.map((m) => `<tr class="click" data-id="${esc(m.id)}"><td class="t">${esc(m.id)}</td><td class="l t">${esc(m.owned_by ?? "")}</td><td>${f(m.iq_effective, 3)}</td><td>${m.context_window ? kfmt(m.context_window) : "—"}</td><td class="l dim">${caps(m)}</td></tr>`).join("");
+  $("#ctb").innerHTML = rows.map((m) => `<tr class="click" data-id="${esc(m.id)}" aria-selected="${cpane.key === m.id}"><td class="t">${esc(m.id)}</td><td class="l t">${esc(m.owned_by ?? "")}</td><td>${f(m.iq_effective, 3)}</td><td>${m.context_window ? kfmt(m.context_window) : "—"}</td><td class="l dim">${caps(m)}</td></tr>`).join("");
 }
 $("#cfilter").oninput = renderCatalog;
 $("#creload").onclick = loadCatalog;
 $$("#v-catalog th[data-k]").forEach((th) => th.onclick = () => { csort = { k: th.dataset.k, d: csort.k === th.dataset.k ? -csort.d : (["iq_effective", "context_window"].includes(th.dataset.k) ? -1 : 1) }; renderCatalog(); });
-$("#ctb").onclick = (e) => { const tr = e.target.closest("[data-id]"); if (!tr) return; $("#pmodel").value = tr.dataset.id; saveParams(); updateModelHint(); go("chat"); toast("model → " + tr.dataset.id); };
+const cpane = pane2("cp2", 0.58);
+cpane.onhide = () => markRow($("#ctb"), "data-id", null);
+function useModel(id) { $("#pmodel").value = id; saveParams(); updateModelHint(); go("chat"); toast("model → " + id); }
+$("#ctb").onclick = (e) => {
+  const tr = e.target.closest("[data-id]");
+  if (!tr) return;
+  const id = tr.dataset.id;
+  if (e.detail >= 2) { useModel(id); return; }
+  const m = catalog.find((x) => x.id === id);
+  if (!m) return;
+  cpane.show(id, id, `<div class="wi-kv"><span>provider</span><b>${esc(m.owned_by ?? "—")}</b><span>iq</span><b>${f(m.iq_effective, 3)}</b><span>context</span><b>${m.context_window ? kfmt(m.context_window) + " tokens" : "—"}</b><span>caps</span><b>${caps(m) || "—"}</b></div><div class="jt-wrap">${jsonTree(m)}</div>`,
+    { extra: `<button class="btn q" data-use="${esc(id)}">use in chat</button>` });
+  markRow($("#ctb"), "data-id", id);
+};
+$("#cp2 .p2b").addEventListener("click", (e) => { const b = e.target.closest("[data-use]"); if (b) useModel(b.dataset.use); });
 enter.catalog = () => { if (!catalog.length) loadCatalog(); else renderCatalog(); };
 
 // =====================================================================
@@ -4504,7 +4621,7 @@ enter.lanes = () => { pollLanes(); scheduleLanes(); };
 // =====================================================================
 // ENDPOINTS
 // =====================================================================
-let endpoints = [], esort = { k: "catalog_tuples", d: -1 }, eopen = null;
+let endpoints = [], esort = { k: "catalog_tuples", d: -1 };
 async function loadEndpoints() { try { endpoints = (await req("/v1/endpoints")).data ?? []; renderEndpoints(); } catch (e) { toast("endpoints: " + e.message, true); } }
 function renderEndpoints() {
   const q = $("#efilter").value.trim().toLowerCase();
@@ -4512,13 +4629,25 @@ function renderEndpoints() {
   const key = (e) => esort.k === "models" ? (e.models ?? []).length : e[esort.k];
   rows.sort((a, b) => { const x = key(a), y = key(b); return (typeof x === "number" ? x - y : String(x).localeCompare(String(y))) * esort.d; });
   $("#ecount").textContent = `${rows.length}/${endpoints.length} · ${rows.reduce((s, e) => s + (e.catalog_tuples || 0), 0)} tuples`;
-  $("#etb").innerHTML = rows.map((e) => `<tr class="click" data-id="${esc(e.id)}"><td class="t">${esc(e.name)}</td><td class="l t">${esc(e.id)}</td><td class="${e.catalog_tuples ? "" : "no"}">${e.catalog_tuples}</td><td>${(e.models ?? []).length}</td><td class="l t" title="${esc(e.url)}">${esc(e.url)}</td></tr>`
-    + (eopen === e.id ? `<tr class="x"><td colspan="5">${(e.models ?? []).map(esc).join(" · ")}</td></tr>` : "")).join("");
+  $("#etb").innerHTML = rows.map((e) => `<tr class="click" data-id="${esc(e.id)}" aria-selected="${epane.key === e.id}"><td class="t">${esc(e.name)}</td><td class="l t">${esc(e.id)}</td><td class="${e.catalog_tuples ? "" : "no"}">${e.catalog_tuples}</td><td>${(e.models ?? []).length}</td><td class="l t" title="${esc(e.url)}">${esc(e.url)}</td></tr>`
+).join("");
 }
 $("#efilter").oninput = renderEndpoints;
 $("#ereload").onclick = loadEndpoints;
 $$("#v-endpoints th[data-k]").forEach((th) => th.onclick = () => { esort = { k: th.dataset.k, d: esort.k === th.dataset.k ? -esort.d : (["catalog_tuples", "models"].includes(th.dataset.k) ? -1 : 1) }; renderEndpoints(); });
-$("#etb").onclick = (ev) => { const tr = ev.target.closest("tr[data-id]"); if (tr) { eopen = eopen === tr.dataset.id ? null : tr.dataset.id; renderEndpoints(); } };
+const epane = pane2("ep2", 0.6);
+epane.onhide = () => markRow($("#etb"), "data-id", null);
+$("#etb").onclick = (ev) => {
+  const tr = ev.target.closest("tr[data-id]");
+  if (!tr) return;
+  if (epane.key === tr.dataset.id) { epane.hide(); return; }
+  const e = endpoints.find((x) => x.id === tr.dataset.id);
+  if (!e) return;
+  const models = e.models ?? [];
+  epane.show(e.id, e.name, `<div class="wi-kv"><span>id</span><b>${esc(e.id)}</b><span>url</span><b>${esc(e.url)}</b><span>tuples</span><b class="${e.catalog_tuples ? "" : "no"}">${e.catalog_tuples}</b><span>model hints</span><b>${models.length}</b></div>${models.length ? `<div class="chips">${models.map((m) => `<button data-use="${esc(m)}" title="use in chat">${esc(m)}</button>`).join("")}</div>` : ""}`);
+  markRow($("#etb"), "data-id", e.id);
+};
+$("#ep2 .p2b").addEventListener("click", (e) => { const b = e.target.closest("[data-use]"); if (b) useModel(b.dataset.use); });
 enter.endpoints = () => { if (!endpoints.length) loadEndpoints(); };
 
 // =====================================================================
@@ -6645,7 +6774,6 @@ function renderSource() {
 }
 function searchThisFile() {
   srcFilter = $("#sq").value.trim();
-  $("#sallout").hidden = true;
   if (!srcLines.length) loadSource(); else renderSource();
 }
 $("#sfile").onchange = () => { srcFilter = ""; loadSource(); };
@@ -6656,25 +6784,28 @@ $("#sq").addEventListener("keydown", (e) => { if (e.key === "Enter") { e.prevent
 // loading that file with the line filter set to the same query.
 async function searchAllFiles() {
   const q = $("#sq").value.trim();
-  const out = $("#sallout");
   if (q.length < 2) { toast("type at least 2 characters", true); return; }
-  out.hidden = false;
-  out.innerHTML = `<div class="dim">searching…</div>`;
+  spane.show("q:" + q, `"${q}"`, `<div class="dim sall-h">searching…</div>`, { flush: true });
   try {
     const j = await req("/v1/source/search?q=" + encodeURIComponent(q), { admin: true });
     const rows = j.results ?? [];
-    out.innerHTML = `<div class="dim sall-h">${j.count} match${j.count === 1 ? "" : "es"}${j.truncated ? " (capped at 200)" : ""} across all files</div>` +
-      rows.map((r) => `<button class="sall-r" data-sall-file="${esc(r.file)}"><b>${esc(r.file)}:${r.line}</b><span>${esc(r.text)}</span></button>`).join("");
-  } catch (e) { out.innerHTML = `<div class="no">search failed: ${esc(e.message)}</div>`; }
+    spane.show("q:" + q, `"${q}" · ${j.count}${j.truncated ? "+" : ""}`, `<div class="sallout">` +
+      rows.map((r) => `<button class="sall-r" data-sall-file="${esc(r.file)}" data-sall-line="${r.line}"><b>${esc(r.file)}:${r.line}</b><span>${esc(r.text)}</span></button>`).join("") + `</div>`, { flush: true, sig: String(j.count) });
+  } catch (e) { spane.show("q:" + q, `"${q}"`, `<div class="no sall-h">search failed: ${esc(e.message)}</div>`, { flush: true }); }
 }
+const spane = pane2("sp2", 0.64);
 $("#sall").onclick = searchAllFiles;
 enter.source = () => { if (!srcLines.length) loadSource(); };
-$("#sallout").addEventListener("click", (e) => {
+$("#sp2 .p2b").addEventListener("click", async (e) => {
   const b = e.target.closest("[data-sall-file]");
   if (!b) return;
-  $("#sfile").value = b.dataset.sallFile;
-  srcFilter = $("#sq").value.trim();
-  loadSource();
+  for (const x of $$("#sp2 .sall-r")) x.setAttribute("aria-current", String(x === b));
+  srcFilter = "";
+  if ($("#sfile").value !== b.dataset.sallFile || !srcLines.length) { $("#sfile").value = b.dataset.sallFile; await loadSource(); }
+  else renderSource();
+  // Whole file shown; the hit line is scrolled into view and flagged.
+  const line = $(`#sout span[style="counter-set:l ${Number(b.dataset.sallLine) - 1}"]`);
+  if (line) { line.scrollIntoView({ block: "center" }); line.classList.add("hit"); setTimeout(() => line.classList.remove("hit"), 1600); }
 });
 
 // =====================================================================
@@ -7149,7 +7280,7 @@ function diffWsFiles(next) {
 // refresh. Stops when all sheets close.
 // Split-pane state; layout and preferences persist, selection and build state do not.
 const wsp = Object.assign({ open: false, entry: "", live: true, vp: "auto", chat: 0.44, tree: 260, treeH: 0.58, con: 160 }, store.get("wsp", {}),
-  { sel: null, editing: null, dirty: false, buffer: null, stale: null, ask: null, page: "", doc: "", cache: new Map(), sig: "", sigs: null, flash: new Set(), rows: [], logs: 0, errs: 0, warns: 0, timer: 0, building: false, queued: false, reloadEditor: false });
+  { tab: "preview", sel: null, editing: null, dirty: false, buffer: null, stale: null, ask: null, page: "", doc: "", cache: new Map(), sig: "", sigs: null, flash: new Set(), rows: [], logs: 0, errs: 0, warns: 0, timer: 0, building: false, queued: false, reloadEditor: false });
 wsp.collapsed = new Set(Array.isArray(wsp.collapsed) ? wsp.collapsed : []);
 let wsWatchTimer = null;
 function wsWatch(on) {
@@ -7371,7 +7502,7 @@ const WSP_PRELUDE = `(function(FS, DIR, HOST, LS){
 })(__ARGS__);`;
 
 async function wspBuild() {
-  if (!wsp.open) return;
+  if (!wsp.open || wsp.tab !== "preview") return;
   if (wsp.building) { wsp.queued = true; return; }
   wsp.building = true;
   try { do { wsp.queued = false; await wspBuildOnce(); } while (wsp.queued); }
@@ -7411,6 +7542,14 @@ async function wspBuildOnce() {
   }
 }
 const wspSchedule = () => { clearTimeout(wsp.timer); wsp.timer = setTimeout(wspBuild, 350); };
+// The current page assembled without rendering it (pop-out while the preview is hidden).
+async function wspDocNow() {
+  const page = wsp.page || wspEntry();
+  if (!page) return null;
+  const live = wsFiles.filter((f) => !/(^|\/)\.gitkeep$/.test(f.path));
+  await wspFetch(live.filter((f) => wsp.cache.get(f.path)?.sig !== wspSig(f)));
+  return { doc: await wspAssemble(page), page };
+}
 
 // ---- console ---------------------------------------------------------------
 function wspConClear() {
@@ -7499,9 +7638,8 @@ $("#wsp-tree").addEventListener("click", (e) => {
   const b = e.target.closest(".tr");
   if (!b) { wspSelect(null); return; }
   const p = b.dataset.p;
-  // Rows re-render on select, so a native dblclick never lands: the second click (detail 2) opens the editor.
-  if (e.detail >= 2 && !p.endsWith("/")) { wspEdit(p); return; }
-  if (p.endsWith("/") && (wsp.sel === p || e.target.closest(".tw"))) wspToggleDir(p);
+  if (!p.endsWith("/")) { if (wsp.editing !== p) wspEdit(p); else { wspSelect(p); wspTab("edit"); } return; }
+  if (wsp.sel === p || e.target.closest(".tw")) wspToggleDir(p);
   wspSelect(p);
 });
 $("#wsp-tree").addEventListener("keydown", (e) => {
@@ -7527,14 +7665,11 @@ function wspGuard(next) {
   confirmDialog(`Discard unsaved edits to ${wsp.editing}?`, () => { wsp.dirty = false; wsp.editing = null; next(); }, "Discard");
 }
 function wspSelect(path, { focus = false } = {}) {
-  wspGuard(() => {
-    if (wsp.editing && wsp.editing !== path) wsp.editing = null;
-    wsp.sel = path;
-    wsp.ask = null;
-    wspRenderTree();
-    wspInspect();
-    if (focus) $(`#wsp-tree .tr[aria-selected="true"]`)?.focus();
-  });
+  wsp.sel = path;
+  wsp.ask = null;
+  wspRenderTree();
+  wspInspect();
+  if (focus) $(`#wsp-tree .tr[aria-selected="true"]`)?.focus();
 }
 function wspInspect() {
   const box = $("#wsp-insp");
@@ -7552,22 +7687,11 @@ function wspInspect() {
     const c = wsp.cache.get(sel);
     const runnable = WSP_RUN.test(sel);
     const isEntry = wspEntry() === sel;
-    const editing = wsp.editing === sel;
-    const img = c?.binary && /^image\//.test(c.mime) ? `<img class="wi-img" alt="" src="${wspDataUrl(c)}">` : "";
-    box.innerHTML = `<div class="wi-h"><span class="p">${esc(sel)}</span>${editing && wsp.dirty ? `<span class="dirty" title="unsaved">●</span>` : ""}${wsp.stale === sel ? `<span class="note">changed on disk</span>` : ""}</div>
-      ${editing ? "" : `<div class="wi-kv"><span>size</span><b>${f.bytes} B</b><span>lines</span><b>${f.lines ?? "—"}</b><span>type</span><b>${esc(f.mime || "")}</b><span>modified</span><b>${f.mtime ? esc(new Date(f.mtime).toLocaleString()) : "—"}</b></div>${img}`}
-      <div class="wi-acts">${c?.binary ? "" : `<button data-a="edit" aria-pressed="${editing}">${editing ? "close editor" : "edit"}</button>`}${editing ? `<button data-a="save">save · ctrl+s</button><button data-a="revert">revert</button>` : ""}${runnable ? `<button data-a="entry" aria-pressed="${isEntry}" title="Run this file in the live view">${isEntry ? "★ entry" : "set entry"}</button>` : ""}<button data-a="rename">rename</button><button data-a="download">download</button><button class="bad" data-a="delete">delete</button></div>${ask}
-      ${editing ? `<textarea class="wi-ed" id="wi-ed" spellcheck="false" aria-label="Edit ${esc(sel)}"></textarea>` : ""}`;
-    if (editing) {
-      const ed = $("#wi-ed");
-      ed.value = wsp.buffer ?? c?.content ?? "";
-      ed.addEventListener("input", () => { wsp.buffer = ed.value; if (!wsp.dirty) { wsp.dirty = true; wspInspectHead(); } });
-      ed.addEventListener("keydown", (e) => {
-        if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s") { e.preventDefault(); wspSaveFile(); }
-        else if (e.key === "Tab" && !e.shiftKey && !e.ctrlKey && !e.altKey) { e.preventDefault(); ed.setRangeText("  ", ed.selectionStart, ed.selectionEnd, "end"); ed.dispatchEvent(new Event("input")); }
-      });
-    }
+    box.innerHTML = `<div class="wi-h"><span class="p">${esc(sel)}</span></div>
+      <div class="wi-kv"><span>size</span><b>${f.bytes} B</b><span>lines</span><b>${f.lines ?? "—"}</b><span>type</span><b>${esc(f.mime || "")}</b><span>modified</span><b>${f.mtime ? esc(new Date(f.mtime).toLocaleString()) : "—"}</b></div>
+      <div class="wi-acts">${wsp.editing === sel ? "" : `<button data-a="edit">open</button>`}${runnable ? `<button data-a="entry" aria-pressed="${isEntry}" title="Run this file in the live view">${isEntry ? "★ entry" : "set entry"}</button>` : ""}<button data-a="rename">rename</button><button data-a="download">download</button><button class="bad" data-a="delete">delete</button></div>${ask}`;
   }
+  wspRenderEditor();
   const input = $("#wi-in");
   if (input) {
     input.focus();
@@ -7575,11 +7699,70 @@ function wspInspect() {
     input.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); wspAskApply(); } else if (e.key === "Escape") { wsp.ask = null; wspInspect(); } });
   }
 }
-function wspInspectHead() {
-  const h = $("#wsp-insp .wi-h");
-  if (!h || h.querySelector(".dirty")) return;
-  h.insertAdjacentHTML("beforeend", `<span class="dirty" title="unsaved">●</span>`);
+// ---- editor column ----------------------------------------------------------------
+// Re-rendered whole only when the open file changes (or on reload); otherwise
+// only its header updates, so the caret and scroll survive tree activity.
+// The panel right of the tree holds two tabs: the open file and the live
+// preview. The preview only builds (and its app only runs) while showing.
+function wspPanes() {
+  if (!wsp.editing && wsp.tab !== "preview") { wsp.tab = "preview"; queueMicrotask(wspBuild); }
+  const pv = wsp.tab === "preview";
+  $("#wsp-ed").hidden = pv;
+  $("#wsp-view").hidden = !pv;
+  for (const id of ["wsp-reload", "wsp-live", "wsp-vp"]) $("#" + id).hidden = !pv;
+  const p = wsp.editing;
+  const name = p ? p.split("/").pop() : "";
+  $("#wsp-tabs").innerHTML = (p ? `<button role="tab" id="wsp-tab-edit" data-t="edit" aria-selected="${!pv}" aria-controls="wsp-ed" tabindex="${pv ? -1 : 0}" title="${esc(p)}"><span class="nm">${esc(name)}</span>${wsp.dirty ? `<span class="dirty" title="unsaved">●</span>` : ""}${wsp.stale === p ? `<span class="note">changed on disk</span>` : ""}<span class="x" data-t="close" role="button" aria-label="Close ${esc(name)}" title="Close">×</span></button>` : "")
+    + `<button role="tab" id="wsp-tab-preview" data-t="preview" aria-selected="${pv}" aria-controls="wsp-view" tabindex="${pv ? 0 : -1}">preview</button>`;
 }
+function wspTab(t) {
+  if (t === "edit" && !wsp.editing) return;
+  const was = wsp.tab;
+  wsp.tab = t;
+  wspPanes();
+  if (t === was) return;
+  if (t === "preview") wspBuild(); else $("#wsp-frame").srcdoc = "";
+}
+function wspCloseFile() {
+  wspGuard(() => { wsp.editing = null; wsp.dirty = false; wsp.buffer = null; wsp.stale = null; wspTab("preview"); wspInspect(); });
+}
+$("#wsp-tabs").addEventListener("click", (e) => {
+  const t = e.target.closest("[data-t]")?.dataset.t;
+  if (t === "close") wspCloseFile();
+  else if (t) wspTab(t);
+});
+$("#wsp-tabs").addEventListener("keydown", (e) => {
+  if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+  e.preventDefault();
+  wspTab(wsp.tab === "preview" ? "edit" : "preview");
+  $(`#wsp-tabs [aria-selected="true"]`)?.focus();
+});
+function wspRenderEditor(force = false) {
+  wspPanes();
+  const pane = $("#wsp-ed");
+  const path = wsp.editing;
+  if (!path) { pane.replaceChildren(); delete pane.dataset.path; return; }
+  if (!force && pane.dataset.path === path) return;
+  pane.dataset.path = path;
+  const c = wsp.cache.get(path);
+  const body = c?.binary
+    ? (/^image\//.test(c.mime) ? `<img class="wi-img" alt="${esc(path)}" src="${wspDataUrl(c)}">` : `<div class="wi-hint">binary · ${esc(c.mime || "unknown type")}</div>`)
+    : `<textarea class="wi-ed" id="wi-ed" spellcheck="false" aria-label="Edit ${esc(path)}"></textarea>`;
+  pane.innerHTML = `<div class="wi-acts">${c?.binary ? "" : `<button data-e="save">save · ctrl+s</button><button data-e="revert">revert</button>`}<span class="ed-path" title="${esc(path)}">${esc(path)}</span></div>${body}`;
+  const ed = $("#wi-ed");
+  if (!ed) return;
+  ed.value = wsp.buffer ?? c?.content ?? "";
+  ed.addEventListener("input", () => { wsp.buffer = ed.value; if (!wsp.dirty) { wsp.dirty = true; wspRenderEditor(); } });
+  ed.addEventListener("keydown", (e) => {
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s") { e.preventDefault(); wspSaveFile(); }
+    else if (e.key === "Tab" && !e.shiftKey && !e.ctrlKey && !e.altKey) { e.preventDefault(); ed.setRangeText("  ", ed.selectionStart, ed.selectionEnd, "end"); ed.dispatchEvent(new Event("input")); }
+  });
+}
+$("#wsp-ed").addEventListener("click", (e) => {
+  const a = e.target.closest("[data-e]")?.dataset.e;
+  if (a === "save") wspSaveFile();
+  else if (a === "revert") { wsp.dirty = false; wsp.buffer = null; wsp.stale = null; wspEdit(wsp.editing, true); }
+});
 $("#wsp-insp").addEventListener("click", (e) => {
   if (e.target.id === "wi-ok") { wspAskApply(); return; }
   if (e.target.id === "wi-no") { wsp.ask = null; wspInspect(); return; }
@@ -7592,9 +7775,7 @@ $("#wsp-insp").addEventListener("click", (e) => {
   else if (a === "rename") { wsp.ask = { kind: "rename", label: "new path", verb: "move", value: sel }; wspInspect(); }
   else if (a === "refresh") wsRefresh(true);
   else if (a === "delete") wspDelete(sel);
-  else if (a === "edit") { if (wsp.editing === sel) wspGuard(() => { wsp.editing = null; wspInspect(); }); else wspEdit(sel); }
-  else if (a === "save") wspSaveFile();
-  else if (a === "revert") { wsp.dirty = false; wsp.buffer = null; wsp.stale = null; wspEdit(sel, true); }
+  else if (a === "edit") wspEdit(sel);
   else if (a === "entry") { wsp.entry = wspEntry() === sel && wsp.entry === sel ? "" : sel; wsp.page = ""; wspSave(); wspRenderTree(); wspInspect(); wspBuild(); }
   else if (a === "download") wspDownload(sel);
 });
@@ -7606,8 +7787,7 @@ async function wspEdit(path, reload = false) {
       try { const r = await wsReadFull(path); wsp.cache.set(path, { sig: f ? wspSig(f) : "", content: r.content ?? "", binary: Boolean(r.binary), mime: r.mime || "" }); }
       catch (e) { toast("open failed: " + e.message, true); return; }
     }
-    if (wsp.cache.get(path)?.binary) { wsp.editing = null; toast("binary file — not editable here", true); }
-    wspRenderTree(); wspInspect();
+    wspRenderTree(); wspInspect(); wspRenderEditor(true); wspTab("edit");
     const ed = $("#wi-ed");
     if (ed) { ed.setSelectionRange(0, 0); ed.focus(); ed.scrollTop = ed.scrollLeft = 0; }
   });
@@ -7659,13 +7839,20 @@ async function wspAskApply() {
         const moving = wsFiles.filter((f) => f.path.startsWith(from));
         if (moving.some((f) => wsFiles.some((g) => g.path === to + f.path.slice(from.length)))) { toast("target folder has clashing files", true); return; }
         $("#wsp-stat").textContent = `moving ${moving.length} files…`;
+        if (wsp.editing?.startsWith(from) && wsp.dirty) await wsExec("fs_write", { path: wsp.editing, content: $("#wi-ed").value });
         for (const f of moving) await wspMove(f.path, to + f.path.slice(from.length));
+        if (wsp.editing?.startsWith(from)) {
+          const moved = to + wsp.editing.slice(from.length);
+          wsp.cache.set(moved, { ...wsp.cache.get(wsp.editing), content: $("#wi-ed")?.value ?? wsp.cache.get(wsp.editing)?.content ?? "", sig: "" });
+          wsp.editing = moved; wsp.dirty = false; wsp.buffer = null;
+        }
         wsp.sel = to;
       } else {
         if (wsFiles.some((f) => f.path === v)) { toast(`${v} already exists`, true); return; }
-        if (wsp.editing === from && wsp.dirty) await wsExec("fs_write", { path: from, content: $("#wi-ed").value });
+        const text = wsp.editing === from ? $("#wi-ed")?.value : null;
+        if (text != null && wsp.dirty) await wsExec("fs_write", { path: from, content: text });
         await wspMove(from, v);
-        if (wsp.editing === from) wsp.editing = v;
+        if (wsp.editing === from) { wsp.cache.set(v, { ...wsp.cache.get(from), content: text ?? wsp.cache.get(from)?.content ?? "", sig: "" }); wsp.editing = v; }
         wsp.dirty = false; wsp.buffer = null;
         wsp.sel = v;
       }
@@ -7736,6 +7923,7 @@ function wspLayout() {
   view.style.setProperty("--tree-w", wsp.tree + "px");
   view.style.setProperty("--tree-h", (wsp.treeH * 100).toFixed(2) + "%");
   view.style.setProperty("--con-h", wsp.con + "px");
+  wspPanes();
   const stage = $("#wsp-stage");
   if (wsp.vp === "auto") { delete stage.dataset.vp; stage.style.removeProperty("--vp"); }
   else { stage.dataset.vp = wsp.vp; stage.style.setProperty("--vp", wsp.vp + "px"); }
@@ -7816,7 +8004,7 @@ splitter($("#wsp-split-2"), {
   axis: "x",
   get: () => wsp.tree,
   set: (px) => { wsp.tree = px; },
-  min: () => 150, max: () => Math.max(150, $("#wsp").clientWidth - 205),
+  min: () => 150, max: () => Math.max(150, $("#wsp").clientWidth - 225),
   reset: () => { wsp.tree = 260; },
 });
 splitter($("#wsp-split-y"), {
@@ -7851,7 +8039,11 @@ $("#wsp-entry").addEventListener("change", (e) => { wsp.entry = e.target.value; 
 $("#wsp-reload").addEventListener("click", () => { wsp.cache.clear(); wsRefresh(true).then(wspBuild); });
 $("#wsp-live").addEventListener("click", () => { wsp.live = !wsp.live; wspLayout(); wspSave(); if (wsp.live) wspBuild(); });
 $("#wsp-vp").addEventListener("change", (e) => { wsp.vp = e.target.value; wspLayout(); wspSave(); });
-$("#wsp-pop").addEventListener("click", () => { if (wsp.doc) launchAppSandbox(wsp.doc, wsp.page || wspEntry()); else toast("nothing built yet", true); });
+$("#wsp-pop").addEventListener("click", async () => {
+  if (wsp.tab === "preview") { if (wsp.doc) launchAppSandbox(wsp.doc, wsp.page || wspEntry()); else toast("nothing built yet", true); return; }
+  try { const r = await wspDocNow(); if (r) launchAppSandbox(r.doc, r.page); else toast("no entry point", true); }
+  catch (e) { toast("build failed: " + e.message, true); }
+});
 $("#wsp-more").addEventListener("click", () => wsDrawerOpen());
 $("#wsp-close").addEventListener("click", () => wspGuard(() => { wsp.editing = null; wspShow(false); }));
 addEventListener("resize", () => { if (wsp.open && !wspSupported()) wspShow(false); });
@@ -7882,7 +8074,7 @@ async function wsOpen(path) {
 
 $("#ws-files")?.addEventListener("click", (e) => {
   const b = e.target.closest("[data-ws-open]");
-  if (b) wsOpen(b.dataset.wsOpen);
+  if (b) wsOpenAny(b.dataset.wsOpen);
 });
 $("#ws-refresh")?.addEventListener("click", wsRefresh);
 $("#ws-analyze")?.addEventListener("click", analyzeWorkspace);
@@ -7943,7 +8135,7 @@ $("#ws-new-btn")?.addEventListener("click", async () => {
     await wsExec("fs_write", { path: name, content: "" });
     $("#ws-new-name").value = "";
     await wsRefresh();
-    wsOpen(name);
+    wsOpenAny(name);
   } catch (e) { toast("create failed: " + e.message, true); }
 });
 $("#ws-save")?.addEventListener("click", async () => {
@@ -8273,8 +8465,10 @@ function openWorkspace(path) {
   closeSheets();
   go("chat");
   if (!wsp.open) wspShow(true);
-  if (path) wspSelect(path);
+  if (path) path.endsWith("/") ? wspSelect(path) : wspEdit(path);
 }
+// Desktop: drawer files open in the docked editor beside the tree; phones keep the drawer editor.
+const wsOpenAny = (path) => wspSupported() ? openWorkspace(path) : wsOpen(path);
 function wsDrawerOpen() {
   wsWatch(true);
   ghLoad();
