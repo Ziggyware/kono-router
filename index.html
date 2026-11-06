@@ -504,13 +504,21 @@ body.split-armed iframe { pointer-events: none; }
 .wsp-left { flex: 0 0 var(--tree-w, 260px); min-width: 150px; display: flex; flex-direction: column; }
 .wsp-tree { flex: 0 0 var(--tree-h, 58%); min-height: 48px; overflow: auto; padding: 3px 0; outline: none; }
 .wsp-insp { flex: 1; min-height: 48px; overflow: auto; display: flex; flex-direction: column; }
-.wsp-view { flex: 1; min-width: 200px; display: flex; flex-direction: column; }
+.wsp-main { flex: 1; min-width: 220px; display: flex; flex-direction: column; }
+.wsp-tabs { flex: 0 0 30px; display: flex; border-bottom: 1px solid var(--line-2); overflow-x: auto; scrollbar-width: none; }
+.wsp-tabs button { display: flex; align-items: center; gap: 7px; max-width: 300px; border: 0; border-right: 1px solid var(--line); background: none; padding: 0 12px; cursor: pointer; color: var(--dim); white-space: nowrap; outline: none; }
+.wsp-tabs button:hover, .wsp-tabs button:focus-visible { color: var(--fg); }
+.wsp-tabs button[aria-selected="true"] { color: var(--acc); background: var(--bg-2); box-shadow: inset 0 -2px var(--acc); }
+.wsp-tabs .nm { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.wsp-tabs .dirty, .wsp-tabs .note { color: var(--warn); }
+.wsp-tabs .note { font-size: 10.5px; }
+.wsp-tabs .x { padding: 0 2px; color: var(--dim); }
+.wsp-tabs .x:hover { color: var(--bad); }
+.wsp-view { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .wsp-view[hidden], .wsp-ed[hidden] { display: none; }
-.wsp-ed { flex: 1; min-width: 220px; display: flex; flex-direction: column; background: var(--bg-2); }
-.wsp-body.has-view .wsp-ed { flex: 0 1 var(--ed-w, 480px); }
-.wsp-body:not(.has-ed):not(.has-view) .wsp-left { flex: 1; }
-.wsp-ed .wi-h { background: var(--bg); }
+.wsp-ed { flex: 1; min-height: 0; display: flex; flex-direction: column; background: var(--bg-2); }
 .wsp-ed .wi-ed { min-height: 0; }
+.wsp-ed .ed-path { margin-left: auto; min-width: 0; align-self: center; padding: 0 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--dim); }
 .wsp-ed .wi-img { margin: 10px; max-height: none; }
 .wsp-stage { flex: 1; min-height: 0; position: relative; display: flex; justify-content: center; background: var(--bg-2); }
 .wsp-stage iframe { flex: none; width: 100%; height: 100%; border: 0; background: #fff; }
@@ -1670,7 +1678,6 @@ select.tool-form-in { background: var(--bg-3); color: var(--fg); }
       <div class="wsp-bar">
         <b>WORKSPACE</b>
         <select id="wsp-entry" aria-label="Entry point" title="Entry point the live view runs"></select>
-        <button id="wsp-prev" aria-pressed="true" title="Show or hide the live preview">preview</button>
         <button id="wsp-reload" title="Rebuild and reload the live view">↻</button>
         <button id="wsp-live" aria-pressed="true" title="Rebuild automatically when files change">live</button>
         <select id="wsp-vp" aria-label="Viewport width" title="Viewport width"><option value="auto">fit</option><option value="390">390</option><option value="768">768</option><option value="1280">1280</option></select>
@@ -1686,9 +1693,10 @@ select.tool-form-in { background: var(--bg-3); color: var(--fg); }
           <div class="wsp-insp" id="wsp-insp" aria-label="Inspector"></div>
         </div>
         <div class="split-x" id="wsp-split-2" role="separator" aria-orientation="vertical" aria-label="Resize files pane" tabindex="0"></div>
-        <div class="wsp-ed" id="wsp-ed" aria-label="Editor" hidden></div>
-        <div class="split-x" id="wsp-split-3" role="separator" aria-orientation="vertical" aria-label="Resize editor and live view" tabindex="0" hidden></div>
-        <div class="wsp-view" id="wsp-view">
+        <div class="wsp-main">
+        <div class="wsp-tabs" id="wsp-tabs" role="tablist" aria-label="Editor and preview"></div>
+        <div class="wsp-ed" id="wsp-ed" role="tabpanel" aria-label="Editor" hidden></div>
+        <div class="wsp-view" id="wsp-view" role="tabpanel" aria-label="Preview">
           <div class="wsp-stage" id="wsp-stage">
             <iframe id="wsp-frame" title="Live view" sandbox="allow-scripts allow-modals allow-forms allow-popups"></iframe>
             <div class="wsp-empty" id="wsp-empty" hidden></div>
@@ -1697,6 +1705,7 @@ select.tool-form-in { background: var(--bg-3); color: var(--fg); }
             <button class="wsp-con-h" id="wsp-con-h" aria-expanded="false"><span>CONSOLE</span><span id="wsp-con-n"></span><span class="grow"></span><span id="wsp-con-clr" role="button" title="Clear console">clear</span></button>
             <div class="wsp-con-b" id="wsp-con-b" hidden></div>
           </div>
+        </div>
         </div>
       </div>
     </aside>
@@ -7270,8 +7279,8 @@ function diffWsFiles(next) {
 // agent generates appear (and announce themselves) without a manual
 // refresh. Stops when all sheets close.
 // Split-pane state; layout and preferences persist, selection and build state do not.
-const wsp = Object.assign({ open: false, entry: "", live: true, vp: "auto", chat: 0.44, tree: 260, treeH: 0.58, con: 160, preview: true, edW: 480 }, store.get("wsp", {}),
-  { sel: null, editing: null, dirty: false, buffer: null, stale: null, ask: null, page: "", doc: "", cache: new Map(), sig: "", sigs: null, flash: new Set(), rows: [], logs: 0, errs: 0, warns: 0, timer: 0, building: false, queued: false, reloadEditor: false });
+const wsp = Object.assign({ open: false, entry: "", live: true, vp: "auto", chat: 0.44, tree: 260, treeH: 0.58, con: 160 }, store.get("wsp", {}),
+  { tab: "preview", sel: null, editing: null, dirty: false, buffer: null, stale: null, ask: null, page: "", doc: "", cache: new Map(), sig: "", sigs: null, flash: new Set(), rows: [], logs: 0, errs: 0, warns: 0, timer: 0, building: false, queued: false, reloadEditor: false });
 wsp.collapsed = new Set(Array.isArray(wsp.collapsed) ? wsp.collapsed : []);
 let wsWatchTimer = null;
 function wsWatch(on) {
@@ -7493,7 +7502,7 @@ const WSP_PRELUDE = `(function(FS, DIR, HOST, LS){
 })(__ARGS__);`;
 
 async function wspBuild() {
-  if (!wsp.open || !wsp.preview) return;
+  if (!wsp.open || wsp.tab !== "preview") return;
   if (wsp.building) { wsp.queued = true; return; }
   wsp.building = true;
   try { do { wsp.queued = false; await wspBuildOnce(); } while (wsp.queued); }
@@ -7629,7 +7638,7 @@ $("#wsp-tree").addEventListener("click", (e) => {
   const b = e.target.closest(".tr");
   if (!b) { wspSelect(null); return; }
   const p = b.dataset.p;
-  if (!p.endsWith("/")) { if (wsp.editing !== p) wspEdit(p); else wspSelect(p); return; }
+  if (!p.endsWith("/")) { if (wsp.editing !== p) wspEdit(p); else { wspSelect(p); wspTab("edit"); } return; }
   if (wsp.sel === p || e.target.closest(".tw")) wspToggleDir(p);
   wspSelect(p);
 });
@@ -7693,34 +7702,53 @@ function wspInspect() {
 // ---- editor column ----------------------------------------------------------------
 // Re-rendered whole only when the open file changes (or on reload); otherwise
 // only its header updates, so the caret and scroll survive tree activity.
+// The panel right of the tree holds two tabs: the open file and the live
+// preview. The preview only builds (and its app only runs) while showing.
 function wspPanes() {
-  const ed = Boolean(wsp.editing), view = wsp.preview;
-  const body = $("#wsp-body");
-  body.classList.toggle("has-ed", ed);
-  body.classList.toggle("has-view", view);
-  $("#wsp-ed").hidden = !ed;
-  $("#wsp-view").hidden = !view;
-  $("#wsp-split-2").hidden = !(ed || view);
-  $("#wsp-split-3").hidden = !(ed && view);
-  $("#wsp-prev").setAttribute("aria-pressed", String(view));
-  for (const id of ["wsp-reload", "wsp-live", "wsp-vp"]) $("#" + id).hidden = !view;
+  if (!wsp.editing && wsp.tab !== "preview") { wsp.tab = "preview"; queueMicrotask(wspBuild); }
+  const pv = wsp.tab === "preview";
+  $("#wsp-ed").hidden = pv;
+  $("#wsp-view").hidden = !pv;
+  for (const id of ["wsp-reload", "wsp-live", "wsp-vp"]) $("#" + id).hidden = !pv;
+  const p = wsp.editing;
+  const name = p ? p.split("/").pop() : "";
+  $("#wsp-tabs").innerHTML = (p ? `<button role="tab" id="wsp-tab-edit" data-t="edit" aria-selected="${!pv}" aria-controls="wsp-ed" tabindex="${pv ? -1 : 0}" title="${esc(p)}"><span class="nm">${esc(name)}</span>${wsp.dirty ? `<span class="dirty" title="unsaved">●</span>` : ""}${wsp.stale === p ? `<span class="note">changed on disk</span>` : ""}<span class="x" data-t="close" role="button" aria-label="Close ${esc(name)}" title="Close">×</span></button>` : "")
+    + `<button role="tab" id="wsp-tab-preview" data-t="preview" aria-selected="${pv}" aria-controls="wsp-view" tabindex="${pv ? 0 : -1}">preview</button>`;
 }
-function wspEditorHead() {
-  const path = wsp.editing;
-  return `<span class="p" title="${esc(path)}">${esc(path)}</span>${wsp.dirty ? `<span class="dirty" title="unsaved">●</span>` : ""}${wsp.stale === path ? `<span class="note">changed on disk</span>` : ""}`;
+function wspTab(t) {
+  if (t === "edit" && !wsp.editing) return;
+  const was = wsp.tab;
+  wsp.tab = t;
+  wspPanes();
+  if (t === was) return;
+  if (t === "preview") wspBuild(); else $("#wsp-frame").srcdoc = "";
 }
+function wspCloseFile() {
+  wspGuard(() => { wsp.editing = null; wsp.dirty = false; wsp.buffer = null; wsp.stale = null; wspTab("preview"); wspInspect(); });
+}
+$("#wsp-tabs").addEventListener("click", (e) => {
+  const t = e.target.closest("[data-t]")?.dataset.t;
+  if (t === "close") wspCloseFile();
+  else if (t) wspTab(t);
+});
+$("#wsp-tabs").addEventListener("keydown", (e) => {
+  if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+  e.preventDefault();
+  wspTab(wsp.tab === "preview" ? "edit" : "preview");
+  $(`#wsp-tabs [aria-selected="true"]`)?.focus();
+});
 function wspRenderEditor(force = false) {
   wspPanes();
   const pane = $("#wsp-ed");
   const path = wsp.editing;
   if (!path) { pane.replaceChildren(); delete pane.dataset.path; return; }
-  if (!force && pane.dataset.path === path) { $(".wi-h", pane).innerHTML = wspEditorHead(); return; }
+  if (!force && pane.dataset.path === path) return;
   pane.dataset.path = path;
   const c = wsp.cache.get(path);
   const body = c?.binary
     ? (/^image\//.test(c.mime) ? `<img class="wi-img" alt="${esc(path)}" src="${wspDataUrl(c)}">` : `<div class="wi-hint">binary · ${esc(c.mime || "unknown type")}</div>`)
     : `<textarea class="wi-ed" id="wi-ed" spellcheck="false" aria-label="Edit ${esc(path)}"></textarea>`;
-  pane.innerHTML = `<div class="wi-h">${wspEditorHead()}</div><div class="wi-acts">${c?.binary ? "" : `<button data-e="save">save · ctrl+s</button><button data-e="revert">revert</button>`}<button data-e="close">close</button></div>${body}`;
+  pane.innerHTML = `<div class="wi-acts">${c?.binary ? "" : `<button data-e="save">save · ctrl+s</button><button data-e="revert">revert</button>`}<span class="ed-path" title="${esc(path)}">${esc(path)}</span></div>${body}`;
   const ed = $("#wi-ed");
   if (!ed) return;
   ed.value = wsp.buffer ?? c?.content ?? "";
@@ -7734,7 +7762,6 @@ $("#wsp-ed").addEventListener("click", (e) => {
   const a = e.target.closest("[data-e]")?.dataset.e;
   if (a === "save") wspSaveFile();
   else if (a === "revert") { wsp.dirty = false; wsp.buffer = null; wsp.stale = null; wspEdit(wsp.editing, true); }
-  else if (a === "close") wspGuard(() => { wsp.editing = null; wsp.dirty = false; wsp.buffer = null; wspLayout(); wspInspect(); });
 });
 $("#wsp-insp").addEventListener("click", (e) => {
   if (e.target.id === "wi-ok") { wspAskApply(); return; }
@@ -7760,7 +7787,7 @@ async function wspEdit(path, reload = false) {
       try { const r = await wsReadFull(path); wsp.cache.set(path, { sig: f ? wspSig(f) : "", content: r.content ?? "", binary: Boolean(r.binary), mime: r.mime || "" }); }
       catch (e) { toast("open failed: " + e.message, true); return; }
     }
-    wspRenderTree(); wspInspect(); wspRenderEditor(true); wspLayout();
+    wspRenderTree(); wspInspect(); wspRenderEditor(true); wspTab("edit");
     const ed = $("#wi-ed");
     if (ed) { ed.setSelectionRange(0, 0); ed.focus(); ed.scrollTop = ed.scrollLeft = 0; }
   });
@@ -7888,7 +7915,7 @@ function wspOnFiles() {
 // ---- layout ----------------------------------------------------------------------
 const wspSupported = () => matchMedia("(min-width: 900px)").matches;
 function wspSave() {
-  store.set("wsp", { open: wsp.open, entry: wsp.entry, live: wsp.live, vp: wsp.vp, chat: wsp.chat, tree: wsp.tree, treeH: wsp.treeH, con: wsp.con, preview: wsp.preview, edW: wsp.edW, collapsed: [...wsp.collapsed] });
+  store.set("wsp", { open: wsp.open, entry: wsp.entry, live: wsp.live, vp: wsp.vp, chat: wsp.chat, tree: wsp.tree, treeH: wsp.treeH, con: wsp.con, collapsed: [...wsp.collapsed] });
 }
 function wspLayout() {
   const view = $("#v-chat");
@@ -7896,7 +7923,6 @@ function wspLayout() {
   view.style.setProperty("--tree-w", wsp.tree + "px");
   view.style.setProperty("--tree-h", (wsp.treeH * 100).toFixed(2) + "%");
   view.style.setProperty("--con-h", wsp.con + "px");
-  view.style.setProperty("--ed-w", wsp.edW + "px");
   wspPanes();
   const stage = $("#wsp-stage");
   if (wsp.vp === "auto") { delete stage.dataset.vp; stage.style.removeProperty("--vp"); }
@@ -7971,27 +7997,15 @@ splitter($("#wsp-split"), {
   axis: "x",
   get: () => $(".chat", $("#v-chat")).getBoundingClientRect().width,
   set: (px) => { wsp.chat = px / wspW(); },
-  min: () => 300, max: () => wspW() - 385 - (wsp.editing && wsp.preview ? 225 : 0),
+  min: () => 300, max: () => wspW() - 385,
   reset: () => { wsp.chat = 0.44; },
 });
 splitter($("#wsp-split-2"), {
   axis: "x",
   get: () => wsp.tree,
   set: (px) => { wsp.tree = px; },
-  min: () => 150, max: () => Math.max(150, $("#wsp").clientWidth - 225 - (wsp.editing && wsp.preview ? 205 : 0)),
+  min: () => 150, max: () => Math.max(150, $("#wsp").clientWidth - 225),
   reset: () => { wsp.tree = 260; },
-});
-splitter($("#wsp-split-3"), {
-  axis: "x",
-  get: () => wsp.edW,
-  set: (px) => { wsp.edW = px; },
-  min: () => 220, max: () => Math.max(220, $("#wsp-body").clientWidth - wsp.tree - 215),
-  reset: () => { wsp.edW = 480; },
-});
-$("#wsp-prev").addEventListener("click", () => {
-  wsp.preview = !wsp.preview;
-  wspSave(); wspLayout();
-  if (wsp.preview) wspBuild(); else $("#wsp-frame").srcdoc = "";
 });
 splitter($("#wsp-split-y"), {
   axis: "y",
@@ -8026,7 +8040,7 @@ $("#wsp-reload").addEventListener("click", () => { wsp.cache.clear(); wsRefresh(
 $("#wsp-live").addEventListener("click", () => { wsp.live = !wsp.live; wspLayout(); wspSave(); if (wsp.live) wspBuild(); });
 $("#wsp-vp").addEventListener("change", (e) => { wsp.vp = e.target.value; wspLayout(); wspSave(); });
 $("#wsp-pop").addEventListener("click", async () => {
-  if (wsp.preview) { if (wsp.doc) launchAppSandbox(wsp.doc, wsp.page || wspEntry()); else toast("nothing built yet", true); return; }
+  if (wsp.tab === "preview") { if (wsp.doc) launchAppSandbox(wsp.doc, wsp.page || wspEntry()); else toast("nothing built yet", true); return; }
   try { const r = await wspDocNow(); if (r) launchAppSandbox(r.doc, r.page); else toast("no entry point", true); }
   catch (e) { toast("build failed: " + e.message, true); }
 });
