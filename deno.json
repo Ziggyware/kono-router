@@ -15,7 +15,8 @@
     "hono": "npm:hono@4.13.16",
     "hono/cors": "npm:hono@4.13.16/cors",
     "hono/body-limit": "npm:hono@4.13.16/body-limit",
-    "@opentelemetry/api": "npm:@opentelemetry/api@1.10.0"
+    "@opentelemetry/api": "npm:@opentelemetry/api@1.10.0",
+    "sucrase": "npm:sucrase@3.35.0"
   },
   "compilerOptions": {
     "strict": true,

@@ -313,7 +313,7 @@ Deno.test("files: write/read/list/grep/patch/delete inside a sandboxed namespace
     path: "notes/a.md",
     patch: "@@ -2,2 +2,2 @@\n-BETA\n+beta\n gamma\n",
   }, { namespace: ns });
-  assert(unified.applied[0].includes("hunk"), `unified ${JSON.stringify(unified)}`);
+  assert(unified.applied[0].match === "diff" && unified.applied[0].hunks === 1, `unified ${JSON.stringify(unified)}`);
   assert((await run("fs_read", { path: "notes/a.md" }, { namespace: ns })).content.includes("beta"), "patch content");
 
   const ambiguous = await run("fs_patch", { path: "notes/a.md", edits: [{ old: "a", new: "z", replace_all: true }] }, { namespace: ns });

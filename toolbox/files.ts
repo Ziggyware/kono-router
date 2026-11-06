@@ -8,6 +8,8 @@
 import { delBytes, getBytes, putBytes, store } from "./store.ts";
 import { base64ToBytes, bytesToBase64, contentId, globToRegex, normalizePath, text, truncate, utf8 } from "./util.ts";
 import type { Json, ToolContext, ToolSpec } from "./types.ts";
+import { applyEdits, type Edit, shaMatches } from "./edit.ts";
+import { checkProject, type Diagnostic, excerpt } from "./check.ts";
 
 const MAX_FILE = 2 * 1024 * 1024;
 const QUOTA_BYTES = 32 * 1024 * 1024;
@@ -96,6 +98,52 @@ async function removeFile(s: ReturnType<typeof store>, path: string): Promise<bo
 async function allManifests(s: ReturnType<typeof store>): Promise<Manifest[]> {
   const rows = await s.list<Manifest>(["fs", "m"], { limit: MAX_FILES });
   return rows.map((r) => r.value).filter((m) => m && typeof m.path === "string").sort((a, b) => a.path.localeCompare(b.path));
+}
+
+/** One hash for the whole workspace: changes whenever any file is added,
+ *  removed or edited. Runtime reports carry the sig they were built from, so a
+ *  report can be recognised as current or stale. */
+async function workspaceSig(s: ReturnType<typeof store>, all?: Manifest[]): Promise<string> {
+  const rows = all ?? await allManifests(s);
+  return await contentId(rows.map((m) => `${m.path}:${m.sha}`).join("\n"));
+}
+
+const CHECKABLE = /\.(m?js|jsx|tsx?|mts|cjs|json|css|html?)$/i;
+
+/** Diagnostics for one file just written: syntax, JSON, CSS, and references to
+ *  workspace files that do not exist. Cross-file export checks need every
+ *  file's content and are left to ws_check. */
+async function quickCheck(s: ReturnType<typeof store>, path: string, content: string): Promise<Diagnostic[] | null> {
+  if (!CHECKABLE.test(path)) return null;
+  const files = new Map<string, string | null>((await allManifests(s)).map((m) => [m.path, null]));
+  files.set(path, content);
+  try {
+    return (await checkProject(files, { only: (p) => p === path })).diagnostics;
+  } catch {
+    return null; // the checker is advisory; a failure to load it never blocks a write
+  }
+}
+
+function diagnosticFields(diags: Diagnostic[] | null, content: string): Json {
+  if (diags === null) return {};
+  if (!diags.length) return { check: "ok" };
+  return {
+    check: diags.some((d) => d.severity === "error") ? "errors" : "warnings",
+    diagnostics: diags.slice(0, 12).map((d) => ({ line: d.line, col: d.col, severity: d.severity, message: d.message, excerpt: excerpt(content, d.line, 1) })),
+  };
+}
+
+function precondition(path: string, expected: unknown, existing: Manifest | null): void {
+  if (expected === undefined || expected === null || expected === "") return;
+  const e = String(expected);
+  if (e === "new") {
+    if (existing) throw new Error(`${path} already exists (sha256 ${existing.sha}); read it and patch it, or drop expect_sha256 to overwrite`);
+    return;
+  }
+  if (!existing) throw new Error(`no such file: ${path} (expect_sha256 was given, so it was expected to exist)`);
+  if (!shaMatches(e, existing.sha)) {
+    throw new Error(`${path} changed since you read it: expected sha256 ${e}, current ${existing.sha} (${existing.lines} lines, modified ${new Date(existing.mtime).toISOString()}). fs_read it again and redo the edit against the current text`);
+  }
 }
 
 /** Apply a unified diff. Hunk positions are re-anchored by content, so a patch
@@ -233,6 +281,7 @@ export const fileTools: ToolSpec[] = [
         content: { type: "string", description: "File content (or base64 when encoding=base64)." },
         mode: { type: "string", enum: ["write", "append"], default: "write" },
         encoding: { type: "string", enum: ["utf8", "base64"], default: "utf8" },
+        expect_sha256: { type: "string", description: "Write only if the file still has this hash (from fs_read/fs_write); \"new\" means it must not exist yet." },
       },
       required: ["path", "content"],
       additionalProperties: false,
@@ -243,15 +292,18 @@ export const fileTools: ToolSpec[] = [
       if (!path) throw new Error("path is required");
       const incoming = String(args.encoding ?? "utf8") === "base64" ? base64ToBytes(String(args.content ?? "")) : utf8(String(args.content ?? ""));
       const existing = await manifest(s, path);
+      precondition(path, args.expect_sha256, existing);
       const prior = existing ? await readAll(s, existing) : new Uint8Array();
       const merged = String(args.mode ?? "write") === "append"
         ? (() => { const out = new Uint8Array(prior.length + incoming.length); out.set(prior); out.set(incoming, prior.length); return out; })()
         : incoming;
       if (merged.length > MAX_FILE) throw new Error(`file exceeds ${MAX_FILE} bytes`);
       const { manifest: entry, created } = await putFile(s, path, merged);
+      const body = entry.binary ? null : text(merged);
       return {
         path, created, bytes: entry.bytes, lines: entry.lines, sha256: entry.sha,
         mime: entry.mime, total_workspace_bytes: (await quota(s)).bytes,
+        ...(body === null ? {} : diagnosticFields(await quickCheck(s, path, body), body)),
       };
     },
   },
@@ -260,7 +312,7 @@ export const fileTools: ToolSpec[] = [
     kind: "files",
     aliases: ["list_files", "ls", "dir", "glob"],
     description:
-      "List workspace files under a directory, optionally filtered by a glob (`*.md`, `src/**/*.ts`). Returns paths, sizes and timestamps, plus the directories implied by those files.",
+      "List workspace files under a directory, optionally filtered by a glob (`*.md`, `src/**/*.ts`). Returns paths, sizes and timestamps, the directories implied by those files, and `sig`, a hash of the whole workspace's state.",
     parameters: {
       type: "object",
       properties: {
@@ -276,12 +328,13 @@ export const fileTools: ToolSpec[] = [
       const glob = typeof args.glob === "string" && args.glob.trim() ? globToRegex(args.glob.trim()) : null;
       const limit = Math.max(1, Math.min(1000, Number(args.limit ?? 200)));
       const all = await allManifests(s);
+      const sig = await workspaceSig(s, all);
       const rows = all
         .filter((m) => (!prefix || m.path === prefix || m.path.startsWith(prefix + "/")) && (!glob || glob.test(m.path)))
         .slice(0, limit)
         .map((m) => ({ path: m.path, bytes: m.bytes, lines: m.lines, mime: m.mime, mtime: new Date(m.mtime).toISOString() }));
       const dirs = [...new Set(rows.map((r) => r.path.split("/").slice(0, -1).join("/")).filter(Boolean))].sort();
-      return { prefix: prefix || "/", count: rows.length, total_files: all.length, quota_bytes: QUOTA_BYTES, dirs, files: rows };
+      return { prefix: prefix || "/", count: rows.length, total_files: all.length, quota_bytes: QUOTA_BYTES, sig, dirs, files: rows };
     },
   },
   {
@@ -344,26 +397,30 @@ export const fileTools: ToolSpec[] = [
     kind: "files",
     aliases: ["patch", "edit_file", "apply_patch", "str_replace", "modify_file"],
     description:
-      "Edit an existing file surgically. Two modes: `edits` performs exact string replacements (cheap, preferred), or `patch` applies a unified diff with @@ hunks that are re-anchored by content so line drift does not break it. Atomic: nothing is written unless every hunk applies. Use dry_run to preview.",
+      "Edit an existing file precisely. `edits` (preferred): [{old, new}] exact replacements applied in order — `old` must be copied from the file and match exactly one place (whitespace-only differences are tolerated and reported); or [{start_line, end_line, new}] line-range replacements, which require expect_sha256 so the line numbers are known to be current. `patch`: a unified diff, re-anchored by content. Atomic: nothing is written unless every edit applies, and an edit that would break a file's syntax is refused with the location (force=true overrides). Pass expect_sha256 from fs_read to refuse edits on a file that changed underneath you. Returns the diff, how each edit matched, the new sha256 and syntax diagnostics.",
     parameters: {
       type: "object",
       properties: {
         path: { type: "string" },
         edits: {
           type: "array",
-          description: "Exact replacements, applied in order.",
+          description: "Either all {old,new} replacements or all {start_line,end_line,new} line ranges (1-based, inclusive; end_line = start_line - 1 inserts before start_line).",
           items: {
             type: "object",
             properties: {
-              old: { type: "string" },
+              old: { type: "string", description: "Exact text to replace, copied from the file with enough context to be unique." },
               new: { type: "string" },
               replace_all: { type: "boolean", default: false },
+              start_line: { type: "integer", minimum: 1 },
+              end_line: { type: "integer", minimum: 0 },
             },
-            required: ["old", "new"],
+            required: ["new"],
           },
         },
         patch: { type: "string", description: "Unified diff body with @@ hunks." },
-        fuzzy: { type: "number", minimum: 0, maximum: 1, default: 0.2, description: "Anchor search window as a fraction of hunk size." },
+        expect_sha256: { type: "string", description: "Apply only if the file still has this hash (from fs_read or the last write)." },
+        fuzzy: { type: "number", minimum: 0, maximum: 1, default: 0.2, description: "Unified-diff anchor search window as a fraction of hunk size." },
+        force: { type: "boolean", default: false, description: "Write even if the edit introduces a syntax error." },
         dry_run: { type: "boolean", default: false },
       },
       required: ["path"],
@@ -375,34 +432,45 @@ export const fileTools: ToolSpec[] = [
       const m = await manifest(s, path);
       if (!m) throw new Error(`no such file: ${path}`);
       if (m.binary) throw new Error("refusing to patch a binary file");
+      precondition(path, args.expect_sha256, m);
       const before = text(await readAll(s, m));
       let after = before;
-      const applied: string[] = [];
+      const applied: Json[] = [];
 
       if (Array.isArray(args.edits) && args.edits.length > 0) {
-        for (const [i, raw] of (args.edits as Json[]).entries()) {
-          const old = String(raw.old ?? "");
-          const next = String(raw.new ?? "");
-          if (!old) throw new Error(`edit ${i}: old is empty`);
-          const count = after.split(old).length - 1;
-          if (count === 0) throw new Error(`edit ${i}: anchor not found (${truncate(old, 80)})`);
-          if (count > 1 && raw.replace_all !== true) throw new Error(`edit ${i}: anchor is ambiguous (${count} matches); add context or set replace_all`);
-          after = raw.replace_all === true ? after.split(old).join(next) : after.replace(old, next);
-          applied.push(`edit ${i}: ${count} replacement${count === 1 ? "" : "s"}`);
-        }
+        const edits = (args.edits as Json[]).map((raw, i): Edit => {
+          if (raw.start_line !== undefined || raw.end_line !== undefined) {
+            if (!args.expect_sha256) throw new Error(`edit ${i}: line-range edits need expect_sha256 (from fs_read) so stale line numbers cannot land in the wrong place`);
+            return { start_line: Number(raw.start_line), end_line: Number(raw.end_line ?? raw.start_line), new: String(raw.new ?? "") };
+          }
+          return { old: String(raw.old ?? ""), new: String(raw.new ?? ""), replace_all: raw.replace_all === true };
+        });
+        const result = applyEdits(before, edits);
+        after = result.text;
+        for (const r of result.reports) applied.push({ ...r });
       } else if (typeof args.patch === "string" && args.patch.trim()) {
         const result = applyHunks(before.split("\n"), args.patch, Number(args.fuzzy ?? 0.2));
         after = result.lines.join("\n");
-        applied.push(`${result.hunks} hunk${result.hunks === 1 ? "" : "s"}`);
+        applied.push({ hunks: result.hunks, match: "diff" });
       } else {
         throw new Error("provide `edits` or `patch`");
       }
 
+      if (after === before) return { path, changed: false, sha256: m.sha, message: "edits produced no change (new text equals old)", diff: "" };
       const diff = lineDiff(before.split("\n"), after.split("\n"));
-      if (String(after) === before) return { path, changed: false, message: "patch produced no change", diff: "" };
-      if (args.dry_run === true) return { path, changed: true, dry_run: true, diff: truncate(diff, 6000), applied };
+      const diags = await quickCheck(s, path, after);
+      const syntax = (d: Diagnostic[] | null) => (d ?? []).filter((x) => x.severity === "error" && (x.source === "syntax" || x.source === "json" || x.source === "css"));
+      const broke = syntax(diags);
+      if (broke.length && args.force !== true) {
+        const was = syntax(await quickCheck(s, path, before));
+        if (!was.length) {
+          const d = broke[0];
+          throw new Error(`edit would break ${path}: ${d.message} at line ${d.line}:${d.col} — nothing written.\n${excerpt(after, d.line, 2)}\nFix the edit (or pass force=true to write it anyway).`);
+        }
+      }
+      if (args.dry_run === true) return { path, changed: true, dry_run: true, applied, diff: truncate(diff, 6000), ...diagnosticFields(diags, after) };
       const { manifest: entry } = await putFile(s, path, utf8(after));
-      return { path, changed: true, bytes: entry.bytes, lines: entry.lines, sha256: entry.sha, applied, diff: truncate(diff, 6000) };
+      return { path, changed: true, bytes: entry.bytes, lines: entry.lines, sha256: entry.sha, applied, diff: truncate(diff, 6000), ...diagnosticFields(diags, after) };
     },
   },
   {
@@ -478,4 +546,5 @@ export const fileTools: ToolSpec[] = [
   },
 ];
 
-export { applyHunks, lineDiff };
+export { allManifests, applyHunks, lineDiff, manifest, readAll, workspaceSig };
+export type { Manifest };
