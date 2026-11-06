@@ -1,3 +1,27 @@
+# Build loop: keep building until clean and tested, browser tests, agent teams — 2026-11-05
+
+- **Build gate.** An agent turn that changed the workspace is not finished when the model says it is. The router checks, in order:
+  1. Static errors (`ws_check`).
+  2. Runtime errors the live preview saw in the current files.
+  3. Failing tests.
+  4. With a browser test runner present, whether any test run has passed against the current files.
+
+  The first unmet condition goes back to the agent as a `[build gate]` user turn with located findings, and the round budget is extended. This happens up to `nokey_gate_rounds` times (default 6). Streams emit a `build_gate` status frame, which the chat shows as "build gate N: … — continuing". Sub-agents are held to static and runtime cleanliness only. `nokey_gate: false` opts out; `"always"` (used by **fix errors →**) checks even when nothing changed.
+- **`app_test`: open the app and test it.** Tests run in the user's browser, in a fresh hidden sandboxed copy of the preview per case, so the visible preview is untouched. The router queues a job; the dashboard takes it while a reply streams (or every ~4 s with the workspace open) and posts the results back.
+  - **UI cases** live in `*.test.json` files. Their steps are `click`, `dblclick`, `type` (works with React-controlled inputs), `press` (Enter submits forms), `select`, `check`, `wait`, `wait_for` and `expect` (text, equals, count, visible, value, exists; retried for up to 2 s), plus `eval`.
+  - **Unit tests** live in `*.test.js|ts|jsx|tsx` files and use `test`/`it`/`describe`, `expect` (toBe, toEqual, toContain, toThrow, …) and `assert`.
+  - **Failure reports** give the step, the message and the page text and HTML at that moment. Any uncaught error fails the case.
+
+  The last result is part of the workspace brief. Requests declare a runner with `nokey_runner`; without one, `app_test` answers `no_runner` within seconds rather than hanging.
+- **`agent_team`: multi-agent work.** Up to 4 sub-agents run concurrently, each a full tool-using agent loop through the router, in the caller's session (shared workspace, sha-guarded edits) and with the caller's credentials. Roles are builder, tester, reviewer, debugger and researcher, and each comes with its own instructions. Each agent's report returns with its tool log. Teams are one level deep: sub-agents never see `agent_team`.
+- **Everywhere.** `app_test` and `agent_team` are in the default tool set. The tool preamble asks for tests of the requested behaviour and for parallel work through teams. App Builder workspace modes plan builders, a tester and a reviewer and end in debug → test → fix. The editing discipline ends with "a build is finished only when it is clean and its tests pass".
+
+# Keepalives: no response goes silent — 2026-11-05
+
+- **Streams.** Streams send `: keepalive` comments whenever nothing has been sent for `NOKEY_IDLE_MS` (default 15 s). That covers quiet upstreams and long server-side tool rounds.
+- **Buffered completions.** A buffered completion still running after that window commits its 200 and sends whitespace (valid before JSON) until the body is ready.
+- **Fix.** `GET /v1/community/posts?voter=…` failed once there were more than 10 posts, because Deno KV's `getMany` reads at most 10 keys. It now batches.
+
 # Chat panel: fold the chat, resizable input, controls panel, tinted tabs — 2026-11-05
 
 - **Chat folds, not the workspace.** With the workspace open, the notch now belongs to the chat. It sits inside the chat's edge, clear of the thread's scrollbar, and folds the chat to a rail so the workspace takes the full width. Closing the workspace unfolds the chat. The workspace no longer folds; ✕ closes it.

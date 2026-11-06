@@ -1222,3 +1222,62 @@ test("a tool call written as text (Qwen3-Coder XML) is lifted and executed in-pl
     restoreMock();
   }
 });
+
+// ---------------------------------------------------------------------------
+// Build gate and agent teams
+// ---------------------------------------------------------------------------
+
+test("the build gate sends an agent that broke the workspace back to work until it is clean", async () => {
+  const good = await pickHealthyUrl();
+  const seen: any[] = [];
+  const session = "gate-" + crypto.randomUUID().slice(0, 8);
+  installMock(scripted(good, (_p, call) => [
+    () => toolCallCompletion("fs_write", JSON.stringify({ path: "index.html", content: '<script type="module" src="app.js"></script>' })),
+    () => toolCallCompletion("fs_write", JSON.stringify({ path: "app.js", content: "export const total = (a, b => a + b;\n" })),
+    () => answerCompletion("All done."),
+    () => toolCallCompletion("fs_write", JSON.stringify({ path: "app.js", content: "export const total = (a, b) => a + b;\n" })),
+    () => answerCompletion("Fixed the syntax error; the build is clean."),
+  ][Math.min(call, 4)](), seen));
+  try {
+    const res = await app.fetch(chatRequest({ model: "free:smart", stream: false, tools: "auto", messages: [{ role: "user", content: "build a sum app" }] }, { "x-nokey-session": session }));
+    const data = await asJson(res);
+    if (data.choices?.[0]?.message?.content !== "Fixed the syntax error; the build is clean.") throw new Error(`final ${JSON.stringify(data.choices?.[0]?.message)}`);
+    if (seen.length !== 5) throw new Error(`upstream calls ${seen.length}`);
+    const gateTurn = seen[3].messages.at(-1);
+    if (gateTurn.role !== "user" || !/\[build gate\]/.test(gateTurn.content) || !/app\.js:1/.test(gateTurn.content)) throw new Error(`gate turn ${JSON.stringify(gateTurn)}`);
+    if (seen[3].messages.at(-2).content !== "All done.") throw new Error("the premature answer stays in the transcript");
+    if (!data.nokey.tools_executed.some((e: any) => e.tool === "build_gate")) throw new Error(`no gate in log ${JSON.stringify(data.nokey.tools_executed)}`);
+    // nokey_gate:false opts out: the same broken build ends at the first answer.
+    seen.length = 0;
+    const off = await asJson(await app.fetch(chatRequest({ model: "free:smart", stream: false, tools: "auto", nokey_gate: false, messages: [{ role: "user", content: "again" }] }, { "x-nokey-session": session + "b" })));
+    if (off.choices?.[0]?.message?.content !== "All done." || seen.length !== 3) throw new Error(`opt-out ${seen.length} ${JSON.stringify(off.choices?.[0]?.message)}`);
+  } finally {
+    restoreMock();
+  }
+});
+
+test("agent_team runs sub-agents through the router in the caller's session, one level deep", async () => {
+  const good = await pickHealthyUrl();
+  const seen: any[] = [];
+  const session = "team-" + crypto.randomUUID().slice(0, 8);
+  installMock(scripted(good, (p) => {
+    const sub = p.messages.some((m: any) => m.role === "system" && /builder agent on a team/.test(String(m.content)));
+    const tools = p.messages.filter((m: any) => m.role === "tool").length;
+    if (sub) return tools === 0 ? toolCallCompletion("fs_write", JSON.stringify({ path: "notes/plan.md", content: "# plan\n" }), "call_sub") : answerCompletion("Wrote notes/plan.md.");
+    return tools === 0 ? toolCallCompletion("agent_team", JSON.stringify({ agents: [{ role: "builder", task: "Write notes/plan.md with a heading." }] })) : answerCompletion("The team wrote the plan.");
+  }, seen));
+  try {
+    const data = await asJson(await app.fetch(chatRequest({ model: "free:smart", stream: false, tools: "auto", messages: [{ role: "user", content: "plan it with a team" }] }, { "x-nokey-session": session })));
+    if (data.choices?.[0]?.message?.content !== "The team wrote the plan.") throw new Error(`final ${JSON.stringify(data.choices?.[0]?.message)}`);
+    const subCalls = seen.filter((p) => p.messages.some((m: any) => /builder agent on a team/.test(String(m.content))));
+    if (subCalls.length !== 2) throw new Error(`sub-agent upstream calls ${subCalls.length}`);
+    if (subCalls[0].tools.some((t: any) => t.function?.name === "agent_team")) throw new Error("sub-agents must not see agent_team");
+    if (!seen[0].tools.some((t: any) => t.function?.name === "agent_team")) throw new Error("the lead agent should have agent_team");
+    const report = JSON.parse(seen.at(-1).messages.at(-1).content);
+    if (report.reports?.[0]?.content !== "Wrote notes/plan.md." || report.reports[0].ok !== true) throw new Error(`report ${JSON.stringify(report).slice(0, 300)}`);
+    const read = await postJson("/v1/tools/execute", { calls: [{ name: "fs_read", arguments: { path: "notes/plan.md" } }] }, { "x-nokey-session": session });
+    if (read.results?.[0]?.result?.content !== "# plan\n") throw new Error(`shared workspace ${JSON.stringify(read).slice(0, 300)}`);
+  } finally {
+    restoreMock();
+  }
+});

@@ -89,7 +89,10 @@ import {
   thompsonPropensity,
 } from "./learning.ts";
 import { evaluate as evaluateCalc } from "./toolbox/calc.ts";
-import { workspaceBrief } from "./toolbox/project.ts";
+import { workspaceBrief, workspaceSigFor } from "./toolbox/project.ts";
+import { buildGate, type GateVerdict } from "./toolbox/testing.ts";
+import { TEAM_ROLES } from "./toolbox/team.ts";
+import type { SubagentResult, SubagentTask } from "./toolbox/types.ts";
 
 // ============================================================================
 // 1. DENO KV + L1 ISOLATE CACHE + CAS ATOMIC STATE ENGINE
@@ -3136,6 +3139,59 @@ function toolNamespace(c: Context): string {
   return normalizeToolName(raw).slice(0, 48) || "shared";
 }
 
+/** Tool capabilities for a request: its session's store, and — one level deep
+ *  only — the sub-agent runner behind agent_team. */
+function toolCaps(c: Context, model?: string, runner = false): ToolCaps {
+  const depth = Number(c.req.header("x-nokey-depth") ?? 0) || 0;
+  return {
+    kv,
+    namespace: toolNamespace(c),
+    ...(runner ? { runner: true } : {}),
+    ...(depth < 1 ? { subagent: (t: SubagentTask, signal: AbortSignal) => runSubagent(c, t, depth + 1, model, runner, signal) } : {}),
+  };
+}
+
+/** A sub-agent is an ordinary buffered tool-using completion through this same
+ *  router, in the caller's session (shared workspace) with the caller's
+ *  credentials, marked one level deeper so it cannot spawn further agents. */
+async function runSubagent(c: Context, t: SubagentTask, depth: number, model: string | undefined, runner: boolean, signal: AbortSignal): Promise<SubagentResult> {
+  const t0 = performance.now();
+  const headers = new Headers({ "content-type": "application/json", "x-nokey-depth": String(depth) });
+  for (const h of ["x-nokey-session", "x-session-id", "authorization", "x-admin-secret", "x-api-key", "x-forwarded-for"]) {
+    const v = c.req.header(h);
+    if (v) headers.set(h, v);
+  }
+  const builds = t.role === "builder" || t.role === "debugger";
+  const body = {
+    model: t.model || model || "free:code",
+    messages: [{ role: "system", content: TEAM_ROLES[t.role] ?? TEAM_ROLES.builder }, { role: "user", content: t.task }],
+    tools: "auto",
+    nokey_rounds: Math.round(clampNum(Number(t.rounds) || 20, 1, 32)),
+    nokey_gate: builds,
+    ...(runner ? { nokey_runner: true } : {}),
+    stream: false,
+  };
+  try {
+    const res = await honoApp.fetch(new Request(new URL("/v1/chat/completions", c.req.url), { method: "POST", headers, body: JSON.stringify(body), signal }));
+    const j = JSON.parse(await res.text()) as Json;
+    const msg = ((j.choices as Json[] | undefined)?.[0]?.message ?? {}) as Json;
+    const nk = (j.nokey ?? {}) as Json;
+    const err = (j.error as Json | undefined)?.message;
+    return {
+      role: t.role,
+      ok: !err && nk.degraded !== true,
+      content: String(msg.content ?? "").slice(0, 12_000),
+      model: typeof j.model === "string" ? j.model : undefined,
+      tool_rounds: typeof nk.tool_rounds === "number" ? nk.tool_rounds : 0,
+      tools: Array.isArray(nk.tools_executed) ? (nk.tools_executed as Json[]).map((e) => `${e.tool}${e.ok ? "" : " ✗"}`).slice(0, 60) : [],
+      ms: Math.round(performance.now() - t0),
+      ...(err ? { error: String(err).slice(0, 300) } : {}),
+    };
+  } catch (e) {
+    return { role: t.role, ok: false, content: "", ms: Math.round(performance.now() - t0), error: errText(e).slice(0, 300) };
+  }
+}
+
 /** The plane is on unless an operator explicitly turns it off. */
 function toolPlaneEnabled(): boolean {
   return Deno.env.get("NOKEY_TOOLS") !== "0";
@@ -4393,7 +4449,7 @@ async function runTracedTool(
   const execution = await executeTool(call.name, call.arguments, {
     admin: isAdminContext(c),
     locals: o.locals,
-    caps: { kv, namespace: toolNamespace(c) },
+    caps: toolCaps(c),
     timeoutMs: o.timeoutMs,
     signal: o.signal,
     now: Date.now(),
@@ -5115,7 +5171,8 @@ honoApp.post("/v1/chat/completions", async (c) => {
       ? "auto"
       : body.nokey_tools ?? c.req.header("x-nokey-tools") ?? undefined;
     if (toolPlaneEnabled()) await hydrateForgedTools().catch(logErr);
-    const autoTools = toolPlaneEnabled() ? resolveAutoToolNames(autoRequest) : null;
+    // Sub-agents (x-nokey-depth ≥ 1) get every tool but agent_team: teams do not nest.
+    const autoTools = toolPlaneEnabled() ? resolveAutoToolNames(autoRequest)?.filter((n) => n !== "agent_team" || !(Number(c.req.header("x-nokey-depth") ?? 0) >= 1)) ?? null : null;
     const declaredTools = autoTools ? mergeToolDeclarations(clientTools, { names: autoTools }) : clientTools;
     // forge_tool rides the normal auto set; retire_tool stays admin-only,
     // so admin sessions get it appended on the wire (the merge drops admin
@@ -5136,7 +5193,8 @@ honoApp.post("/v1/chat/completions", async (c) => {
       .filter(Boolean);
     // Self-execution is opt-in: only when the router supplied the tools does it
     // run the agentic loop. Otherwise tool_calls go straight back to the caller.
-    const agentRounds = autoTools ? maxToolRounds(body.nokey_rounds) : 0;
+    // let: the build gate extends the budget when it sends the agent back to work.
+    let agentRounds = autoTools ? maxToolRounds(body.nokey_rounds) : 0;
     // ---- ASCK-L: task context, strategy arm, lesson injection -------------
     // The class is computed from the caller's messages before any router
     // system text is added, so the classifier sees the request as sent.
@@ -5460,6 +5518,31 @@ honoApp.post("/v1/chat/completions", async (c) => {
       trace_id: root.traceId,
     });
 
+    // ---- Build gate --------------------------------------------------------
+    // An agent that changed the workspace is not done when it says so: the
+    // gate checks the project (static, runtime, tests) and, while anything is
+    // unmet, hands the findings back as the next user turn with more rounds.
+    const gateMax = planeActive && body.nokey_gate !== false && autoTools?.includes("fs_write") ? Math.round(clampNum(Number(body.nokey_gate_rounds) || 6, 1, 12)) : 0;
+    let gateRounds = 0;
+    const gateCaps = toolCaps(c, reqModel, body.nokey_runner === true);
+    const baseToolChoice = completionOptions.tool_choice;
+    const startSig = gateMax ? await workspaceSigFor(gateCaps).catch(() => "") : "";
+    const runGate = async (round: number, waitRuntimeMs: number): Promise<GateVerdict | null> => {
+      if (!gateMax || gateRounds >= gateMax || master.signal.aborted) return null;
+      // Sub-agents answer for their own part; testing the whole app is the lead agent's (or a tester's) job.
+      const v = await buildGate(gateCaps, { startSig, force: body.nokey_gate === "always", tests: !(Number(c.req.header("x-nokey-depth") ?? 0) >= 1), waitRuntimeMs, signal: master.signal })
+        .catch((e) => { root.event("build_gate_error", { error: errText(e).slice(0, 200) }); return null; });
+      if (!v || v.done) {
+        if (v && v.summary.reason !== "unchanged" && v.summary.reason !== "empty") root.event("build_gate", { pass: true, rounds: gateRounds });
+        return null;
+      }
+      gateRounds += 1;
+      agentRounds = Math.max(agentRounds, Math.min(64, round + 10));
+      if (clientToolNames.length === 0) completionOptions.tool_choice = baseToolChoice;
+      root.event("build_gate", { pass: false, gate_round: gateRounds, static_errors: Number(v.summary.static_errors ?? 0), runtime_errors: Number(v.summary.runtime_errors ?? 0) });
+      return v;
+    };
+
     if (!wantsStream) {
       const buffered = async (): Promise<Response> => {
         try {
@@ -5513,7 +5596,7 @@ honoApp.post("/v1/chat/completions", async (c) => {
               (res.toolCalls?.length ?? 0) > 0 && !master.signal.aborted;
             if (wantLoop) {
               const roundSpan = root.child("tool_round", { round: toolRound + 1, calls: res.toolCalls!.length, tuple: cand.tupleId });
-              const outcome = await executeOwnedToolCalls(res.toolCalls!, { span: roundSpan, signal: master.signal, admin: isAdminContext(c), clientNames: clientToolNames, caps: { kv, namespace: toolNamespace(c) } });
+              const outcome = await executeOwnedToolCalls(res.toolCalls!, { span: roundSpan, signal: master.signal, admin: isAdminContext(c), clientNames: clientToolNames, caps: toolCaps(c, reqModel, body.nokey_runner === true) });
               if (outcome.loop) {
                 for (const e of outcome.executed) {
                   toolLog.push({
@@ -5549,6 +5632,17 @@ honoApp.post("/v1/chat/completions", async (c) => {
                 continue;
               }
               roundSpan.end("ok", { executed: 0, reason: "tool calls belong to the client" });
+            }
+
+            if (!res.toolCalls?.length) {
+              const gate = await runGate(toolRound, 8_000);
+              if (gate) {
+                messages.push({ role: "assistant", content: res.content || "(continuing)" });
+                messages.push({ role: "user", content: gate.message! });
+                toolLog.push({ round: toolRound, tool: "build_gate", ok: false, ms: 0, repaired: false });
+                tried.delete(cand.tupleId);
+                continue;
+              }
             }
 
             // ---- ASCK-L: independent verification + graded reward ----------
@@ -5763,7 +5857,7 @@ honoApp.post("/v1/chat/completions", async (c) => {
             }
 
             const roundSpan = root.child("tool_round", { round: toolRound + 1, calls: quiet.toolCalls?.length ?? 0, tuple: cand.tupleId });
-            const outcome = await executeOwnedToolCalls(quiet.toolCalls ?? [], { span: roundSpan, signal: master.signal, admin: isAdminContext(c), clientNames: clientToolNames, caps: { kv, namespace: toolNamespace(c) } });
+            const outcome = await executeOwnedToolCalls(quiet.toolCalls ?? [], { span: roundSpan, signal: master.signal, admin: isAdminContext(c), clientNames: clientToolNames, caps: toolCaps(c, reqModel, body.nokey_runner === true) });
             if (outcome.loop) {
               roundSpan.end("ok", {
                 executed: outcome.executed.length,
@@ -5855,7 +5949,7 @@ honoApp.post("/v1/chat/completions", async (c) => {
               const late = [...streamedCalls.values()].sort((a, b) => a.index - b.index)
                 .map((t) => ({ id: t.id ?? `call_${t.index}`, type: "function", function: { name: t.function?.name ?? "", arguments: t.function?.arguments ?? "" } }));
               const roundSpan = root.child("tool_round", { round: toolRound + 1, calls: late.length, tuple: cand.tupleId, late: true });
-              const outcome = await executeOwnedToolCalls(late, { span: roundSpan, signal: master.signal, admin: isAdminContext(c), clientNames: clientToolNames, caps: { kv, namespace: toolNamespace(c) } });
+              const outcome = await executeOwnedToolCalls(late, { span: roundSpan, signal: master.signal, admin: isAdminContext(c), clientNames: clientToolNames, caps: toolCaps(c, reqModel, body.nokey_runner === true) });
               if (outcome.loop) {
                 roundSpan.end("ok", { executed: outcome.executed.length, failures: outcome.executed.filter((e) => !e.ok).length });
                 messages.push({ role: "assistant", content: streamedText || null, tool_calls: late } as unknown as { role: string; content: unknown });
@@ -5877,6 +5971,17 @@ honoApp.post("/v1/chat/completions", async (c) => {
               if (first) handoff.role = "assistant";
               first = false;
               yield chunk(handoff, null);
+            }
+            if (!toolCalls.size && !master.signal.aborted) {
+              const gate = await runGate(toolRound, 8_000);
+              if (gate) {
+                messages.push({ role: "assistant", content: streamedText || reasoning.trim() || "(continuing)" });
+                messages.push({ role: "user", content: gate.message! });
+                tried.delete(cand.tupleId);
+                yield chunk({ content: "\n\n" }, null);
+                yield status({ type: "build_gate", gate_round: gateRounds, trace_id: root.traceId, ...gate.summary, message: gate.message!.slice(0, 2000) });
+                continue;
+              }
             }
             // Salvage parity with the buffered path: a reasoning-only stream also surfaces as content.
             if (!contentChars && !toolCalls.size && reasoning.trim()) yield chunk({ content: reasoning.trim() }, null);
