@@ -43,6 +43,7 @@
   --bad: #ff6f7d;
   --warn: #ffc061;
   --blue: #7fc4ff;
+  --violet: #c3a6ff;
   --vio: #c3a6ff;
   --r: 14px;
   --r-sm: 10px;
@@ -78,6 +79,7 @@
   --bad: #d32f4a;
   --warn: #a16207;
   --blue: #0b6bcb;
+  --violet: #7446d6;
   --vio: #7c4dd8;
   --shadow: 0 1px 2px rgba(16, 24, 40, .05), 0 16px 32px -24px rgba(16, 24, 40, .5);
   --shadow-lg: 0 1px 2px rgba(16, 24, 40, .06), 0 40px 70px -40px rgba(16, 24, 40, .5);
@@ -253,7 +255,7 @@ header {
 }
 #nav {
   display: flex; align-items: center; gap: 1px; min-width: 0; flex: 0 1 auto;
-  padding: 3px; border: 1px solid var(--line); border-radius: 12px;
+  padding: 2px; border: 1px solid var(--line); border-radius: 10px;
   background: var(--surface);
   overflow-x: auto; scrollbar-width: none; -ms-overflow-style: none;
   max-width: 100%;
@@ -263,18 +265,26 @@ header {
   -webkit-mask-image: linear-gradient(90deg, #000 0, #000 calc(100% - 18px), transparent);
 }
 #nav::-webkit-scrollbar { display: none; }
-#nav .sep { width: 1px; align-self: stretch; margin: 5px 4px; background: var(--line); flex-shrink: 0; }
+#nav .sep { width: 1px; align-self: stretch; margin: 4px 3px; background: var(--line); flex-shrink: 0; }
+/* Each group carries one hue: build (accent), routing (blue), observe (violet). */
+#nav button { --tc: var(--acc); }
+#nav .sep ~ button { --tc: var(--blue); }
+#nav .sep ~ .sep ~ button { --tc: var(--violet); }
 #nav button {
   appearance: none; border: 0; background: none; color: var(--dim);
-  font: 500 12.5px/1 var(--sans); padding: 8px 11px; border-radius: 9px;
+  display: inline-flex; align-items: center; gap: 5px;
+  font: 500 11.5px/1 var(--sans); padding: 5px 8px; border-radius: 7px;
   white-space: nowrap; cursor: pointer;
   transition: color .16s, background .16s, box-shadow .16s;
 }
-#nav button:hover { color: var(--fg); background: var(--surface-2); }
+#nav button::before { content: ""; width: 5px; height: 5px; border-radius: 50%; flex: none; background: var(--tc); opacity: .45; transition: opacity .16s; }
+#nav button:hover { color: var(--fg); background: color-mix(in oklab, var(--tc) 8%, transparent); }
+#nav button:hover::before { opacity: .8; }
 #nav button[aria-selected="true"] {
-  color: var(--acc); background: var(--acc-soft);
-  box-shadow: inset 0 0 0 1px var(--acc-line);
+  color: color-mix(in oklab, var(--tc) 82%, var(--fg)); background: color-mix(in oklab, var(--tc) 13%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--tc) 34%, transparent);
 }
+#nav button[aria-selected="true"]::before { opacity: 1; }
 .hactions { display: flex; align-items: center; gap: 4px; margin-left: auto; flex-shrink: 0; }
 #conn {
   display: flex; align-items: center; gap: 8px;
@@ -479,6 +489,10 @@ pre.src mark { background: var(--acc-soft); color: var(--acc); box-shadow: 0 0 0
 .split-y { height: 5px; cursor: row-resize; }
 .split-x:hover, .split-y:hover, .split-x:focus-visible, .split-y:focus-visible, .split-x.drag, .split-y.drag { background: var(--acc); }
 .split-x[hidden] { display: none; }
+/* thread | composer: dragging up grows the message input */
+.cin-split { background: transparent; margin: 0 16px; }
+.cin-split::before { content: ""; position: absolute; left: 0; right: 0; top: 2px; height: 1px; background: var(--line); }
+.cin-split:hover::before, .cin-split:focus-visible::before, .cin-split.drag::before { background: none; }
 body.splitting { user-select: none; }
 body.split-armed iframe { pointer-events: none; }
 .split-shield { position: fixed; inset: 0; z-index: 2147483647; }
@@ -647,6 +661,7 @@ details.rs .rhd { flex: none; }
   transition: border-color .2s, box-shadow .2s;
 }
 .wrapc:focus-within { border-color: var(--acc-line); box-shadow: 0 0 0 4px var(--acc-soft), var(--shadow); }
+#cinput { min-height: max(40px, var(--cin-h, 0px)) !important; max-height: max(40vh, var(--cin-h, 0px)) !important; }
 #cinput, #ainput {
   width: 100%; min-height: 40px; max-height: 40vh; resize: none;
   padding: 8px 0; border: 0; border-radius: 0; background: transparent;
@@ -975,7 +990,12 @@ dialog .row { margin-top: 4px; }
 .fold-hide { display: none !important; }
 #pnotch-tip { position: fixed; inset: auto; margin: 0; padding: 3px 9px; border: 1px solid var(--acc-line); border-radius: 4px; background: var(--bg); color: var(--fg); font: 500 11px/1.4 var(--mono); letter-spacing: .06em; white-space: nowrap; pointer-events: none; box-shadow: 0 4px 16px rgba(0, 0, 0, .25); }
 /* the space a folded panel gives back */
-#v-chat.wsp-on:has(> #wsp.folded) .chat { flex: 1; }
+/* Chat folds away beside the workspace (the workspace takes the width); alone it has nothing to give way to. */
+#v-chat:not(.wsp-on) > .chat > .pnotch { display: none; }
+#v-chat > .chat:not(.folded) > .pnotch { right: 11px; } /* clear of the thread's scrollbar */
+#cquick-tools:not(.folded) > .pnotch { bottom: auto; top: -10px; border-top: 0; border-bottom: 1px solid var(--line-2); border-radius: 0 0 6px 6px; --chev: -135deg; }
+.composer:has(> #cquick-tools.folded) { padding-top: 4px; }
+#cquick-tools.folded { margin-bottom: 6px; }
 .wsp-left:has(> #wsp-insp-fold.folded) > .wsp-tree { flex: 1; }
 .p2.open:has(> .p2b.folded) > .p2a { flex: 1; }
 .tools-layout:has(> .tools-sidebar.folded) { grid-template-columns: 12px 1fr; }
@@ -1037,7 +1057,7 @@ dialog .row { margin-top: 4px; }
 }
 
 @media (max-width: 1180px) {
-  #nav button { padding: 8px 9px; font-size: 12px; }
+  #nav button { padding: 5px 7px; }
   .side { width: 276px; }
 }
 @media (max-width: 1024px) {
@@ -1654,7 +1674,7 @@ select.tool-form-in { background: var(--bg-3); color: var(--fg); }
 
 <main>
   <section class="view full" id="v-chat" hidden>
-    <div class="chat">
+    <div class="chat" id="chat-col" data-fold="left" data-fold-label="Chat" data-fold-split="next">
       <div id="thread" aria-live="polite"></div>
       <div class="welcome" id="welcome">
         <div class="wmark">
@@ -1679,9 +1699,10 @@ select.tool-form-in { background: var(--bg-3); color: var(--fg); }
         <div id="par-jobs"></div>
         <div id="par-results" style="display:grid;gap:8px"></div>
       </div>
+      <div class="split-y cin-split" id="cin-split" role="separator" aria-orientation="horizontal" aria-label="Resize message input" title="Drag to resize the message input · double-click resets" tabindex="0"></div>
       <div class="composer">
         <button id="jump" aria-label="Jump to latest message" title="Jump to latest"><svg aria-hidden="true"><use href="#i-down"/></svg></button>
-        <div class="composer-toolbar" id="cquick-tools">
+        <div class="composer-toolbar" id="cquick-tools" data-fold="top" data-fold-label="Chat controls">
           <div class="cmenu-wrap">
             <button class="btn q" id="cmenu-btn" aria-haspopup="menu" aria-expanded="false" aria-controls="cmenu" title="Menu"><svg viewBox="0 0 16 16" aria-hidden="true" style="width:14px;height:14px"><path d="M2 4h12M2 8h12M2 12h12" stroke="currentColor" stroke-width="1.5" fill="none"/></svg></button>
             <div class="cmenu" id="cmenu" role="menu" hidden>
@@ -1698,6 +1719,8 @@ select.tool-form-in { background: var(--bg-3); color: var(--fg); }
             <select id="cparallel-n" aria-label="How many models to run in parallel"><option value="2">×2</option><option value="3" selected>×3</option><option value="4">×4</option></select>
             <button class="btn q" id="cparallel-run">run</button>
           </span>
+          <button class="btn q" id="cexpand" title="Expand / contract editor mode" aria-label="Expand editor"><svg aria-hidden="true"><use href="#i-expand"/></svg></button>
+          <button class="btn q" id="cside" title="Settings" aria-label="Open settings"><svg aria-hidden="true"><use href="#i-sliders"/></svg></button>
         </div>
         <div class="wrapc">
           <div style="width:100%">
@@ -1712,8 +1735,6 @@ select.tool-form-in { background: var(--bg-3); color: var(--fg); }
           <div class="row" style="flex-wrap:nowrap">
             <input type="file" id="cfile" accept="image/*" multiple hidden>
             <input type="file" id="cupload" multiple hidden>
-            <button class="btn q" id="cexpand" title="Expand / contract editor mode" aria-label="Expand editor"><svg aria-hidden="true"><use href="#i-expand"/></svg></button>
-            <button class="btn q" id="cside" title="Settings" aria-label="Open settings"><svg aria-hidden="true"><use href="#i-sliders"/></svg><span class="btxt">settings</span></button>
             <button class="btn" id="csend" aria-label="Send"><span class="btxt">send</span><svg aria-hidden="true"><use href="#i-up"/></svg></button>
             <button class="btn stop" id="cstop" aria-label="Stop" hidden><span class="btxt">stop</span><svg aria-hidden="true"><use href="#i-stop"/></svg></button>
           </div>
@@ -1721,7 +1742,7 @@ select.tool-form-in { background: var(--bg-3); color: var(--fg); }
       </div>
     </div>
     <div class="split-x" id="wsp-split" role="separator" aria-orientation="vertical" aria-label="Resize chat and workspace" tabindex="0" hidden></div>
-    <aside class="wsp" id="wsp" aria-label="Workspace" data-fold="right" data-fold-label="Workspace" data-fold-split="prev" hidden>
+    <aside class="wsp" id="wsp" aria-label="Workspace" hidden>
       <div class="wsp-bar">
         <b>WORKSPACE</b>
         <select id="wsp-entry" aria-label="Entry point" title="Entry point the live view runs"></select>
@@ -3767,6 +3788,22 @@ $("#cexpand").onclick = () => {
   autosize($("#cinput"));
   $("#cinput").focus();
 };
+
+// Thread | composer split: the height the user drags to becomes the input's
+// minimum (content still grows it); persisted, double-click resets to auto.
+let cinH = store.get("cin.h", 0);
+const cinLayout = () => { $("#cinput").style.setProperty("--cin-h", cinH ? cinH + "px" : "0px"); autosize($("#cinput")); };
+splitter($("#cin-split"), {
+  axis: "y",
+  get: () => -Math.max(cinH, $("#cinput").getBoundingClientRect().height),
+  set: (v) => { cinH = -v; },
+  min: () => -Math.max(80, Math.round($("#chat-col").clientHeight * 0.7)),
+  max: () => -40,
+  reset: () => { cinH = 0; },
+  layout: cinLayout,
+  save: () => store.set("cin.h", cinH),
+});
+cinLayout();
 
 // ---- composer menu ----
 const cmenu = $("#cmenu"), cmenuBtn = $("#cmenu-btn");
@@ -7987,7 +8024,6 @@ function wspTab(t) {
 function wspCloseFile() {
   wspGuard(() => { wsp.editing = null; wsp.dirty = false; wsp.buffer = null; wsp.stale = null; wspTab("preview"); wspInspect(); });
 }
-$("#wsp").addEventListener("fold", (e) => { if (e.detail.folded) $("#wsp-frame").srcdoc = ""; else wspBuild(); });
 $("#wsp-tabs").addEventListener("click", (e) => {
   const t = e.target.closest("[data-t]")?.dataset.t;
   if (t === "close") wspCloseFile();
@@ -8212,7 +8248,8 @@ function wspShow(on) {
   $("#v-chat").classList.toggle("wsp-on", on);
   $("#wsp").hidden = $("#wsp-split").hidden = !on;
   wspSave();
-  if (!on) { wsWatch(false); $("#wsp-frame").srcdoc = ""; return; }
+  // A folded chat only makes sense beside the workspace.
+  if (!on) { wsWatch(false); $("#wsp-frame").srcdoc = ""; foldSet($("#chat-col"), false); return; }
   wspLayout();
   wsp.sig = "";
   wsWatch(true);
