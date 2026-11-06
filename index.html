@@ -423,6 +423,9 @@ tbody tr[aria-selected="true"] td:first-child { box-shadow: inset 2px 0 var(--ac
   background: var(--bg-2); box-shadow: var(--shadow);
 }
 .gallery img { width: 100%; display: block; background: var(--bg-3); }
+.gallery figure.pending .ph { display: flex; flex-direction: column; gap: 10px; align-items: center; justify-content: center; aspect-ratio: 1; padding: 18px; text-align: center; font-size: 12px; background: var(--bg-3); }
+.gallery .spin { width: 26px; height: 26px; border-radius: 50%; border: 3px solid var(--line); border-top-color: var(--acc); animation: mspin 0.9s linear infinite; }
+@keyframes mspin { to { transform: rotate(360deg); } }
 .gallery figcaption { padding: 9px 11px; display: flex; gap: 8px; align-items: center; color: var(--dim); font-size: 11px; }
 .gallery figcaption span { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--mid); }
 .hv { border: 1px solid var(--line); border-radius: var(--r); margin-bottom: 10px; background: var(--bg-2); overflow: hidden; }
@@ -532,6 +535,11 @@ body.split-armed iframe { pointer-events: none; }
 .wsp-ed .wi-ed { min-height: 0; }
 .wsp-ed .ed-path { margin-left: auto; min-width: 0; align-self: center; padding: 0 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--dim); }
 .wsp-ed .wi-img { margin: 10px; max-height: none; }
+.wsp-panes { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.wsp-main.mode-vertical .wsp-panes { flex-direction: row; }
+.wsp-main.mode-vertical .wsp-tabs, .wsp-main.mode-horizontal .wsp-tabs { display: none; }
+.wsp-main.mode-vertical .wsp-ed, .wsp-main.mode-vertical .wsp-view,
+.wsp-main.mode-horizontal .wsp-ed, .wsp-main.mode-horizontal .wsp-view { flex: 1 1 0; min-width: 0; min-height: 0; }
 .wsp-stage { flex: 1; min-height: 0; position: relative; display: flex; justify-content: center; background: var(--bg-2); }
 .wsp-stage iframe { flex: none; width: 100%; height: 100%; border: 0; background: #fff; }
 .wsp-stage[data-vp] iframe { width: var(--vp); max-width: 100%; box-shadow: 0 0 0 1px var(--line-2); }
@@ -566,6 +574,16 @@ body.split-armed iframe { pointer-events: none; }
 .wi-row button { border: 0; border-left: 1px solid var(--line); background: none; padding: 0 10px; cursor: pointer; }
 .wi-row button:hover { color: var(--acc); }
 .wi-ed { flex: 1; min-height: 120px; width: 100%; resize: none; border: 0; background: var(--bg-2); color: var(--fg); padding: 8px 10px; outline: none; font: 400 12px/1.55 var(--mono) !important; tab-size: 2; white-space: pre; font-variant-ligatures: none; }
+.wi-hl-wrap { position: relative; flex: 1; min-height: 120px; display: flex; }
+.wi-hl { position: absolute; inset: 0; margin: 0; padding: 8px 10px; overflow: hidden; background: var(--bg-2); color: var(--fg); font: 400 12px/1.55 var(--mono); white-space: pre; pointer-events: none; tab-size: 2; }
+.wi-hl code { font: inherit; background: none; padding: 0; }
+textarea.wi-ed.hl { position: relative; z-index: 1; background: transparent; color: transparent; caret-color: var(--fg); }
+.wi-results { flex: none; max-height: 42%; overflow: auto; border-bottom: 1px solid var(--line); background: var(--bg); }
+.wi-results[hidden] { display: none; }
+.wi-res-h { display: flex; align-items: center; gap: 8px; padding: 4px 10px; border-bottom: 1px solid var(--line-2); font-size: 11px; }
+.wi-res-h .btn { margin-left: auto; }
+.wi-res { display: block; width: 100%; text-align: left; border: 0; background: none; color: var(--mid); padding: 3px 10px; cursor: pointer; font: 400 11.5px var(--mono); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.wi-res:hover, .wi-res:focus-visible { background: var(--surface); color: var(--fg); outline: none; }
 .wi-img { display: block; max-width: calc(100% - 20px); max-height: 160px; margin: 0 10px 10px; box-shadow: 0 0 0 1px var(--line-2); background: repeating-conic-gradient(#222 0 25%, #333 0 50%) 0 0 / 12px 12px; }
 .wi-hint { padding: 8px 10px; color: var(--dim); }
 .wsp-con { flex: none; display: flex; flex-direction: column; border-top: 1px solid var(--line-2); }
@@ -1749,6 +1767,7 @@ select.tool-form-in { background: var(--bg-3); color: var(--fg); }
         <button id="wsp-reload" title="Rebuild and reload the live view">↻</button>
         <button id="wsp-live" aria-pressed="true" title="Rebuild automatically when files change">live</button>
         <select id="wsp-vp" aria-label="Viewport width" title="Viewport width"><option value="auto">fit</option><option value="390">390</option><option value="768">768</option><option value="1280">1280</option></select>
+        <select id="wsp-layout" aria-label="Editor and preview layout" title="Editor / preview layout: tab, vertical split or horizontal split"><option value="tab">tab</option><option value="vertical">⇹ vertical</option><option value="horizontal">⇅ horizontal</option></select>
         <span class="grow" id="wsp-stat" aria-live="polite"></span>
         <button id="wsp-pop" title="Open the live view in the sandbox window">⧉</button>
         <button id="wsp-more" title="Project: intelligence, conversations, GitHub, zip">⋯</button>
@@ -1763,12 +1782,14 @@ select.tool-form-in { background: var(--bg-3); color: var(--fg); }
         <div class="split-x" id="wsp-split-2" role="separator" aria-orientation="vertical" aria-label="Resize files pane" tabindex="0"></div>
         <div class="wsp-main">
         <div class="wsp-tabs" id="wsp-tabs" role="tablist" aria-label="Editor and preview"></div>
+        <div class="wsp-panes" id="wsp-panes">
         <div class="wsp-ed" id="wsp-ed" role="tabpanel" aria-label="Editor" hidden></div>
         <div class="wsp-view" id="wsp-view" role="tabpanel" aria-label="Preview">
           <div class="wsp-stage" id="wsp-stage">
             <iframe id="wsp-frame" title="Live view" sandbox="allow-scripts allow-modals allow-forms allow-popups"></iframe>
             <div class="wsp-empty" id="wsp-empty" hidden></div>
           </div>
+        </div>
         </div>
         <!-- Shared by both tabs: errors stay listed while their files are open in the editor. -->
         <div class="wsp-con" id="wsp-con">
@@ -1889,7 +1910,8 @@ select.tool-form-in { background: var(--bg-3); color: var(--fg); }
         <div class="row"><select id="mmodel" aria-label="Image model" style="max-width:340px"><option>nokey-image</option><option>nokey-image-flux</option><option>nokey-image-horde</option></select>
           <select id="msize" aria-label="Size"><option>1024x1024</option><option>1024x576</option><option>576x1024</option><option>1792x1024</option><option>1024x1792</option><option>512x512</option></select>
           <select id="mn" aria-label="Count"><option>1</option><option>2</option><option>3</option><option>4</option></select></div>
-        <button class="btn" id="mgo">generate</button>
+        <button class="btn" id="mgo" title="Generate (Enter in the prompt box also submits)">generate</button>
+        <button class="btn q" id="mloop" aria-pressed="false" title="Generate as many images as possible for this prompt until you stop it">∞ loop</button>
       </div>
     </div>
     <div class="gallery" id="mgal"></div>
@@ -4310,24 +4332,76 @@ for (const code of new Set(Object.values(store.get("plugins", {})))) {
 // MEDIA
 // =====================================================================
 const gallery = [];
-async function genMedia() {
+let mLoop = false, mBusy = false; // mLoop: "generate as many as possible until stopped"
+const msleep = (ms) => new Promise((r) => setTimeout(r, ms));
+// One generation request. A pending card is shown while the router reviews
+// every image provider; the card NEVER turns into an "unavailable" image —
+// if no provider answers, it stays "still processing" and the caller retries.
+async function genOnce() {
   const prompt = $("#mprompt").value.trim();
-  if (!prompt) return;
-  const btn = $("#mgo"); btn.disabled = true; btn.textContent = "generating";
-  const t0 = performance.now();
+  if (!prompt) return false;
+  const model = $("#mmodel").value, size = $("#msize").value, n = Math.max(1, Number($("#mn").value) || 1);
+  const card = { pending: true, prompt, model, note: "generating — reviewing every image provider…", t0: performance.now() };
+  gallery.unshift(card);
+  renderGallery();
+  let ok = false;
   try {
-    const d = await req("/v1/images/generations", { method: "POST", body: { prompt, model: $("#mmodel").value, size: $("#msize").value, n: Number($("#mn").value) } });
-    (d.data ?? []).forEach((it, i) => gallery.unshift({ src: it.url || "data:image/png;base64," + it.b64_json, prompt, model: $("#mmodel").value, backend: d.nokey?.backends?.[i] ?? "", ms: performance.now() - t0, degraded: d.nokey?.degraded, trace: d.nokey?.trace_id }));
-    renderGallery();
-    if (d.nokey?.degraded) toast(`${$("#mmodel").value} failed — ${(d.nokey.errors?.[0] ?? "no image returned").replace(/^[^:]*::?[^:]*: /, "")}`, true);
-  } catch (e) { toast(e.message, true); }
-  btn.disabled = false; btn.textContent = "generate";
+    const d = await req("/v1/images/generations", { method: "POST", body: { prompt, model, size, n } });
+    const got = d.data ?? [];
+    const items = got.map((it, i) => ({ src: it.url || "data:image/png;base64," + it.b64_json, prompt, model, backend: d.nokey?.backends?.[i] ?? "", ms: performance.now() - card.t0, trace: d.nokey?.trace_id }));
+    const pend = Number(d.nokey?.pending || 0);
+    const idx = gallery.indexOf(card);
+    const repl = [...items];
+    if (pend > 0) { card.note = `still processing — ${pend} image${pend > 1 ? "s" : ""} still under review across all providers`; repl.push(card); }
+    if (idx >= 0) gallery.splice(idx, 1, ...repl); else gallery.unshift(...repl);
+    ok = items.length > 0;
+  } catch (e) {
+    // HTTP 503 still_processing or a transient failure: keep the processing
+    // card — the backend keeps reviewing each provider, so we show that.
+    const why = String(e.message || "").replace(/^\d+\s*/, "").slice(0, 90);
+    card.note = `still processing — all providers reviewed, none answered yet${why ? ` (${why})` : ""} — retrying`;
+  }
+  renderGallery();
+  return ok;
+}
+async function genMedia() {
+  if (mBusy) return;
+  if (!$("#mprompt").value.trim()) { toast("type an image prompt first"); return; }
+  mBusy = true; setMButtons();
+  let tries = 0;
+  try {
+    do {
+      const ok = await genOnce();
+      tries++;
+      if (mLoop) { await msleep(ok ? 800 : 4000); continue; } // loop until the user stops
+      if (!ok && tries < 4) { await msleep(4000); continue; } // still processing — auto-retry a few times
+      break;
+    } while (mLoop);
+  } finally {
+    mBusy = false; setMButtons();
+  }
+}
+function setMButtons() {
+  const go = $("#mgo"), lp = $("#mloop");
+  go.disabled = mBusy;
+  go.textContent = mBusy ? "generating…" : "generate";
+  lp.textContent = mLoop ? "■ stop" : "∞ loop";
+  lp.setAttribute("aria-pressed", String(mLoop));
+  lp.title = mLoop ? "Stop continuous generation" : "Generate as many images as possible for this prompt until you stop it";
 }
 function renderGallery() {
-  $("#mgal").innerHTML = gallery.map((g) => `<figure><a href="${esc(g.src)}" target="_blank" rel="noopener"><img src="${esc(g.src)}" alt="${esc(g.prompt)}" loading="lazy"></a>
-    <figcaption><span title="${esc(g.prompt)}">${esc(g.prompt)}</span>${g.degraded ? `<b class="warn">degraded</b>` : g.backend ? `<b title="backend that produced this image">${esc(g.backend.split("::").pop())}</b>` : ""}<b>${ms(g.ms)}</b>${g.trace ? `<a href="#" data-tr="${esc(g.trace)}">trace</a>` : ""}<a href="${esc(g.src)}" download="nokey-${Date.now()}.png">save</a></figcaption></figure>`).join("");
+  $("#mgal").innerHTML = gallery.map((g) => g.pending
+    ? `<figure class="pending"><div class="ph"><span class="spin" aria-hidden="true"></span><span>${esc(g.note || "generating…")}</span></div>
+      <figcaption><span title="${esc(g.prompt)}">${esc(g.prompt)}</span><b title="model">${esc(g.model)}</b></figcaption></figure>`
+    : `<figure><a href="${esc(g.src)}" target="_blank" rel="noopener"><img src="${esc(g.src)}" alt="${esc(g.prompt)}" loading="lazy"></a>
+    <figcaption><span title="${esc(g.prompt)}">${esc(g.prompt)}</span>${g.backend ? `<b title="backend that produced this image">${esc(g.backend.split("::").pop())}</b>` : ""}<b>${ms(g.ms)}</b>${g.trace ? `<a href="#" data-tr="${esc(g.trace)}">trace</a>` : ""}<a href="${esc(g.src)}" download="nokey-${Date.now()}.png">save</a></figcaption></figure>`).join("");
 }
 $("#mgo").onclick = genMedia;
+$("#mloop").onclick = () => { mLoop = !mLoop; setMButtons(); if (mLoop && !mBusy) genMedia(); };
+// Enter in the prompt box submits the generation (Shift+Enter inserts a newline).
+$("#mprompt").addEventListener("keydown", (e) => {
+  if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); genMedia(); }
+});
 // Built-in backends first, then every OpenAI-standard image model discovered on
 // configured providers (grouped by provider). Any of them can be pinned.
 let mediaModelsLoaded = false;
@@ -7463,8 +7537,9 @@ function diffWsFiles(next) {
 // refresh. Stops when all sheets close.
 // Split-pane state; layout and preferences persist, selection and build state do not.
 const wsp = Object.assign({ open: false, entry: "", live: true, vp: "auto", chat: 0.44, tree: 260, treeH: 0.58, con: 160 }, store.get("wsp", {}),
-  { tab: "preview", sel: null, editing: null, dirty: false, buffer: null, stale: null, ask: null, page: "", doc: "", cache: new Map(), sig: "", sigs: null, flash: new Set(), rows: [], logs: 0, errs: 0, warns: 0, timer: 0, building: false, queued: false, reloadEditor: false });
+  { tab: "preview", sel: null, editing: null, dirty: false, buffer: null, stale: null, ask: null, page: "", doc: "", cache: new Map(), sig: "", sigs: null, flash: new Set(), rows: [], logs: 0, errs: 0, warns: 0, timer: 0, building: false, queued: false, reloadEditor: false, autofix: false, fixArmed: 0 });
 wsp.collapsed = new Set(Array.isArray(wsp.collapsed) ? wsp.collapsed : []);
+wsp.autofix = Boolean(store.get("wsp.autofix"));
 let wsWatchTimer = null;
 function wsWatch(on) {
   if (on && !wsWatchTimer) wsWatchTimer = setInterval(() => { if (document.querySelector(".sheet.open") || (wsp.open && !document.hidden && current === "chat")) wsRefresh(true); }, 2500);
@@ -7771,6 +7846,10 @@ function wspConBadge() {
   n.className = wsp.errs ? "err" : wsp.warns ? "warn" : "";
   n.textContent = wsp.errs ? `${wsp.errs} error${wsp.errs > 1 ? "s" : ""}` : wsp.warns ? `${wsp.warns} warning${wsp.warns > 1 ? "s" : ""}` : wsp.logs ? String(wsp.logs) : "";
   $("#wsp-con-fix").hidden = !wsp.errs;
+  // Automatic code fixes: when enabled, any new build-time or run-time error
+  // is sent to the fixer once per error count (re-arms when errors clear).
+  if (!wsp.errs) wsp.fixArmed = 0;
+  else if (wsp.autofix && wsp.errs !== wsp.fixArmed && !chatCtl) { wsp.fixArmed = wsp.errs; wspFix(); }
 }
 function wspConOpen(on) {
   $("#wsp-con-b").hidden = !on;
@@ -8261,12 +8340,22 @@ function wspInspect() {
 // only its header updates, so the caret and scroll survive tree activity.
 // The panel right of the tree holds two tabs: the open file and the live
 // preview. The preview only builds (and its app only runs) while showing.
+// Editor/preview layout: "tab" (one at a time), "vertical" (side by side),
+// "horizontal" (stacked) — a configurable split panel.
+function wspLayout() { return ($("#wsp-layout")?.value || "tab"); }
 function wspPanes() {
+  const mode = wspLayout();
+  const main = $("#wsp-panes")?.parentElement;
+  if (main) {
+    main.classList.toggle("mode-vertical", mode === "vertical");
+    main.classList.toggle("mode-horizontal", mode === "horizontal");
+  }
+  const split = mode !== "tab";
   if (!wsp.editing && wsp.tab !== "preview") { wsp.tab = "preview"; queueMicrotask(wspBuild); }
-  const pv = wsp.tab === "preview";
-  $("#wsp-ed").hidden = pv;
-  $("#wsp-view").hidden = !pv;
-  for (const id of ["wsp-reload", "wsp-live", "wsp-vp"]) $("#" + id).hidden = !pv;
+  const pv = !split && wsp.tab === "preview";
+  $("#wsp-ed").hidden = split ? !wsp.editing : pv;
+  $("#wsp-view").hidden = split ? false : !pv;
+  for (const id of ["wsp-reload", "wsp-live", "wsp-vp"]) $("#" + id).hidden = split ? false : !pv;
   const p = wsp.editing;
   const name = p ? p.split("/").pop() : "";
   $("#wsp-tabs").innerHTML = (p ? `<button role="tab" id="wsp-tab-edit" data-t="edit" aria-selected="${!pv}" aria-controls="wsp-ed" tabindex="${pv ? -1 : 0}" title="${esc(p)}"><span class="nm">${esc(name)}</span>${wsp.dirty ? `<span class="dirty" title="unsaved">●</span>` : ""}${wsp.stale === p ? `<span class="note">changed on disk</span>` : ""}<span class="x" data-t="close" role="button" aria-label="Close ${esc(name)}" title="Close">×</span></button>` : "")
@@ -8294,6 +8383,14 @@ $("#wsp-tabs").addEventListener("keydown", (e) => {
   wspTab(wsp.tab === "preview" ? "edit" : "preview");
   $(`#wsp-tabs [aria-selected="true"]`)?.focus();
 });
+// Configurable split panel: tab / vertical / horizontal, persisted.
+$("#wsp-layout").addEventListener("change", () => {
+  store.set("wsp.layout", wspLayout());
+  wspPanes();
+  if (wsp.tab === "preview" || wspLayout() !== "tab") wspBuild();
+});
+const savedLayout = store.get("wsp.layout");
+if (savedLayout) $("#wsp-layout").value = savedLayout;
 function wspRenderEditor(force = false) {
   wspPanes();
   const pane = $("#wsp-ed");
@@ -8304,12 +8401,24 @@ function wspRenderEditor(force = false) {
   const c = wsp.cache.get(path);
   const body = c?.binary
     ? (/^image\//.test(c.mime) ? `<img class="wi-img" alt="${esc(path)}" src="${wspDataUrl(c)}">` : `<div class="wi-hint">binary · ${esc(c.mime || "unknown type")}</div>`)
-    : `<textarea class="wi-ed" id="wi-ed" spellcheck="false" aria-label="Edit ${esc(path)}"></textarea>`;
-  pane.innerHTML = `<div class="wi-acts">${c?.binary ? "" : `<button data-e="save">save · ctrl+s</button><button data-e="revert">revert</button>`}<span class="ed-path" title="${esc(path)}">${esc(path)}</span></div>${body}`;
+    : `<div class="wi-hl-wrap"><pre class="wi-hl" id="wi-hl" aria-hidden="true"><code></code></pre><textarea class="wi-ed hl" id="wi-ed" spellcheck="false" aria-label="Edit ${esc(path)}"></textarea></div>`;
+  pane.innerHTML = `<div class="wi-acts">${c?.binary ? "" : `<button data-e="save">save · ctrl+s</button><button data-e="revert">revert</button><button data-e="find" title="Find in all workspace files">find</button><button data-e="def" title="Go to definition of the symbol at the caret">go to def</button><button data-e="rename" title="Refactor — rename the symbol at the caret across every file">rename</button><button data-e="diag" title="Build-time (ws_check) and run-time diagnostics">diagnostics</button><button data-e="autofix" id="wi-autofix" aria-pressed="${wsp.autofix ? "true" : "false"}" title="Automatically fix errors when they appear">auto-fix ${wsp.autofix ? "on" : "off"}</button>`}<span class="ed-path" title="${esc(path)}">${esc(path)}</span></div>${c?.binary ? "" : `<div class="wi-results" id="wi-results" hidden></div>`}${body}`;
   const ed = $("#wi-ed");
   if (!ed) return;
   ed.value = wsp.buffer ?? c?.content ?? "";
-  ed.addEventListener("input", () => { wsp.buffer = ed.value; if (!wsp.dirty) { wsp.dirty = true; wspRenderEditor(); } });
+  // Syntax highlighting overlay: a highlighted <pre> sits behind a transparent
+  // textarea; both scroll together so the highlight always matches the text.
+  const hlSync = () => {
+    const pre = $("#wi-hl");
+    const code = pre && $("code", pre);
+    if (!code) return;
+    code.innerHTML = highlightCode(ed.value, langOf(path)) + "\n";
+    pre.scrollTop = ed.scrollTop;
+    pre.scrollLeft = ed.scrollLeft;
+  };
+  ed.addEventListener("scroll", hlSync);
+  hlSync();
+  ed.addEventListener("input", () => { wsp.buffer = ed.value; hlSync(); if (!wsp.dirty) { wsp.dirty = true; wspRenderEditor(); } });
   ed.addEventListener("keydown", (e) => {
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s") { e.preventDefault(); wspSaveFile(); }
     else if (e.key === "Tab" && !e.shiftKey && !e.ctrlKey && !e.altKey) { e.preventDefault(); ed.setRangeText("  ", ed.selectionStart, ed.selectionEnd, "end"); ed.dispatchEvent(new Event("input")); }
@@ -8319,7 +8428,177 @@ $("#wsp-ed").addEventListener("click", (e) => {
   const a = e.target.closest("[data-e]")?.dataset.e;
   if (a === "save") wspSaveFile();
   else if (a === "revert") { wsp.dirty = false; wsp.buffer = null; wsp.stale = null; wspEdit(wsp.editing, true); }
+  else if (a === "find") wiFind();
+  else if (a === "def") wiGoDef();
+  else if (a === "rename") wiRename();
+  else if (a === "diag") wiDiagnostics();
+  else if (a === "autofix") {
+    wsp.autofix = !wsp.autofix;
+    store.set("wsp.autofix", wsp.autofix);
+    if (!wsp.autofix) wsp.fixArmed = 0;
+    const b = $("#wi-autofix");
+    if (b) { b.setAttribute("aria-pressed", String(wsp.autofix)); b.textContent = `auto-fix ${wsp.autofix ? "on" : "off"}`; }
+    toast(wsp.autofix ? "auto-fix on — new build/runtime errors are sent to the fixer automatically" : "auto-fix off");
+  }
 });
+
+// ---- advanced source-code analysis (per file type, cross-file) ------------
+// A lightweight language-aware index over every text file in the workspace:
+// find-in-files, go-to-definition and rename (refactor) all work across file
+// types; build-time diagnostics come from ws_check and run-time ones from the
+// live preview report. Heavier checks (full TS checker) run server-side.
+function langOf(path) {
+  const p = String(path || "").toLowerCase();
+  if (/\.(m?js|jsx|tsx?|mts|cjs)$/.test(p)) return "js";
+  if (/\.py$/.test(p)) return "python";
+  if (/\.html?$/.test(p)) return "html";
+  if (/\.css$/.test(p)) return "css";
+  if (/\.json$/.test(p)) return "json";
+  if (/\.(sh|bash|zsh)$/.test(p)) return "bash";
+  if (/\.sql$/.test(p)) return "sql";
+  return "";
+}
+const ANALYZE_RE = /\.(m?js|jsx|tsx?|mts|cjs|py|html?|css|json|sh|sql|ya?ml|md)$/i;
+async function wspAllText() {
+  const todo = wsFiles.filter((f) => ANALYZE_RE.test(f.path) && (wsp.cache.get(f.path)?.sig !== wspSig(f) || !wsp.cache.has(f.path)));
+  if (todo.length) await wspFetch(todo);
+  const out = new Map();
+  for (const f of wsFiles) {
+    if (!ANALYZE_RE.test(f.path)) continue;
+    const c = wsp.cache.get(f.path);
+    if (c && !c.binary && typeof c.content === "string") out.set(f.path, c.content);
+  }
+  return out;
+}
+const DEF_RES = {
+  js: /\b(?:function|class|const|let|var|interface|type|enum)\s+([A-Za-z_$][\w$]*)/g,
+  python: /\b(?:def|class)\s+([A-Za-z_]\w*)/g,
+};
+function wspSymbolIndex(files) {
+  const idx = new Map();
+  for (const [path, content] of files) {
+    const lang = langOf(path);
+    const re = DEF_RES[lang === "python" ? "python" : "js"];
+    if (!/\.(m?js|jsx|tsx?|mts|cjs|py)$/.test(path)) continue;
+    const lines = content.split("\n");
+    for (let i = 0; i < lines.length; i++) {
+      re.lastIndex = 0;
+      let m;
+      while ((m = re.exec(lines[i]))) {
+        const name = m[1];
+        if (!idx.has(name)) idx.set(name, []);
+        idx.get(name).push({ path, line: i + 1, kind: m[0].trim().split(/\s+/)[0] });
+      }
+    }
+  }
+  return idx;
+}
+function wiShowResults(title, rows) {
+  const box = $("#wi-results");
+  if (!box) return;
+  box.hidden = false;
+  box.innerHTML = `<div class="wi-res-h"><b>${esc(title)}</b><button class="btn q" id="wi-res-x" title="Close">✕</button></div>` +
+    (rows.length
+      ? rows.map((r, i) => `<button class="wi-res" data-i="${i}" title="${esc(r.loc ? `${r.loc.path}:${r.loc.line || ""}` : r.text)}"><span class="${r.sev === "error" ? "no" : r.sev === "warning" ? "warn" : "dim"}">${r.sev === "error" ? "✖" : r.sev === "warning" ? "⚠" : "•"}</span> ${esc(r.text)}</button>`).join("")
+      : `<div class="dim" style="padding:6px 10px;font-size:11.5px">no results</div>`);
+  box.querySelectorAll(".wi-res").forEach((b) => b.addEventListener("click", () => {
+    const r = rows[Number(b.dataset.i)];
+    if (r?.loc) wspGoto(r.loc);
+  }));
+  $("#wi-res-x").onclick = () => { box.hidden = true; };
+}
+async function wiFind() {
+  const q = window.prompt("Find in all workspace files (case-insensitive):");
+  if (!q) return;
+  const files = await wspAllText();
+  const ql = q.toLowerCase();
+  const rows = [];
+  for (const [path, content] of files) {
+    const lines = content.split("\n");
+    for (let i = 0; i < lines.length; i++) {
+      if (lines[i].toLowerCase().includes(ql)) rows.push({ sev: "log", text: `${path}:${i + 1}  ${lines[i].trim().slice(0, 140)}`, loc: { path, line: i + 1 } });
+    }
+  }
+  wiShowResults(`find “${q}” — ${rows.length} match${rows.length === 1 ? "" : "es"} in ${files.size} file(s)`, rows.slice(0, 300));
+}
+function wiWordAtCaret() {
+  const ed = $("#wi-ed");
+  if (!ed) return "";
+  const s = ed.selectionStart, v = ed.value;
+  const isW = (ch) => /[\w$]/.test(ch);
+  let a = s, b = s;
+  while (a > 0 && isW(v[a - 1])) a--;
+  while (b < v.length && isW(v[b])) b++;
+  return v.slice(a, b);
+}
+async function wiGoDef() {
+  const w = wiWordAtCaret();
+  if (!w) { toast("put the caret on a symbol first"); return; }
+  const files = await wspAllText();
+  const idx = wspSymbolIndex(files);
+  const defs = idx.get(w) ?? [];
+  const rows = defs.map((d) => ({ sev: "log", text: `${d.kind} ${w} — ${d.path}:${d.line}`, loc: { path: d.path, line: d.line } }));
+  // fall back to every occurrence when no declaration was indexed
+  if (!rows.length) {
+    for (const [path, content] of files) {
+      const re = new RegExp(`\\b${w.replace(/\$/g, "\\$")}\\b`, "g");
+      const lines = content.split("\n");
+      for (let i = 0; i < lines.length; i++) {
+        re.lastIndex = 0;
+        if (re.test(lines[i])) rows.push({ sev: "log", text: `${w} — ${path}:${i + 1}`, loc: { path, line: i + 1 } });
+      }
+    }
+  }
+  wiShowResults(`go to definition of “${w}” — ${rows.length} location${rows.length === 1 ? "" : "s"}`, rows.slice(0, 300));
+}
+async function wiRename() {
+  const w = wiWordAtCaret();
+  if (!w) { toast("put the caret on the symbol to rename"); return; }
+  const nw = window.prompt(`Refactor: rename “${w}” to (applied across ALL workspace files):`, w);
+  if (!nw || nw === w) return;
+  if (!/^[A-Za-z_$][\w$]*$/.test(nw)) { toast("not a valid identifier", true); return; }
+  const files = await wspAllText();
+  const re = new RegExp(`\\b${w.replace(/\$/g, "\\$")}\\b`, "g");
+  let changedFiles = 0, occurrences = 0;
+  for (const [path, content] of files) {
+    re.lastIndex = 0;
+    if (!re.test(content)) continue;
+    re.lastIndex = 0;
+    const matches = content.match(re) ?? [];
+    const next = content.replace(re, nw);
+    const sha = wsp.cache.get(path)?.sha;
+    try {
+      const r = await wsExec("fs_write", { path, content: next, ...(sha ? { expect_sha256: sha } : {}) });
+      wsp.cache.set(path, { ...(wsp.cache.get(path) ?? { sig: "", sha: "", content: "", binary: false, mime: "" }), content: next, sha: r.sha256 });
+      changedFiles++;
+      occurrences += matches.length;
+    } catch (e) { toast(`rename: ${path} failed: ${e.message}`, true); }
+  }
+  if (wsp.editing && files.has(wsp.editing)) {
+    const ed = $("#wi-ed");
+    if (ed) {
+      re.lastIndex = 0;
+      ed.value = ed.value.replace(re, nw);
+      ed.dispatchEvent(new Event("input"));
+    }
+  }
+  await wsRefresh(true);
+  toast(`renamed ${w} → ${nw}: ${occurrences} occurrence(s) in ${changedFiles} file(s)`);
+}
+async function wiDiagnostics() {
+  const rows = [];
+  try {
+    const r = await wsExec("ws_check", { limit: 60 });
+    for (const d of r.diagnostics ?? []) rows.push({ sev: d.severity === "error" ? "error" : "warning", text: `[build] ${d.path}:${d.line}:${d.col} — ${d.message}`, loc: { path: d.path, line: d.line, col: d.col } });
+  } catch (e) { rows.push({ sev: "warning", text: `[build] ws_check unavailable: ${e.message}` }); }
+  const run = wsp.run;
+  if (run) {
+    for (const e of run.errors.values()) rows.push({ sev: "error", text: `[runtime]${e.path ? ` ${e.path}${e.line ? ":" + e.line : ""}` : ""} — ${e.message}${e.count > 1 ? ` (×${e.count})` : ""}`, loc: e.path ? { path: e.path, line: e.line, col: e.col } : null });
+    for (const w of run.warnings.values()) rows.push({ sev: "warning", text: `[runtime]${w.path ? ` ${w.path}${w.line ? ":" + w.line : ""}` : ""} — ${w.message}${w.count > 1 ? ` (×${w.count})` : ""}`, loc: w.path ? { path: w.path, line: w.line, col: w.col } : null });
+  }
+  wiShowResults(`diagnostics — ${rows.length} item(s) · build-time + run-time`, rows.slice(0, 300));
+  if (!rows.length) toast("clean: no build-time or run-time diagnostics");
+}
 $("#wsp-insp").addEventListener("click", (e) => {
   if (e.target.id === "wi-ok") { wspAskApply(); return; }
   if (e.target.id === "wi-no") { wsp.ask = null; wspInspect(); return; }
