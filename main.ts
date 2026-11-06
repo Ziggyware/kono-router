@@ -6236,36 +6236,9 @@ async function generateViaHorde(prompt: string, width: number, height: number, b
   throw new Error("AI Horde generation timed out");
 }
 
-function escapeXml(s: string): string {
-  return s.replace(/[&<>"']/g, (ch) =>
-    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&apos;" }[ch] ?? ch));
-}
-
-/** Honest, locally generated SVG placeholder: keeps the OpenAI image contract
- *  valid when every keyless image backend is down, without faking model art. */
-function placeholderImage(prompt: string, model: string, width: number, height: number, errors: string[]): {
-  url: string;
-  b64: string;
-} {
-  const title = "Image providers unavailable";
-  const lines = [
-    `Requested model: ${model}`,
-    `Tried ${errors.length} backend variant(s); none returned an image.`,
-    "No artwork was fabricated. Please retry shortly.",
-  ];
-  const text = lines.map((l, i) =>
-    `<text x="64" y="${height / 2 + i * 34 - 34}" fill="#e2e8f0" font-family="monospace" font-size="22">${escapeXml(l)}</text>`
-  ).join("");
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">` +
-    `<rect width="100%" height="100%" fill="#0b1120"/>` +
-    `<rect x="24" y="24" width="${width - 48}" height="${height - 48}" fill="none" stroke="#22d3ee" stroke-width="2"/>` +
-    `<text x="64" y="${height / 2 - 90}" fill="#22d3ee" font-family="monospace" font-size="30">${escapeXml(title)}</text>` +
-    text +
-    `<text x="64" y="${height - 64}" fill="#64748b" font-family="monospace" font-size="18">${escapeXml(prompt.slice(0, 90))}</text>` +
-    `</svg>`;
-  const b64 = bytesToBase64(new TextEncoder().encode(svg).buffer as ArrayBuffer);
-  return { url: `data:image/svg+xml;base64,${b64}`, b64 };
-}
+// NOTE: there is deliberately NO locally generated "providers unavailable"
+// placeholder image. A generation that no backend produced is reported as
+// still processing (HTTP 503, nokey.still_processing) — never as a fake image.
 
 // Classify every discovered OpenAI-standard image backend with one small
 // generation each (16 at a time): keyless-working, needs key/payment
@@ -6307,7 +6280,11 @@ honoApp.post("/v1/images/generations", async (c) => {
   const root = startTrace("images.generations", { "model.requested": requestedModel, n, width, height, b64: wantB64 }, c.req.header("traceparent"));
   root.io("request", body);
 
-  // Only a locally generated placeholder can end the request; it never errors out.
+  // There is no placeholder image: a generation that no backend produced is
+  // never answered with a fabricated "unavailable" picture. Instead the server
+  // keeps sweeping EVERY candidate provider — built-ins plus the full
+  // discovered OpenAI-standard catalog — in multiple rounds until a deadline,
+  // and only then reports the request as still processing (HTTP 503).
   type Variant = { id: string; provider: string; upstreamModel: string; url?: string; headers?: Record<string, string> };
   const asVariant = (b: typeof standard[number]): Variant => ({ id: b.id, provider: "openai-images", upstreamModel: b.model, url: b.url, headers: b.headers });
   // A specific backend chosen by name runs alone: falling back would silently
@@ -6317,44 +6294,53 @@ honoApp.post("/v1/images/generations", async (c) => {
   const builtin: Variant[] = [spec, ...IMAGE_MODELS.filter((m) => m.id !== spec.id)];
   const chain: Variant[] = named && body.fallback !== true ? [named] : [
     ...builtin.filter((v) => v.provider !== "horde"),
-    ...standard.slice(0, 6).map(asVariant),
+    ...standard.map(asVariant), // the ENTIRE discovered catalog, not a prefix
     ...builtin.filter((v) => v.provider === "horde"),
   ];
+  // Full-chain sweep rounds: a transient upstream failure is retried after the
+  // whole chain was reviewed once, so one bad provider never ends the request.
+  const ROUNDS = 3;
+  const DEADLINE_MS = 150_000;
+  const deadline = Date.now() + DEADLINE_MS;
   const errors: string[] = [];
   const data: Array<{ url?: string; b64_json?: string }> = [];
   const winners: string[] = [];
-  let degraded = false;
+  let pending = 0;
 
   for (let i = 0; i < n; i++) {
     let url: string | null = null;
-    for (const variant of chain) {
-      const attempt = root.child("attempt", { backend: variant.id, provider: variant.provider, image: i });
-      try {
-        if (variant.provider === "horde") {
-          url = await attempt.run(() => generateViaHorde(prompt, width, height));
-        } else if (variant.provider === "openai-images") {
-          try {
-            url = await attempt.run(() => generateViaOpenAIImages(variant.url!, variant.headers ?? {}, variant.upstreamModel, prompt, sizeText));
-            await noteImageOutcome(variant.id);
-          } catch (e) { await noteImageOutcome(variant.id, e); throw e; }
-        } else {
-          const seed = Math.floor(Math.random() * 1000000) + i;
-          url = await attempt.run(() => generateViaPollinations(prompt, width, height, variant.upstreamModel, seed));
+    for (let round = 0; round < ROUNDS && !url; round++) {
+      for (const variant of chain) {
+        if (url || Date.now() >= deadline) break;
+        const attempt = root.child("attempt", { backend: variant.id, provider: variant.provider, image: i, round: round + 1 });
+        try {
+          if (variant.provider === "horde") {
+            url = await attempt.run(() => generateViaHorde(prompt, width, height));
+          } else if (variant.provider === "openai-images") {
+            try {
+              url = await attempt.run(() => generateViaOpenAIImages(variant.url!, variant.headers ?? {}, variant.upstreamModel, prompt, sizeText));
+              await noteImageOutcome(variant.id);
+            } catch (e) { await noteImageOutcome(variant.id, e); throw e; }
+          } else {
+            const seed = Math.floor(Math.random() * 1000000) + i;
+            url = await attempt.run(() => generateViaPollinations(prompt, width, height, variant.upstreamModel, seed));
+          }
+          attempt.end("ok", { outcome: "won" });
+          winners.push(variant.id);
+        } catch (err) {
+          attempt.end("error", { outcome: "failed", error: errText(err).slice(0, 200) });
+          errors.push(`${variant.id}: ${errText(err)}`);
+          console.warn(`[image] ${variant.id} failed (round ${round + 1}): ${errText(err)}`);
         }
-        attempt.end("ok", { outcome: "won" });
-        winners.push(variant.id);
-        break;
-      } catch (err) {
-        attempt.end("error", { outcome: "failed", error: errText(err).slice(0, 200) });
-        errors.push(`${variant.id}: ${errText(err)}`);
-        console.warn(`[image] ${variant.id} failed: ${errText(err)}`);
+      }
+      if (!url && round < ROUNDS - 1 && Date.now() < deadline) {
+        await new Promise((r) => setTimeout(r, 1500)); // brief pause, then review every provider again
       }
     }
     if (!url) {
-      degraded = true;
-      const placeholder = placeholderImage(prompt, requestedModel, width, height, errors);
-      if (wantB64) data.push({ b64_json: placeholder.b64 });
-      else data.push({ url: placeholder.url });
+      // No backend produced an image yet: the generation is STILL PROCESSING.
+      // Do not emit any image payload — the client keeps a "processing" card.
+      pending++;
       continue;
     }
     if (wantB64) {
@@ -6368,21 +6354,47 @@ honoApp.post("/v1/images/generations", async (c) => {
         }
       } catch (err) {
         errors.push(`image-fetch: ${errText(err)}`);
-        degraded = true;
-        data.push({ b64_json: placeholderImage(prompt, requestedModel, width, height, errors).b64 });
+        pending++;
       }
     } else {
       data.push({ url });
     }
   }
 
-  root.io("response", { backends: winners, degraded, errors, data: data.map((d) => d.url ? { url: d.url.length > 300 ? d.url.slice(0, 300) + "…" : d.url } : { b64_json: `(${d.b64_json?.length ?? 0} base64 chars)` }) });
-  root.end(degraded ? "error" : "ok", { degraded, images: data.length, backend_errors: errors.length });
+  const stillProcessing = pending > 0;
+  root.io("response", { backends: winners, pending, still_processing: stillProcessing, errors, data: data.map((d) => d.url ? { url: d.url.length > 300 ? d.url.slice(0, 300) + "…" : d.url } : { b64_json: `(${d.b64_json?.length ?? 0} base64 chars)` }) });
+  root.end(pending ? "error" : "ok", { pending, images: data.length, backend_errors: errors.length, providers_reviewed: chain.length * ROUNDS });
+  if (data.length === 0) {
+    // Every provider was reviewed (all rounds); nothing produced an image yet.
+    // Answer 503 + still_processing — never an "image providers unavailable" image.
+    return c.json({
+      error: {
+        message: `All ${chain.length} image provider(s) were reviewed across ${ROUNDS} sweep(s) and none returned an image yet; generation is still processing — retry shortly. ${errors[0] ?? ""}`,
+        type: "server_error",
+        code: "image_providers_busy",
+      },
+      nokey: {
+        still_processing: true,
+        requested_model: requestedModel,
+        backends: winners,
+        providers_reviewed: chain.length,
+        sweeps: ROUNDS,
+        errors: errors.slice(0, 8),
+        trace_id: root.traceId,
+      },
+    }, 503, {
+      traceparent: root.traceparent,
+      "Server-Timing": `total;dur=${Math.round(root.ms)}`,
+      "X-Nokey-Still-Processing": "1",
+    });
+  }
   return c.json({
     created: Math.floor(Date.now() / 1000),
     data,
     nokey: {
-      degraded,
+      degraded: stillProcessing,
+      still_processing: stillProcessing,
+      pending,
       requested_model: requestedModel,
       backends: winners,
       backends_tried: errors.length + data.length,
@@ -6392,7 +6404,7 @@ honoApp.post("/v1/images/generations", async (c) => {
   }, 200, {
     traceparent: root.traceparent,
     "Server-Timing": `total;dur=${Math.round(root.ms)}`,
-    ...(degraded ? { "X-Nokey-Degraded": "1" } : {}),
+    ...(stillProcessing ? { "X-Nokey-Still-Processing": "1" } : {}),
   });
 });
 

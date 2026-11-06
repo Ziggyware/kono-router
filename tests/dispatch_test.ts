@@ -325,7 +325,7 @@ test("GET /v1/models advertises model-agnostic routing", async () => {
   }
 });
 
-test("image generation degrades to a valid local placeholder instead of 502", async () => {
+test("image generation under total outage reports still-processing, never a fake image", async () => {
   installMock((_url, init) => {
     if (!init || init.method !== "POST") return jsonResponse({ data: [] });
     return jsonResponse({ error: "image backend down" }, 503);
@@ -336,19 +336,22 @@ test("image generation degrades to a valid local placeholder instead of 502", as
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ model: "some-unknown-image-model", prompt: "a red cube" }),
     }));
-    if (res.status !== 200) throw new Error(`status ${res.status}`);
+    if (res.status !== 503) throw new Error(`status ${res.status}`);
+    if (res.headers.get("x-nokey-still-processing") !== "1") throw new Error("missing still-processing header");
     const data = await asJson(res);
-    if (data.nokey?.degraded !== true) throw new Error("image degradation not labelled");
-    if (!String(data.data?.[0]?.url ?? "").startsWith("data:image/svg+xml;base64,")) {
-      throw new Error("placeholder image missing");
-    }
-    if (!(data.nokey.backends_tried >= 3)) throw new Error("not all image backends tried");
+    if (data.error?.code !== "image_providers_busy") throw new Error("wrong error code");
+    if (data.nokey?.still_processing !== true) throw new Error("still_processing not labelled");
+    // No output image may ever claim the providers are unavailable.
+    if (data.data) throw new Error("must not emit an image payload when every provider failed");
+    if (!(data.nokey.providers_reviewed >= 3)) throw new Error("not all image providers reviewed");
+    if (data.nokey.sweeps < 2) throw new Error("backend must re-review the whole chain in multiple sweeps");
+    if (!Array.isArray(data.nokey.errors) || !data.nokey.errors.length) throw new Error("errors not reported");
   } finally {
     restoreMock();
   }
 });
 
-test("b64_json image requests also stay valid under total image outage", async () => {
+test("b64_json image requests also report still-processing under total image outage", async () => {
   installMock((_url, init) => {
     if (!init || init.method !== "POST") return jsonResponse({ data: [] });
     return jsonResponse({ error: "down" }, 503);
@@ -359,11 +362,10 @@ test("b64_json image requests also stay valid under total image outage", async (
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ prompt: "a blue sphere", response_format: "b64_json" }),
     }));
-    if (res.status !== 200) throw new Error(`status ${res.status}`);
+    if (res.status !== 503) throw new Error(`status ${res.status}`);
     const data = await asJson(res);
-    if (!(typeof data.data?.[0]?.b64_json === "string" && data.data[0].b64_json.length > 50)) {
-      throw new Error("b64 placeholder missing");
-    }
+    if (data.nokey?.still_processing !== true) throw new Error("still_processing not labelled");
+    if (data.data) throw new Error("must not emit a b64 placeholder image when every provider failed");
   } finally {
     restoreMock();
   }
