@@ -1511,7 +1511,9 @@ export async function executeTool(name: string, rawArgs: unknown, options: Execu
 // Tools that read or write tenant state. A batch may legitimately be
 // `fs_write` then `fs_read` (or `memory_write` then `memory_recall`), so these
 // run in call order while purely functional calls stay parallel.
-const STATEFUL_TOOL = /^(?:fs_|memory_|rag_|clipboard$|task$)/;
+// Workspace checks, app runs/tests and agent teams read (or write) the same
+// files, so a batch like fs_write + ws_check sees the write.
+const STATEFUL_TOOL = /^(?:fs_|memory_|rag_|ws_|app_|clipboard$|task$|agent_team$)/;
 
 /** True when a call reads or writes tenant state and must keep call order
  *  relative to other stateful calls in the same batch. */

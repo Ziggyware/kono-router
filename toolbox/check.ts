@@ -10,7 +10,7 @@ export interface Diagnostic {
   line: number;
   col: number;
   severity: "error" | "warning";
-  source: "syntax" | "import" | "export" | "html" | "json" | "css" | "runtime";
+  source: "syntax" | "import" | "export" | "html" | "json" | "css" | "runtime" | "semantic";
   message: string;
 }
 
@@ -239,10 +239,12 @@ export interface CheckResult {
   files_checked: number;
   diagnostics: Diagnostic[];
   packages: string[];
+  /** Present when the semantic pass was requested. */
+  semantic?: { ms: number; skipped?: string };
 }
 
 /** Check a whole project. `files` maps path → text (binary files map to null). */
-export async function checkProject(files: Map<string, string | null>, opts: { entry?: string; only?: (p: string) => boolean } = {}): Promise<CheckResult> {
+export async function checkProject(files: Map<string, string | null>, opts: { entry?: string; only?: (p: string) => boolean; semantic?: boolean } = {}): Promise<CheckResult> {
   const has = (p: string) => files.has(p);
   const paths = [...files.keys()];
   const diags: Diagnostic[] = [];
@@ -360,8 +362,17 @@ export async function checkProject(files: Map<string, string | null>, opts: { en
       }
     }
   }
+  let semantic: CheckResult["semantic"];
+  if (opts.semantic) {
+    // Files that do not parse are reported above; the type checker would only echo them.
+    const broken = new Set(diags.filter((d) => d.source === "syntax").map((d) => d.path));
+    const { semanticCheck } = await import("./semantic.ts");
+    const r = await semanticCheck(files, { skip: broken });
+    semantic = { ms: r.ms, ...(r.skipped ? { skipped: r.skipped } : {}) };
+    diags.push(...r.diagnostics.filter((d) => !opts.only || opts.only(d.path)));
+  }
   diags.sort((a, b) => (a.severity === b.severity ? 0 : a.severity === "error" ? -1 : 1) || a.path.localeCompare(b.path) || a.line - b.line);
-  return { entry: detectEntry(paths, opts.entry), files_checked: checked, diagnostics: diags, packages: [...packages].sort() };
+  return { entry: detectEntry(paths, opts.entry), files_checked: checked, diagnostics: diags, packages: [...packages].sort(), ...(semantic ? { semantic } : {}) };
 }
 
 /** Lines around `line`, numbered, for error reports. */
