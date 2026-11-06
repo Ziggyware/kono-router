@@ -68,7 +68,7 @@ const compact = (d: Diagnostic, files: Map<string, string | null>): Json => {
 
 async function runCheck(s: S, all: Manifest[], opts: { entry?: string; prefix?: string; limit?: number }) {
   const files = await loadFiles(s, all);
-  const res = await checkProject(files, { entry: opts.entry, only: opts.prefix ? (p) => p === opts.prefix || p.startsWith(opts.prefix + "/") : undefined });
+  const res = await checkProject(files, { entry: opts.entry, semantic: true, only: opts.prefix ? (p) => p === opts.prefix || p.startsWith(opts.prefix + "/") : undefined });
   const errors = res.diagnostics.filter((d) => d.severity === "error");
   const limit = opts.limit ?? 60;
   return {
@@ -77,6 +77,7 @@ async function runCheck(s: S, all: Manifest[], opts: { entry?: string; prefix?: 
     errors: errors.length,
     warnings: res.diagnostics.length - errors.length,
     packages: res.packages,
+    ...(res.semantic ? { semantic: res.semantic } : {}),
     diagnostics: res.diagnostics.slice(0, limit).map((d) => compact(d, files)),
     truncated: res.diagnostics.length > limit,
   };
@@ -131,7 +132,7 @@ export const projectTools: ToolSpec[] = [
     aliases: ["check_project", "lint", "typecheck", "check_workspace", "ws_lint"],
     timeoutMs: 15_000,
     description:
-      "Statically check the workspace project the way the browser preview will load it: JS/TS/JSX syntax (with line:col), unresolvable or non-module imports, imported names a file does not export, missing default exports, Node built-ins, HTML src/href to missing files, inline <script>/<style> errors, JSON and CSS errors. Each diagnostic has the surrounding lines. Run it after a set of edits and fix every error it reports.",
+      "Statically check the workspace project the way the browser preview will load it: JS/TS/JSX syntax (with line:col), unresolvable or non-module imports, imported names a file does not export, missing default exports, Node built-ins, HTML src/href to missing files, inline <script>/<style> errors, JSON and CSS errors, plus semantic bugs found by the TypeScript checker over JS and TS — assignment to a const, misspelled names and properties (with did-you-mean suggestions), undeclared identifiers, redeclarations, use before declaration, non-callable calls, wrong argument counts (and type errors in .ts/.tsx, as warnings). Each diagnostic has the surrounding lines. Run it after a set of edits and fix every error it reports.",
     parameters: {
       type: "object",
       properties: {

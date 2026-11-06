@@ -218,7 +218,7 @@ export async function buildGate(caps: ToolCaps, opts: { startSig: string; force?
   if (sig === opts.startSig && !opts.force) return { done: true, summary: { reason: "unchanged" } };
   const files = new Map<string, string | null>();
   await Promise.all(all.map(async (m) => files.set(m.path, m.binary || m.bytes > 512 * 1024 ? null : text(await readAll(s, m)))));
-  const check = await checkProject(files);
+  const check = await checkProject(files, { semantic: true });
   const staticErrors = check.diagnostics.filter((d) => d.severity === "error");
   const runner = await runnerAlive(s, caps);
   let report = await latestReport(s);

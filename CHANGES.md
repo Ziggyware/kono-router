@@ -1,3 +1,14 @@
+# Semantic checks and ordered workspace batches — 2026-11-05
+
+- **Semantic pass.** `ws_check`, `app_debug` and the build gate now run the TypeScript 5.9 checker over the project's JS and TS, including HTML inline scripts mapped back to page lines. It checks against the DOM and ES2022 libraries and reports only codes that are bugs in any program: assignment to a const, misspelled names and properties (with did-you-mean), undeclared identifiers, redeclarations, use before declaration, calling a non-function, wrong argument counts, impossible comparisons, and an always-true Promise condition.
+  - In `.ts`/`.tsx`, type errors are reported as warnings.
+  - Untyped DOM lookups in plain JS (`el.value`) stay quiet.
+  - Bare imports type as `any`, and the app_test unit-test globals are declared.
+  - An undeclared name is downgraded to a warning when the page loads external scripts.
+  - Type libraries load once per isolate from jsDelivr; if they can't be fetched, the pass is skipped and reported as skipped.
+  - Found on production: a free model's tip calculator passed every earlier check while reassigning two consts.
+- **Ordered batches.** `ws_*`, `app_*` and `agent_team` now keep call order with `fs_*` in one batch, so `fs_write` followed by `ws_check` sees the write. The check used to run concurrently and could report an empty workspace.
+
 # Build loop: keep building until clean and tested, browser tests, agent teams — 2026-11-05
 
 - **Build gate.** An agent turn that changed the workspace is not finished when the model says it is. The router checks, in order:

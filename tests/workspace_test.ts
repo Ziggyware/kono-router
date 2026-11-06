@@ -153,3 +153,32 @@ Deno.test("app_debug: runtime reports are located, current-aware, and briefed", 
   const stale = await run("app_debug", { wait_ms: 400 }, ns);
   assert(stale.runtime.status === "stale" && stale.ok, JSON.stringify(stale));
 });
+
+Deno.test("semantic pass: const assignment, typos, undeclared names, inline scripts; DOM lookups stay quiet in JS", async () => {
+  const { checkProject } = await import("../toolbox/check.ts");
+  const files = new Map<string, string | null>([
+    ["index.html", "<!doctype html>\n<input id=a>\n<script>\n  const n = 1;\n  n = 2;\n</script>\n<script type=\"module\" src=\"app.js\"></script>\n"],
+    ["app.js", "const total = 0;\nconst el = document.getElementById('a');\nel.value = '3';\nel.addEventListner('input', () => console.log(totl));\n"],
+    ["src/t.ts", "export const s: string = 5;\n"],
+  ]);
+  const r = await checkProject(files, { semantic: true });
+  if (r.semantic?.skipped) { console.warn("semantic skipped:", r.semantic.skipped); return; } // offline CI
+  const m = r.diagnostics.filter((d) => d.source === "semantic").map((d) => `${d.path}:${d.line} ${d.severity} ${d.message}`);
+  const has = (re: RegExp) => assert(m.some((x) => re.test(x)), `expected ${re} in\n${m.join("\n")}`);
+  has(/index\.html:5 error Cannot assign to 'n' because it is a constant/);
+  has(/app\.js:4 error Property 'addEventListner' .*Did you mean 'addEventListener'/);
+  has(/app\.js:4 error Cannot find name 'totl'\. Did you mean 'total'/);
+  has(/src\/t\.ts:1 warning Type 'number' is not assignable to type 'string'/);
+  assert(!m.some((x) => /'value' does not exist/.test(x)), "untyped DOM lookups are not reported in JS");
+});
+
+Deno.test("a batch that writes then checks sees the write", async () => {
+  const { executeToolCalls } = await import("../tools.ts");
+  const ns = "ws_order_" + crypto.randomUUID().slice(0, 8);
+  const out = await executeToolCalls([
+    { id: "w", name: "fs_write", arguments: { path: "a.js", content: "export const x = (;\n" } },
+    { id: "c", name: "ws_check", arguments: {} },
+  ], { caps: { namespace: ns } });
+  const check = out[1].execution;
+  assert(check.ok && (check.result as { errors: number }).errors === 1, JSON.stringify(check).slice(0, 300));
+});
