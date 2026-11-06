@@ -4265,7 +4265,7 @@ async function buildHealthPayload(): Promise<Json> {
       hedging: "survival-quantile optimal stopping (tail-at-scale)",
       dispatch_tiers: ["mode-ranked", "cross-lane-proven", "full-catalog", "exhaustive-endpoint-sweep"],
       request_guarantee: "always 200; graceful degraded completion after full sweep",
-      strict_errors: Deno.env.get("NOKEY_STRICT_ERRORS") === "1",
+      strict_errors: strictErrors(),
     },
     tool_plane: {
       name: "ASCK-T v2",
@@ -4834,7 +4834,13 @@ honoApp.get("/v1/community/posts", async (c) => {
     : sort === "top" ? (a, b) => b.score - a.score || b.createdAt.localeCompare(a.createdAt)
     : (a, b) => hotRank(b, now) - hotRank(a, now));
   const page = posts.slice(0, limit);
-  const votes = voter ? await kv.getMany<number[]>(page.map((p) => ["cvotes", p.id, voter])) : [];
+  // Deno KV reads at most 10 keys per getMany.
+  const votes: Array<{ value: number | null }> = [];
+  if (voter) {
+    for (let i = 0; i < page.length; i += 10) {
+      votes.push(...await kv.getMany<number[]>(page.slice(i, i + 10).map((p) => ["cvotes", p.id, voter])));
+    }
+  }
   return c.json({ ok: true, sort, posts: page.map((p, i) => ({ ...p, myVote: votes[i]?.value ?? 0 })) });
 });
 
@@ -4994,6 +5000,74 @@ honoApp.get("/v1/community/stream", (c) => {
 
 // Comment frames keep proxies and clients alive while the race is still routing.
 const HEARTBEAT_MS = 5_000;
+// Longest a response may go without sending a byte. Edge proxies and idle-bounded
+// clients drop silent connections; this keeps slow generations and long tool
+// rounds alive end to end.
+const idleMs = () => clampNum(Number(Deno.env.get("NOKEY_IDLE_MS")) || 15_000, 50, 60_000);
+const strictErrors = () => Deno.env.get("NOKEY_STRICT_ERRORS") === "1";
+
+/** Interleave `: keepalive` SSE comments whenever `src` stays silent for `idle` ms. */
+async function* keepalive(src: AsyncGenerator<string>, idle: number): AsyncGenerator<string> {
+  let next = src.next();
+  try {
+    for (;;) {
+      let quiet: ReturnType<typeof setTimeout> | undefined;
+      const r = await Promise.race([next, new Promise<null>((res) => quiet = setTimeout(() => res(null), idle))]);
+      clearTimeout(quiet);
+      if (r === null) {
+        yield ": keepalive\n\n";
+        continue;
+      }
+      if (r.done) return;
+      next = src.next();
+      yield r.value;
+    }
+  } finally {
+    // Client gone: let the source run its own cleanup without blocking on a pending read.
+    src.return(undefined).catch(() => {});
+  }
+}
+
+/** A buffered response that is still unfinished after the idle window commits its
+ *  200 and sends whitespace (valid before any JSON value) until the body is ready.
+ *  A failure inside the window rethrows to the caller's normal error handling;
+ *  after it, `onError` supplies the body. */
+async function idleBuffered(pending: Promise<Response>, onError: (e: unknown) => Promise<Response>, headers: Record<string, string>): Promise<Response> {
+  const settled = pending.then((v) => ({ v }), (e: unknown) => ({ e }));
+  const idle = idleMs();
+  let hold: ReturnType<typeof setTimeout> | undefined;
+  const early = await Promise.race([settled, new Promise<undefined>((res) => hold = setTimeout(() => res(undefined), idle))]);
+  clearTimeout(hold);
+  if (early) {
+    if ("v" in early) return early.v;
+    throw early.e;
+  }
+  const enc = new TextEncoder();
+  let tick: ReturnType<typeof setInterval> | undefined;
+  const body = new ReadableStream<Uint8Array>({
+    start(ctrl) {
+      const send = (s: string) => {
+        try {
+          ctrl.enqueue(enc.encode(s));
+        } catch { /* client gone */ }
+      };
+      send(" ");
+      tick = setInterval(() => send(" "), idle);
+      settled
+        .then((r) => ("v" in r ? r.v : onError(r.e)))
+        .then((res) => res.text(), (e: unknown) => JSON.stringify({ error: { message: errText(e) } }))
+        .then((text) => {
+          clearInterval(tick);
+          send(text);
+          try {
+            ctrl.close();
+          } catch { /* client gone */ }
+        });
+    },
+    cancel: () => clearInterval(tick),
+  });
+  return new Response(body, { headers: { "Content-Type": "application/json", "Cache-Control": "no-cache", ...headers } });
+}
 
 honoApp.post("/v1/chat/completions", async (c) => {
   const completionId = `chatcmpl-${crypto.randomUUID()}`;
@@ -5387,204 +5461,210 @@ honoApp.post("/v1/chat/completions", async (c) => {
     });
 
     if (!wantsStream) {
-      try {
-        // Outer loop = server-side agent rounds (only when the plane supplied the
-        // tools). Inner loop = the existing post-first-token failover: a
-        // generation that dies after its first token re-dispatches once over the
-        // untried pool.
-        let toolRound = 0;
-        let verifyRetries = 0;
-        let extraTokens = 0;
-        let a2aTaskDone = false;
-        let lastToolVerdict: ToolCallVerdict | null = null;
-        const toolLog: Array<{ round: number; tool: string; ok: boolean; ms: number; repaired: boolean; code?: string; error?: string }> = [];
-        for (;;) {
-          let produced: { cand: ScoredCandidate; res: CompletionResult & { finish?: string } } | null = null;
-          for (let round = 0; round < 2; round++) {
-            const { cand, up } = await dispatch();
-            try {
-              const res = await collectUpstream(up);
-              recordTupleSuccess(cand.tupleId, res.ttftMs, res.totalMs, res.estTokens).catch(logErr);
-              produced = { cand, res };
-              break;
-            } catch (e) {
-              if (master.signal.aborted) break;
-              lastErr = e;
-              root.event("generation_failed", { tuple: cand.tupleId, error: errText(e).slice(0, 200) });
-              recordTupleFailure(cand.tupleId, errText(e)).catch(logErr);
+      const buffered = async (): Promise<Response> => {
+        try {
+          // Outer loop = server-side agent rounds (only when the plane supplied the
+          // tools). Inner loop = the existing post-first-token failover: a
+          // generation that dies after its first token re-dispatches once over the
+          // untried pool.
+          let toolRound = 0;
+          let verifyRetries = 0;
+          let extraTokens = 0;
+          let a2aTaskDone = false;
+          let lastToolVerdict: ToolCallVerdict | null = null;
+          const toolLog: Array<{ round: number; tool: string; ok: boolean; ms: number; repaired: boolean; code?: string; error?: string }> = [];
+          for (;;) {
+            let produced: { cand: ScoredCandidate; res: CompletionResult & { finish?: string } } | null = null;
+            for (let round = 0; round < 2; round++) {
+              const { cand, up } = await dispatch();
+              try {
+                const res = await collectUpstream(up);
+                recordTupleSuccess(cand.tupleId, res.ttftMs, res.totalMs, res.estTokens).catch(logErr);
+                produced = { cand, res };
+                break;
+              } catch (e) {
+                if (master.signal.aborted) break;
+                lastErr = e;
+                root.event("generation_failed", { tuple: cand.tupleId, error: errText(e).slice(0, 200) });
+                recordTupleFailure(cand.tupleId, errText(e)).catch(logErr);
+              }
             }
-          }
-          if (!produced) throw lastErr ?? new Error("No endpoint completed a full generation");
-          const { cand, res } = produced;
+            if (!produced) throw lastErr ?? new Error("No endpoint completed a full generation");
+            const { cand, res } = produced;
 
-          // ---- Tool Plane: grade what the model emitted, then learn --------
-          if (declaredTools.length > 0) {
-            const verdict = gradeToolCalls(res.toolCalls ?? [], declaredTools, completionOptions.tool_choice);
-            lastToolVerdict = verdict;
-            if (!verdict.neutral) {
-              learnToolVerdict(cand.tupleId, verdict).catch(logErr);
-              root.event("tool_verdict", {
-                tuple: cand.tupleId,
-                valid: verdict.valid,
-                repaired: verdict.repaired,
-                calls: verdict.calls,
-                problems: verdict.problems.slice(0, 2).join(" | ").slice(0, 200),
-              });
-            }
-          }
-
-          // ---- Agent loop: execute the plane's own calls and continue ------
-          const wantLoop = agentRounds > 0 && toolRound < agentRounds &&
-            (res.toolCalls?.length ?? 0) > 0 && !master.signal.aborted;
-          if (wantLoop) {
-            const roundSpan = root.child("tool_round", { round: toolRound + 1, calls: res.toolCalls!.length, tuple: cand.tupleId });
-            const outcome = await executeOwnedToolCalls(res.toolCalls!, { span: roundSpan, signal: master.signal, admin: isAdminContext(c), clientNames: clientToolNames, caps: { kv, namespace: toolNamespace(c) } });
-            if (outcome.loop) {
-              for (const e of outcome.executed) {
-                toolLog.push({
-                  round: toolRound + 1,
-                  tool: e.name,
-                  ok: e.ok,
-                  ms: e.ms,
-                  repaired: e.repaired,
-                  ...(e.code ? { code: e.code, error: e.error } : {}),
+            // ---- Tool Plane: grade what the model emitted, then learn --------
+            if (declaredTools.length > 0) {
+              const verdict = gradeToolCalls(res.toolCalls ?? [], declaredTools, completionOptions.tool_choice);
+              lastToolVerdict = verdict;
+              if (!verdict.neutral) {
+                learnToolVerdict(cand.tupleId, verdict).catch(logErr);
+                root.event("tool_verdict", {
+                  tuple: cand.tupleId,
+                  valid: verdict.valid,
+                  repaired: verdict.repaired,
+                  calls: verdict.calls,
+                  problems: verdict.problems.slice(0, 2).join(" | ").slice(0, 200),
                 });
               }
-              roundSpan.end("ok", {
-                executed: outcome.executed.length,
-                failures: outcome.executed.filter((e) => !e.ok).length,
-                tools: outcome.executed.map((e) => e.name).join(",").slice(0, 200),
-              });
-              if (outcome.messages.some((m) => m.name === "task" && /"status"\s*:\s*"done"/.test(String(m.content)))) a2aTaskDone = true;
-              // The conversation continues: assistant call, then one tool
-              // message per call, in order, exactly as the protocol requires.
-              messages.push({
-                role: "assistant",
-                content: res.content ? res.content : null,
-                tool_calls: res.toolCalls,
-              } as unknown as { role: string; content: unknown });
-              for (const m of outcome.messages) messages.push(m);
-              toolRound += 1;
-              // Budget spent and every tool is the router's: the last turn answers instead of handing calls to the user.
-              if (toolRound >= agentRounds && clientToolNames.length === 0) completionOptions.tool_choice = "none";
-              // Keep the winner available for its own continuation; tuples that
-              // already failed this request stay excluded.
-              tried.delete(cand.tupleId);
-              root.event("tool_round_done", { round: toolRound, messages: messages.length });
-              continue;
             }
-            roundSpan.end("ok", { executed: 0, reason: "tool calls belong to the client" });
-          }
 
-          // ---- ASCK-L: independent verification + graded reward ----------
-          {
-            const signals: RewardSignal[] = [{
-              kind: "completion",
-              value: res.content || res.toolCalls ? 1 : 0.4,
-              source: "router",
-              weight: 1,
-            }];
-            if (lastToolVerdict && !lastToolVerdict.neutral) {
-              signals.push({ kind: "verifier_tool", value: lastToolVerdict.valid ? 1 : 0, source: "verifier:tool_schema", weight: 1.2 });
-            }
-            if (a2aTaskDone) {
-              signals.push({ kind: "verifier_a2a", value: 1, source: "verifier:a2a_task", weight: 0.8 });
-            }
-            let verifierFailed: { signature: string } | null = null;
-            if (taskCtx.taskClass === "math") {
-              const v = verifyMathAnswer(originalUserText, res.content ?? "");
-              if (v) {
-                signals.push({ kind: "verifier_math", value: v.pass ? 1 : 0, source: "verifier:calculate", weight: 1.5 });
-                if (!v.pass) verifierFailed = { signature: failureSignature("verifier_math", "mismatch") };
-              }
-            }
-            if (taskCtx.taskClass === "json" || body.response_format) {
-              const v = verifyJsonAnswer(res.content ?? "", body.response_format);
-              if (v) {
-                signals.push({ kind: "verifier_json", value: v.pass ? 1 : 0, source: "verifier:json_schema", weight: 1.5 });
-                if (!v.pass) verifierFailed = { signature: failureSignature("verifier_json", v.signature || "invalid") };
-              }
-            }
-            if (verifierFailed && learnCtx.planeActive && (learnCtx.compute.mode === "verify_retry" || learnCtx.compute.mode === "best_of_n") && verifyRetries < 1 && !(res.toolCalls?.length)) {
-              verifyRetries++;
-              extraTokens += res.estTokens;
-              writeLesson(taskCtx.taskClass, verifierFailed.signature).catch(logErr);
-              messages.push({ role: "assistant", content: res.content });
-              messages.push({
-                role: "user",
-                content: `Independent verification failed (${verifierFailed.signature}). Recompute carefully, verify the result, and answer again.`,
-              });
-              tried.delete(cand.tupleId);
-              root.event("verify_retry", { tuple: cand.tupleId, signature: verifierFailed.signature });
-              continue;
-            }
-            if (verifierFailed) writeLesson(taskCtx.taskClass, verifierFailed.signature).catch(logErr);
-            finalizeLearning({
-              ctx: learnCtx, cand, ranked, signals,
-              tokens: res.estTokens, extraTokens, now: Date.now(),
-            }).catch(logErr);
-          }
-
-          root.io("response", { model: cand.modelId, provider: cand.providerId, finish: res.finish ?? (res.toolCalls ? "tool_calls" : "stop"), content: res.content, ...(res.reasoningContent ? { reasoning_content: res.reasoningContent } : {}), ...(res.toolCalls ? { tool_calls: res.toolCalls } : {}), ...(toolRound > 0 ? { tools_executed: toolLog } : {}) });
-          root.end("ok", {
-            tuple: cand.tupleId,
-            provider: cand.providerId,
-            ttft_ms: res.ttftMs,
-            total_ms: res.totalMs,
-            attempts: tried.size,
-            finish: res.finish ?? (res.toolCalls ? "tool_calls" : "stop"),
-            tool_calls: res.toolCalls?.length ?? 0,
-            tool_rounds: toolRound,
-            content_chars: res.content.length,
-            reasoning_chars: res.reasoningContent?.length ?? 0,
-          });
-          return c.json({
-            id: completionId,
-            object: "chat.completion",
-            created,
-            model: cand.modelId,
-            provider: cand.providerId,
-            nokey: {
-              ...meta(cand),
-              ...(toolRound > 0 ? { tool_rounds: toolRound, tools_executed: toolLog } : {}),
-            },
-            telemetry: {
-              mode_selected: mode,
-              iq_effective: cand.iqEffective,
-              supports_reasoning: cand.supportsReasoning,
-              is_coding_specialist: cand.isCodingSpecialist,
-              reliability_draw: cand.reliabilityDraw,
-              tool_competence: cand.toolCompetence,
-              tool_pulls: cand.toolPulls,
-              tool_rounds: toolRound,
-              observed_ttft_ms: res.ttftMs,
-              observed_total_ms: res.totalMs,
-              ewma_tps: cand.ewmaTps,
-              attempts: tried.size,
-            },
-            choices: [
-              {
-                index: 0,
-                message: {
+            // ---- Agent loop: execute the plane's own calls and continue ------
+            const wantLoop = agentRounds > 0 && toolRound < agentRounds &&
+              (res.toolCalls?.length ?? 0) > 0 && !master.signal.aborted;
+            if (wantLoop) {
+              const roundSpan = root.child("tool_round", { round: toolRound + 1, calls: res.toolCalls!.length, tuple: cand.tupleId });
+              const outcome = await executeOwnedToolCalls(res.toolCalls!, { span: roundSpan, signal: master.signal, admin: isAdminContext(c), clientNames: clientToolNames, caps: { kv, namespace: toolNamespace(c) } });
+              if (outcome.loop) {
+                for (const e of outcome.executed) {
+                  toolLog.push({
+                    round: toolRound + 1,
+                    tool: e.name,
+                    ok: e.ok,
+                    ms: e.ms,
+                    repaired: e.repaired,
+                    ...(e.code ? { code: e.code, error: e.error } : {}),
+                  });
+                }
+                roundSpan.end("ok", {
+                  executed: outcome.executed.length,
+                  failures: outcome.executed.filter((e) => !e.ok).length,
+                  tools: outcome.executed.map((e) => e.name).join(",").slice(0, 200),
+                });
+                if (outcome.messages.some((m) => m.name === "task" && /"status"\s*:\s*"done"/.test(String(m.content)))) a2aTaskDone = true;
+                // The conversation continues: assistant call, then one tool
+                // message per call, in order, exactly as the protocol requires.
+                messages.push({
                   role: "assistant",
-                  content: res.toolCalls && !res.content ? null : res.content,
-                  ...(res.reasoningContent ? { reasoning_content: res.reasoningContent } : {}),
-                  ...(res.toolCalls ? { tool_calls: res.toolCalls } : {}),
-                },
-                finish_reason: res.finish ?? (res.toolCalls ? "tool_calls" : "stop"),
+                  content: res.content ? res.content : null,
+                  tool_calls: res.toolCalls,
+                } as unknown as { role: string; content: unknown });
+                for (const m of outcome.messages) messages.push(m);
+                toolRound += 1;
+                // Budget spent and every tool is the router's: the last turn answers instead of handing calls to the user.
+                if (toolRound >= agentRounds && clientToolNames.length === 0) completionOptions.tool_choice = "none";
+                // Keep the winner available for its own continuation; tuples that
+                // already failed this request stay excluded.
+                tried.delete(cand.tupleId);
+                root.event("tool_round_done", { round: toolRound, messages: messages.length });
+                continue;
+              }
+              roundSpan.end("ok", { executed: 0, reason: "tool calls belong to the client" });
+            }
+
+            // ---- ASCK-L: independent verification + graded reward ----------
+            {
+              const signals: RewardSignal[] = [{
+                kind: "completion",
+                value: res.content || res.toolCalls ? 1 : 0.4,
+                source: "router",
+                weight: 1,
+              }];
+              if (lastToolVerdict && !lastToolVerdict.neutral) {
+                signals.push({ kind: "verifier_tool", value: lastToolVerdict.valid ? 1 : 0, source: "verifier:tool_schema", weight: 1.2 });
+              }
+              if (a2aTaskDone) {
+                signals.push({ kind: "verifier_a2a", value: 1, source: "verifier:a2a_task", weight: 0.8 });
+              }
+              let verifierFailed: { signature: string } | null = null;
+              if (taskCtx.taskClass === "math") {
+                const v = verifyMathAnswer(originalUserText, res.content ?? "");
+                if (v) {
+                  signals.push({ kind: "verifier_math", value: v.pass ? 1 : 0, source: "verifier:calculate", weight: 1.5 });
+                  if (!v.pass) verifierFailed = { signature: failureSignature("verifier_math", "mismatch") };
+                }
+              }
+              if (taskCtx.taskClass === "json" || body.response_format) {
+                const v = verifyJsonAnswer(res.content ?? "", body.response_format);
+                if (v) {
+                  signals.push({ kind: "verifier_json", value: v.pass ? 1 : 0, source: "verifier:json_schema", weight: 1.5 });
+                  if (!v.pass) verifierFailed = { signature: failureSignature("verifier_json", v.signature || "invalid") };
+                }
+              }
+              if (verifierFailed && learnCtx.planeActive && (learnCtx.compute.mode === "verify_retry" || learnCtx.compute.mode === "best_of_n") && verifyRetries < 1 && !(res.toolCalls?.length)) {
+                verifyRetries++;
+                extraTokens += res.estTokens;
+                writeLesson(taskCtx.taskClass, verifierFailed.signature).catch(logErr);
+                messages.push({ role: "assistant", content: res.content });
+                messages.push({
+                  role: "user",
+                  content: `Independent verification failed (${verifierFailed.signature}). Recompute carefully, verify the result, and answer again.`,
+                });
+                tried.delete(cand.tupleId);
+                root.event("verify_retry", { tuple: cand.tupleId, signature: verifierFailed.signature });
+                continue;
+              }
+              if (verifierFailed) writeLesson(taskCtx.taskClass, verifierFailed.signature).catch(logErr);
+              finalizeLearning({
+                ctx: learnCtx, cand, ranked, signals,
+                tokens: res.estTokens, extraTokens, now: Date.now(),
+              }).catch(logErr);
+            }
+
+            root.io("response", { model: cand.modelId, provider: cand.providerId, finish: res.finish ?? (res.toolCalls ? "tool_calls" : "stop"), content: res.content, ...(res.reasoningContent ? { reasoning_content: res.reasoningContent } : {}), ...(res.toolCalls ? { tool_calls: res.toolCalls } : {}), ...(toolRound > 0 ? { tools_executed: toolLog } : {}) });
+            root.end("ok", {
+              tuple: cand.tupleId,
+              provider: cand.providerId,
+              ttft_ms: res.ttftMs,
+              total_ms: res.totalMs,
+              attempts: tried.size,
+              finish: res.finish ?? (res.toolCalls ? "tool_calls" : "stop"),
+              tool_calls: res.toolCalls?.length ?? 0,
+              tool_rounds: toolRound,
+              content_chars: res.content.length,
+              reasoning_chars: res.reasoningContent?.length ?? 0,
+            });
+            return c.json({
+              id: completionId,
+              object: "chat.completion",
+              created,
+              model: cand.modelId,
+              provider: cand.providerId,
+              nokey: {
+                ...meta(cand),
+                ...(toolRound > 0 ? { tool_rounds: toolRound, tools_executed: toolLog } : {}),
               },
-            ],
-          }, 200, {
-            ...traceHeaders,
-            "Server-Timing": `ttft;dur=${res.ttftMs}, total;dur=${Math.round(root.ms)}`,
-            "X-Nokey-Attempts": String(tried.size),
-            "X-Nokey-Endpoints": String(endpointsAvailable),
-            ...(toolRound > 0 ? { "X-Nokey-Tool-Rounds": String(toolRound) } : {}),
-          });
+              telemetry: {
+                mode_selected: mode,
+                iq_effective: cand.iqEffective,
+                supports_reasoning: cand.supportsReasoning,
+                is_coding_specialist: cand.isCodingSpecialist,
+                reliability_draw: cand.reliabilityDraw,
+                tool_competence: cand.toolCompetence,
+                tool_pulls: cand.toolPulls,
+                tool_rounds: toolRound,
+                observed_ttft_ms: res.ttftMs,
+                observed_total_ms: res.totalMs,
+                ewma_tps: cand.ewmaTps,
+                attempts: tried.size,
+              },
+              choices: [
+                {
+                  index: 0,
+                  message: {
+                    role: "assistant",
+                    content: res.toolCalls && !res.content ? null : res.content,
+                    ...(res.reasoningContent ? { reasoning_content: res.reasoningContent } : {}),
+                    ...(res.toolCalls ? { tool_calls: res.toolCalls } : {}),
+                  },
+                  finish_reason: res.finish ?? (res.toolCalls ? "tool_calls" : "stop"),
+                },
+              ],
+            }, 200, {
+              ...traceHeaders,
+              "Server-Timing": `ttft;dur=${res.ttftMs}, total;dur=${Math.round(root.ms)}`,
+              "X-Nokey-Attempts": String(tried.size),
+              "X-Nokey-Endpoints": String(endpointsAvailable),
+              ...(toolRound > 0 ? { "X-Nokey-Tool-Rounds": String(toolRound) } : {}),
+            });
+          }
+        } finally {
+          clearTimeout(globalTimeout);
         }
-      } finally {
-        clearTimeout(globalTimeout);
-      }
+      };
+      return await idleBuffered(buffered(), async (e) => {
+        endDegraded(e);
+        return strictErrors() ? c.json({ error: { message: errText(e) } }, 502) : degradedCompletion(c, degradedOpts(e), {});
+      }, { ...traceHeaders, "X-Nokey-Endpoints": String(endpointsAvailable) });
     }
 
     // Headers leave immediately; routing proceeds behind heartbeat comments and the
@@ -5615,7 +5695,7 @@ honoApp.post("/v1/chat/completions", async (c) => {
           if ("e" in r) {
             endDegraded(r.e);
             ok = true;
-            if (Deno.env.get("NOKEY_STRICT_ERRORS") === "1") {
+            if (strictErrors()) {
               yield `data: ${JSON.stringify({ error: { message: errText(r.e) } })}\n\ndata: [DONE]\n\n`;
             } else {
               yield degradedSse(degradedOpts(r.e));
@@ -5868,14 +5948,14 @@ honoApp.post("/v1/chat/completions", async (c) => {
       }
     };
 
-    return new Response(ReadableStream.from(sse()).pipeThrough(new TextEncoderStream()), {
+    return new Response(ReadableStream.from(keepalive(sse(), idleMs())).pipeThrough(new TextEncoderStream()), {
       headers: { ...SSE_HEADERS, ...traceHeaders, "X-Nokey-Endpoints": String(endpointsAvailable) },
     });
   } catch (err: unknown) {
     clearTimeout(globalTimeout);
     endDegraded(err);
     // Opt-out for operators who prefer the legacy hard failure while debugging.
-    if (Deno.env.get("NOKEY_STRICT_ERRORS") === "1") {
+    if (strictErrors()) {
       return c.json({ error: { message: errText(err) } }, 502, traceHeaders);
     }
     return degradedCompletion(c, degradedOpts(err), traceHeaders);

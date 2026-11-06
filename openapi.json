@@ -313,7 +313,7 @@
         },
         "responses": {
           "200": {
-            "description": "Completion. With stream=true, headers and a `: trace <id>` comment are sent immediately, `: routing` heartbeats follow every 5 s until an upstream commits, then chunks stream in real time: `delta.reasoning_content` (including leading inline <think> blocks), `delta.content`, `delta.tool_calls` (stable index; id and type on each call's first chunk). The final chunk carries `nokey`.",
+            "description": "Completion. With stream=true, headers and a `: trace <id>` comment are sent immediately, `: routing` heartbeats follow every 5 s until an upstream commits, then chunks stream in real time: `delta.reasoning_content` (including leading inline <think> blocks), `delta.content`, `delta.tool_calls` (stable index; id and type on each call's first chunk). The final chunk carries `nokey`. No response stays silent longer than NOKEY_IDLE_MS (default 15 s): streams send `: keepalive` comments whenever nothing else has been sent (a quiet upstream, a server-side tool round); buffered responses still unfinished at that point commit the 200 and send whitespace (valid before JSON) until the body is ready, so their timing headers move into `nokey`/`telemetry`.",
             "headers": {
               "traceparent": {
                 "description": "W3C trace context of this request's root span",
