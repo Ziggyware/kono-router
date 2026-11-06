@@ -1,3 +1,20 @@
+# Fix: workspace would not open — wspLayout name collision — 2026-11-06
+
+Two different functions were both named `wspLayout`: the editor/preview
+pane-mode getter (returns the #wsp-layout select value) and the
+workspace layout applier (sets the chat CSS vars, then calls
+wspPanes()). The later declaration wins in JS, so wspPanes() called
+the applier expecting a mode string, and the applier calls wspPanes()
+— unbounded mutual recursion (RangeError: Maximum call stack size
+exceeded) the moment the workspace opened.
+
+Fix: the getter is renamed `wspPaneMode` (definition + its three call
+sites in wspPanes and the layout change handler). The applier keeps
+the name `wspLayout`; every other caller (splitters, live/viewport
+handlers, wspShow) already wanted the applier. Verified in the jsdom
+harness: boot clean, workspace opens, tab/vertical/horizontal modes
+apply and persist, zero errors.
+
 # Semantic checks and ordered workspace batches — 2026-11-05
 
 - **Semantic pass.** `ws_check`, `app_debug` and the build gate now run the TypeScript 5.9 checker over the project's JS and TS, including HTML inline scripts mapped back to page lines. It checks against the DOM and ES2022 libraries and reports only codes that are bugs in any program: assignment to a const, misspelled names and properties (with did-you-mean), undeclared identifiers, redeclarations, use before declaration, calling a non-function, wrong argument counts, impossible comparisons, and an always-true Promise condition.

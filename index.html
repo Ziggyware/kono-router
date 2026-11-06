@@ -8342,9 +8342,9 @@ function wspInspect() {
 // preview. The preview only builds (and its app only runs) while showing.
 // Editor/preview layout: "tab" (one at a time), "vertical" (side by side),
 // "horizontal" (stacked) — a configurable split panel.
-function wspLayout() { return ($("#wsp-layout")?.value || "tab"); }
+function wspPaneMode() { return ($("#wsp-layout")?.value || "tab"); }
 function wspPanes() {
-  const mode = wspLayout();
+  const mode = wspPaneMode();
   const main = $("#wsp-panes")?.parentElement;
   if (main) {
     main.classList.toggle("mode-vertical", mode === "vertical");
@@ -8385,9 +8385,9 @@ $("#wsp-tabs").addEventListener("keydown", (e) => {
 });
 // Configurable split panel: tab / vertical / horizontal, persisted.
 $("#wsp-layout").addEventListener("change", () => {
-  store.set("wsp.layout", wspLayout());
+  store.set("wsp.layout", wspPaneMode());
   wspPanes();
-  if (wsp.tab === "preview" || wspLayout() !== "tab") wspBuild();
+  if (wsp.tab === "preview" || wspPaneMode() !== "tab") wspBuild();
 });
 const savedLayout = store.get("wsp.layout");
 if (savedLayout) $("#wsp-layout").value = savedLayout;
