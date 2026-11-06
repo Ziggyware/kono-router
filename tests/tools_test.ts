@@ -727,6 +727,21 @@ Deno.test("text-format tool calls: Qwen3-Coder XML, Hermes JSON, bare <function=
   assert(parseTextToolCalls("no calls here <b>x</b>") === null, "plain text is not a call");
 });
 
+Deno.test("text-format tool calls: <Function> element + <function_calls>/<invoke> forms", () => {
+  const el = parseTextToolCalls('Working.\n<Function name="calculate">{"expression":"3*7"}</Function>');
+  assert(el?.calls.length === 1 && el.calls[0].name === "calculate" && el.calls[0].arguments.expression === "3*7", "element form, JSON body: " + JSON.stringify(el));
+  assert(el.rest === "Working.", "prose kept around element form");
+  const elp = parseTextToolCalls('<Function name="fs_read"><parameter name="path">a.md</parameter><parameter name="limit">20</parameter></Function>');
+  assert(elp?.calls[0].arguments.path === "a.md" && elp.calls[0].arguments.limit === 20, "element form, named parameters typed: " + JSON.stringify(elp));
+  const ela = parseTextToolCalls(`<Function name="time" arguments='{"op":"now"}'></Function>`);
+  assert(ela?.calls[0].arguments.op === "now", "element form, arguments attribute: " + JSON.stringify(ela));
+  const inv = parseTextToolCalls('<function_calls><invoke name="calculate"><parameter name="expression">1+2</parameter></invoke><invoke name="time"><parameter name="op">now</parameter></invoke></function_calls>');
+  assert(inv?.calls.length === 2 && inv.calls[0].arguments.expression === "1+2" && inv.calls[1].name === "time", "invoke list: " + JSON.stringify(inv));
+  const caps = parseTextToolCalls('<TOOL_CALL><FUNCTION=calculate>{"expression":"5*5"}</FUNCTION></TOOL_CALL>');
+  assert(caps?.calls[0].arguments.expression === "5*5", "tags are case-insensitive: " + JSON.stringify(caps));
+  assert(parseTextToolCalls("the <function> element is prose") === null, "bare <function> prose is not a call");
+});
+
 Deno.test("fs_move: renames files and directories, honours aliases and overwrite", async () => {
   const ns = "move-" + crypto.randomUUID();
   await run("fs_write", { path: "src/main.module.css", content: "a{}" }, { namespace: ns });

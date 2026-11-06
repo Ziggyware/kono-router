@@ -1383,7 +1383,8 @@ async function* liftTextToolCalls(src: AsyncIterable<Delta>, declared: Set<strin
       let text = held + d.content;
       held = "";
       if (!holding) {
-        const at = Math.min(...TEXT_CALL_OPENERS.map((o) => { const i = text.indexOf(o); return i < 0 ? Infinity : i; }));
+        const lower = text.toLowerCase();
+        const at = Math.min(...TEXT_CALL_OPENERS.map((o) => { const i = lower.indexOf(o); return i < 0 ? Infinity : i; }));
         if (at !== Infinity) {
           holding = true;
           held = text.slice(at);

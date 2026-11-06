@@ -1,3 +1,23 @@
+# Fix: chat leaked raw `<Function ...>` markup instead of calling tools — 2026-11-06
+
+The text-format tool-call lifter only recognized the Hermes/Qwen
+shapes (`<tool_call>`, `<function=NAME>`) and matched them
+case-sensitively. Models answering in the element form
+(`<Function name="x">{...}</Function>`, parameters as
+`<parameter name="k">` children or an `arguments` attribute) or the
+Anthropic XML form (`<function_calls><invoke name="x">...</invoke>`)
+matched nothing: the markup streamed into the chat as prose and no
+tool ever executed.
+
+- TEXT_CALL_OPENERS gains `<function_calls>`, `<function ` and
+  `<invoke `; the stream lifter now searches a lowercased copy
+  (partial-tag holding was already case-insensitive).
+- parseTextToolCalls: case-insensitive throughout; new element,
+  wrapper and bare-invoke forms; `<parameter name="k">` spelling
+  accepted alongside `<parameter=k>`.
+- New parser test covers all new forms plus the regression that bare
+  `<function>` prose is not a call. Suite: 140 passed, 0 failed.
+
 # Fix: workspace would not open — wspLayout name collision — 2026-11-06
 
 Two different functions were both named `wspLayout`: the editor/preview

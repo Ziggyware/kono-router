@@ -1946,9 +1946,13 @@ registerToolbox(registerTool, { validateJson });
 // ---- text-format tool calls --------------------------------------------------
 // Some models write the call into content instead of tool_calls: Hermes/Qwen2.5
 // `<tool_call>{"name":…,"arguments":{…}}</tool_call>`, Qwen3-Coder
-// `<tool_call><function=NAME><parameter=KEY>VALUE…</tool_call>`, and the bare
-// `<function=NAME>{…}</function>`. These are lifted into structured calls.
-export const TEXT_CALL_OPENERS = ["<tool_call>", "<function="];
+// `<tool_call><function=NAME><parameter=KEY>VALUE…</tool_call>`, the bare
+// `<function=NAME>{…}</function>`, the element form
+// `<Function name="NAME">{…}</Function>` (body may instead hold
+// `<parameter name="KEY">VALUE</parameter>` children), and the Anthropic XML
+// form `<function_calls><invoke name="NAME">…</invoke></function_calls>`.
+// Tag matching is case-insensitive; these are lifted into structured calls.
+export const TEXT_CALL_OPENERS = ["<tool_call>", "<function=", "<function_calls>", "<function ", "<invoke "];
 
 export interface TextToolCall { name: string; arguments: Record<string, unknown> }
 
@@ -1963,12 +1967,16 @@ function textArgValue(raw: string): unknown {
 /** Parse every text-format call in `text`; null when none parse. `rest` is the prose outside them. */
 export function parseTextToolCalls(text: string): { calls: TextToolCall[]; rest: string } | null {
   const calls: TextToolCall[] = [];
-  const block = /<tool_call>\s*([\s\S]*?)\s*(?:<\/tool_call>|$)|<function=([^>\s]+)>\s*([\s\S]*?)\s*(?:<\/function>|(?=<function=)|$)/g;
+  const block = /<tool_call>\s*([\s\S]*?)\s*(?:<\/tool_call>|$)|<function=([^>\s]+)>\s*([\s\S]*?)\s*(?:<\/function>|(?=<function=)|$)|<function_calls>\s*([\s\S]*?)\s*(?:<\/function_calls>|$)|<function\s([^>]*?)>\s*([\s\S]*?)\s*(?:<\/function>|$)|<invoke\s([^>]*?)>\s*([\s\S]*?)\s*(?:<\/invoke>|$)/gi;
   let rest = "";
   let last = 0;
   for (let m; (m = block.exec(text));) {
     if (m[0] === "") { block.lastIndex++; continue; }
-    const parsed = m[1] !== undefined ? parseCallBody(m[1]) : parseFunctionBody(m[2], m[3]);
+    const parsed = m[1] !== undefined ? parseCallBody(m[1])
+      : m[2] !== undefined ? parseFunctionBody(m[2], m[3])
+      : m[4] !== undefined ? parseInvokeList(m[4])
+      : m[5] !== undefined ? parseElementBody(m[5], m[6])
+      : parseInvokeBody(m[7], m[8]);
     if (!parsed.length) continue;
     calls.push(...parsed);
     rest += text.slice(last, m.index);
@@ -1979,8 +1987,44 @@ export function parseTextToolCalls(text: string): { calls: TextToolCall[]; rest:
   return { calls, rest: rest.trim() };
 }
 
+function tagAttr(attrs: string, key: string): string {
+  const m = attrs.match(new RegExp(`${key}\\s*=\\s*"([^"]*)"|${key}\\s*=\\s*'([^']*)'|${key}\\s*=\\s*([^\\s>]+)`, "i"));
+  return (m?.[1] ?? m?.[2] ?? m?.[3] ?? "").trim();
+}
+
+function parseInvokeList(body: string): TextToolCall[] {
+  const out: TextToolCall[] = [];
+  for (const m of body.matchAll(/<invoke\s([^>]*?)>\s*([\s\S]*?)\s*(?:<\/invoke>|$)/gi)) out.push(...parseInvokeBody(m[1], m[2]));
+  return out;
+}
+
+function parseInvokeBody(attrs: string, body: string): TextToolCall[] {
+  const name = tagAttr(attrs, "name");
+  return name ? parseAttributedBody(name, attrs, body) : [];
+}
+
+function parseElementBody(attrs: string, body: string): TextToolCall[] {
+  const name = tagAttr(attrs, "name");
+  return name ? parseAttributedBody(name, attrs, body) : [];
+}
+
+// Shared tail for the attribute forms: an `arguments` attribute holding a
+// JSON object wins when the body yields nothing; otherwise the body is
+// parameters or a JSON object, exactly like the <function=NAME> form.
+function parseAttributedBody(name: string, attrs: string, body: string): TextToolCall[] {
+  if (body.trim()) {
+    const fromBody = parseFunctionBody(name, body);
+    if (fromBody.length) return fromBody;
+  }
+  const raw = tagAttr(attrs, "arguments");
+  if (raw) {
+    try { const j = JSON.parse(raw); if (isPlainObject(j)) return [{ name, arguments: j as Record<string, unknown> }]; } catch { /* not JSON */ }
+  }
+  return parseFunctionBody(name, body);
+}
+
 function parseCallBody(body: string): TextToolCall[] {
-  const fn = body.match(/^<function=([^>\s]+)>\s*([\s\S]*?)\s*(?:<\/function>\s*)?$/);
+  const fn = body.match(/^<function=([^>\s]+)>\s*([\s\S]*?)\s*(?:<\/function>\s*)?$/i);
   if (fn) return parseFunctionBody(fn[1], fn[2]);
   try {
     const j = JSON.parse(body);
@@ -1998,8 +2042,9 @@ function parseCallBody(body: string): TextToolCall[] {
 }
 
 function parseFunctionBody(name: string, body: string): TextToolCall[] {
-  const params = [...body.matchAll(/<parameter=([^>\s]+)>([\s\S]*?)(?=<\/parameter>|<parameter=|<\/function>|<\/tool_call>|$)(?:<\/parameter>)?/g)];
-  if (params.length) return [{ name, arguments: Object.fromEntries(params.map((p) => [p[1], textArgValue(p[2])])) }];
+  const params = [...body.matchAll(/<parameter\s*(?:=\s*([^>\s]+)|name\s*=\s*"([^"]+)"|name\s*=\s*'([^']+)'|name\s*=\s*([^>\s]+))\s*>([\s\S]*?)(?=<\/parameter>|<parameter[\s=>]|<\/function>|<\/tool_call>|<\/invoke>|$)(?:<\/parameter>)?/gi)]
+    .map((p) => [p[1] ?? p[2] ?? p[3] ?? p[4], p[5]] as const);
+  if (params.length) return [{ name, arguments: Object.fromEntries(params.map(([k, v]) => [k, textArgValue(v)])) }];
   const trimmed = body.trim();
   if (!trimmed) return [{ name, arguments: {} }];
   try { const j = JSON.parse(trimmed); return isPlainObject(j) ? [{ name, arguments: j }] : []; } catch { return []; }
