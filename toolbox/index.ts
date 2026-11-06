@@ -5,6 +5,7 @@
 import type { ToolSpec } from "./types.ts";
 import { webTools } from "./web.ts";
 import { fileTools } from "./files.ts";
+import { projectTools } from "./project.ts";
 import { memoryTools } from "./memory.ts";
 import { ragTools } from "./rag.ts";
 import { embedTools } from "./vector.ts";
@@ -27,6 +28,7 @@ export function toolboxTools(api: ToolboxApi): ToolSpec[] {
   return [
     ...webTools,
     ...fileTools,
+    ...projectTools,
     ...memoryTools,
     ...ragTools,
     ...embedTools,

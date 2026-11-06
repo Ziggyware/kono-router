@@ -89,6 +89,7 @@ import {
   thompsonPropensity,
 } from "./learning.ts";
 import { evaluate as evaluateCalc } from "./toolbox/calc.ts";
+import { workspaceBrief } from "./toolbox/project.ts";
 
 // ============================================================================
 // 1. DENO KV + L1 ISOLATE CACHE + CAS ATOMIC STATE ENGINE
@@ -5122,6 +5123,16 @@ honoApp.post("/v1/chat/completions", async (c) => {
     // models, which otherwise answer from memory. Only added when the router
     // will actually execute the calls; opt out with nokey_preamble: false.
     if (autoTools && agentRounds > 0 && body.nokey_preamble !== false) {
+      // The session's workspace, so the model knows what project exists, what
+      // the preview runs and what is broken, before deciding how to answer.
+      let briefTimer: ReturnType<typeof setTimeout> | undefined;
+      const brief = autoTools.includes("fs_read")
+        ? await Promise.race([
+          workspaceBrief({ kv, namespace: toolNamespace(c) }).catch(() => null),
+          new Promise<null>((r) => { briefTimer = setTimeout(() => r(null), 1200); }),
+        ]).finally(() => clearTimeout(briefTimer))
+        : null;
+      if (brief) messages.unshift({ role: "system", content: brief });
       messages.unshift({ role: "system", content: toolPreamble(autoTools) });
     }
     const { hasVisionPayload } = extractMessageText(messages);

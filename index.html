@@ -560,6 +560,9 @@ body.split-armed iframe { pointer-events: none; }
 .wsp-con-h .grow { flex: 1; }
 .wsp-con-h .err { color: var(--bad); } .wsp-con-h .warn { color: var(--warn); }
 #wsp-con-clr:hover { color: var(--acc); }
+#wsp-con-fix { color: var(--bad); } #wsp-con-fix:hover { color: var(--acc); }
+.cl-loc { margin-right: 8px; padding: 0; border: 0; background: none; font: inherit; color: var(--blue); cursor: pointer; text-decoration: underline; text-underline-offset: 2px; }
+.cl-loc:hover, .cl-loc:focus-visible { color: var(--acc); outline: none; }
 .wsp-con-b { height: var(--con-h, 160px); overflow: auto; border-top: 1px solid var(--line); }
 .wsp-con-b[hidden] { display: none; }
 .cl { padding: 2px 10px; border-bottom: 1px solid var(--line); white-space: pre-wrap; word-break: break-word; }
@@ -1745,10 +1748,11 @@ select.tool-form-in { background: var(--bg-3); color: var(--fg); }
             <iframe id="wsp-frame" title="Live view" sandbox="allow-scripts allow-modals allow-forms allow-popups"></iframe>
             <div class="wsp-empty" id="wsp-empty" hidden></div>
           </div>
-          <div class="wsp-con" id="wsp-con">
-            <button class="wsp-con-h" id="wsp-con-h" aria-expanded="false"><span>CONSOLE</span><span id="wsp-con-n"></span><span class="grow"></span><span id="wsp-con-clr" role="button" title="Clear console">clear</span></button>
-            <div class="wsp-con-b" id="wsp-con-b" hidden></div>
-          </div>
+        </div>
+        <!-- Shared by both tabs: errors stay listed while their files are open in the editor. -->
+        <div class="wsp-con" id="wsp-con">
+          <button class="wsp-con-h" id="wsp-con-h" aria-expanded="false"><span>CONSOLE</span><span id="wsp-con-n"></span><span class="grow"></span><span id="wsp-con-fix" role="button" title="Ask the chat to fix every error listed here" hidden>fix errors →</span><span id="wsp-con-clr" role="button" title="Clear console">clear</span></button>
+          <div class="wsp-con-b" id="wsp-con-b" hidden></div>
         </div>
         </div>
       </div>
@@ -3489,6 +3493,7 @@ async function complete() {
         if (j.nokey?.type === "tool_round") {
           k.rounds = j.nokey.round;
           k.toolRun = (j.nokey.tools ?? []).map((t) => `${t.name}${t.ok ? "" : " ✗"}`).join(", ");
+          if ((j.nokey.tools ?? []).some((t) => WSP_TOUCH.test(t.name))) { k.touched = true; wspProbe(); }
           repaint();
           continue;
         }
@@ -3525,7 +3530,7 @@ async function complete() {
   saveConv(); updateModelHint();
   if (k.degraded) toast("every upstream endpoint failed — router returned its status message", true);
   // Files the agent wrote this turn show up in the workspace without waiting for the poll.
-  if (wsp.open) wsRefresh(true);
+  if (k.touched) wspProbe(); else if (wsp.open) wsRefresh(true);
   // The dashboard declares no client tools: any call reaching it is the router's, so run it — never ask.
   if (!k.error && m.tool_calls?.length && !answeredIds(i).size && autoToolTurns++ < 4) await answerToolCalls(m);
 }
@@ -4957,6 +4962,14 @@ const TOOL_EXAMPLE_SETS = {
     { title: "Dry-run an edit", args: { path: "notes/todo.md", edits: [{ old: "ship tool tabs", new: "shipped tool tabs" }], dry_run: true } },
     { title: "Apply an edit", args: { path: "notes/todo.md", edits: [{ old: "ship tool tabs", new: "shipped tool tabs" }] } },
   ],
+  ws_check: [
+    { title: "Check the whole project", args: {} },
+    { title: "Only files under src/", args: { path: "src" } },
+  ],
+  app_debug: [
+    { title: "Static + last preview run", args: {} },
+    { title: "Wait for the current files to run", args: { wait_ms: 6000 } },
+  ],
   fs_move: [
     { title: "Rename a file", args: { from: "notes/todo.md", to: "notes/done.md" } },
     { title: "Move a folder", args: { from: "notes", to: "archive/notes" } },
@@ -5766,6 +5779,8 @@ $("#btn-generate-app")?.addEventListener("click", async () => {
     ``,
     `GENERATION MODE: ${mode.name}`,
     mode.directive,
+    // Workspace modes end in the debug loop: the job is done when the app runs clean.
+    mode.multi ? "When the files are written, call app_debug with wait_ms 6000 and fix every static and runtime error it reports, repeating until it reports none." : "",
     memoryBlock,
   ].filter(Boolean).join("\n");
   recordBuildDecision(mode, technique, tech, goal);
@@ -5943,10 +5958,16 @@ let currentSandboxDoc = "";    // full document actually loaded (wrapped + conso
 const SBX_BRIDGE = `<scr${"ipt"}>(function(){
   function fmt(a){ if (typeof a === "string") return a; if (a instanceof Error) return a.message; try { return JSON.stringify(a); } catch { try { return String(a); } catch { return "[object]"; } } }
   function send(level, args, extra){ try { parent.postMessage(Object.assign({ __sbx: 1, level, text: [...args].map(fmt).join(" ") }, extra || {}), "*"); } catch {} }
-  function errExtra(e, line, col){ const o = {}; if (e && e.stack) o.stack = String(e.stack); if (line) o.line = line; if (col) o.col = col; return o; }
-  for (const k of ["log","info","warn","error","debug"]) { const orig = console[k] ? console[k].bind(console) : () => {}; console[k] = (...a) => { const bad = a.find((x) => x instanceof Error); send(k === "debug" ? "log" : k, a, bad ? errExtra(bad) : null); orig(...a); }; }
-  addEventListener("error", (e) => send("error", [e.message || "Script error"], errExtra(e.error, e.lineno, e.colno)));
-  addEventListener("unhandledrejection", (e) => send("error", ["Unhandled rejection: " + fmt(e.reason)], e.reason instanceof Error ? errExtra(e.reason) : null));
+  function errExtra(e, line, col, file){ const o = {}; if (e && e.stack) o.stack = String(e.stack); if (line) o.line = line; if (col) o.col = col; if (file) o.file = String(file).slice(0, 300); return o; }
+  for (const k of ["log","info","warn","error","debug"]) { const orig = console[k] ? console[k].bind(console) : () => {}; console[k] = (...a) => { const bad = a.find((x) => x instanceof Error); send(k === "debug" ? "log" : k, a, bad ? errExtra(bad) : (k === "error" || k === "warn") ? { site: String(new Error().stack || "") } : null); orig(...a); }; }
+  // Capture phase: element load failures (scripts, styles, images) do not bubble.
+  addEventListener("error", (e) => {
+    const t = e.target;
+    if (e instanceof ErrorEvent || !t || t === window || !t.getAttribute) { send("error", [e.message || "Script error"], Object.assign({ kind: "exception" }, errExtra(e.error, e.lineno, e.colno, e.filename))); return; }
+    const tag = (t.tagName || "resource").toLowerCase(), ref = t.getAttribute("data-sbx") || t.getAttribute("src") || t.getAttribute("href") || "";
+    send("error", ["Failed to load <" + tag + "> " + (ref || "(inline module: one of its imports failed)")], { kind: "resource", ref: ref.slice(0, 300) });
+  }, true);
+  addEventListener("unhandledrejection", (e) => send("error", ["Unhandled rejection: " + fmt(e.reason)], Object.assign({ kind: "rejection" }, e.reason instanceof Error ? errExtra(e.reason) : null)));
 })();<\/script>`;
 
 // ---- transpiling -------------------------------------------------------------
@@ -5963,19 +5984,19 @@ function loadTranspiler() {
       const transforms = [];
       if (opts.ts) transforms.push("typescript");
       if (opts.jsx) transforms.push("jsx");
-      return mod.transform(code, { transforms, production: true, filePath: opts.name || "block" }).code;
+      return mod.transform(code, { transforms, production: true, filePath: opts.name || "block", ...(opts.automatic ? { jsxRuntime: "automatic" } : {}) }).code;
     }).catch(() => null);
   }
   return sbxTranspilerPromise;
 }
-async function sbxTranspile(code, name) {
+async function sbxTranspile(code, name, automatic = false) {
   const lower = (name || "").toLowerCase();
   const ts = /\.(ts|mts|tsx)$/.test(lower) || ["typescript", "ts", "tsx"].includes(lower);
   const jsx = /\.(tsx|jsx)$/.test(lower) || ["tsx", "jsx"].includes(lower);
   if (!ts && !jsx) return { code, error: null, skipped: true };
   const t = await loadTranspiler();
   if (!t) return { code, error: "transpiler unavailable (esm.sh unreachable)", skipped: false };
-  try { return { code: t(code, { ts, jsx, name }), error: null, skipped: false }; }
+  try { return { code: t(code, { ts, jsx, name, automatic: jsx && automatic }), error: null, skipped: false }; }
   catch (e) { return { code, error: String((e && e.message) || e), skipped: false }; }
 }
 const SBX_TS_TYPE = /type\s*=\s*["']text\/(?:tsx|typescript|jsx)["']/i;
@@ -7406,6 +7427,7 @@ async function wsRefresh(quiet = false) {
   try {
     const r = await wsExec("fs_list", { limit: 1000 });
     wsFiles = r.files ?? [];
+    wsp.ssig = r.sig || "";
     diffWsFiles(wsFiles);
     renderWsFiles();
     wspOnFiles();
@@ -7458,7 +7480,7 @@ async function wspFetch(files) {
       const res = d.results?.[j];
       if (!res?.ok) { wsp.cache.delete(f.path); return; }
       const r = res.result.truncated ? await wsReadFull(f.path) : res.result;
-      wsp.cache.set(f.path, { sig: wspSig(f), content: r.content ?? "", binary: Boolean(r.binary), mime: r.mime || f.mime || "" });
+      wsp.cache.set(f.path, { sig: wspSig(f), sha: r.sha256, content: r.content ?? "", binary: Boolean(r.binary), mime: r.mime || f.mime || "" });
     }));
   }
 }
@@ -7480,11 +7502,14 @@ function wspRenderEntry() {
 async function wspCompiled(path, f) {
   if (!/\.(tsx?|jsx|mts)$/i.test(path)) return f.content;
   if (f.out === undefined) {
-    const r = await sbxTranspile(f.content, path);
+    // Module JSX that never brings React into scope gets the automatic runtime
+    // (react/jsx-runtime), so `return <div/>` works without `import React`.
+    const automatic = !/\bimport\s+(?:\*\s+as\s+)?React\b|\bimport\s+React\s*,|@jsx(?:ImportSource)?\s|\bReact\s*=/.test(f.content);
+    const r = await sbxTranspile(f.content, path, automatic);
     f.out = r.code;
     f.err = r.error;
   }
-  if (f.err) wspLog({ level: "error", text: `transpile failed in ${path}: ${f.err}` });
+  if (f.err) { const m = /\((\d+):(\d+)\)\s*$/.exec(f.err); wspLog({ level: "error", kind: "transpile", text: `transpile failed: ${f.err.replace(/^Error transforming [^:]*:\s*/, "")}`, loc: { path, line: m ? Number(m[1]) : 0, col: m ? Number(m[2]) + 1 : 0 } }); }
   return f.out;
 }
 
@@ -7545,9 +7570,22 @@ async function wspAssemble(page) {
     } else if (rel.includes("modulepreload")) l.remove();
     else { const u = asset(href, page); if (u) l.setAttribute("href", u); }
   }
+  // Inline scripts are named after the page and the line they start on, so a
+  // stack frame maps back to page:line (see wspLocate).
+  let scan = 0;
+  const startLine = (body) => {
+    const at = body.trim() ? html.indexOf(body, scan) : -1;
+    if (at < 0) return 0;
+    scan = at + body.length;
+    let n = 1;
+    for (let i = html.indexOf("\n"); i !== -1 && i < at; i = html.indexOf("\n", i + 1)) n++;
+    return n;
+  };
   for (const sc of [...doc.querySelectorAll("script")]) {
     const type = (sc.getAttribute("type") || "").toLowerCase();
     const src = sc.getAttribute("src");
+    const named = !src && (!type || type === "module" || /javascript|ecmascript/.test(type));
+    const line = src ? 0 : startLine(sc.textContent);
     if (src) {
       const hit = find(resolve(src, page));
       if (!hit) continue;
@@ -7558,10 +7596,13 @@ async function wspAssemble(page) {
       else {
         const f = F.get(hit);
         const code = type === "text/babel" || !WSP_JS.test(hit) ? f.content : await wspCompiled(hit, f);
-        n.textContent = code.replace(/<\/script/gi, "<\\/script");
+        n.textContent = code.replace(/<\/script/gi, "<\\/script") + (type === "text/babel" ? "" : `\n//# sourceURL=${WSP_HOST}${hit}`);
       }
       sc.replaceWith(n);
-    } else if (type === "module") sc.textContent = rewrite(sc.textContent, page);
+    } else {
+      if (type === "module") sc.textContent = rewrite(sc.textContent, page);
+      if (named && line) sc.textContent += `\n//# sourceURL=${WSP_HOST}__inline/${line}/${page}`;
+    }
   }
   for (const el of doc.querySelectorAll("img[src],source[src],video[src],audio[src],track[src],embed[src],input[src]")) { const u = asset(el.getAttribute("src"), page); if (u) el.setAttribute("src", u); }
   for (const el of doc.querySelectorAll("video[poster]")) { const u = asset(el.getAttribute("poster"), page); if (u) el.setAttribute("poster", u); }
@@ -7614,7 +7655,9 @@ const WSP_PRELUDE = `(function(FS, DIR, HOST, LS){
 })(__ARGS__);`;
 
 async function wspBuild() {
-  if (!wsp.open || wsp.tab !== "preview" || $("#wsp").classList.contains("folded")) return;
+  // A probe runs the app even while the live view is hidden, so the agent can
+  // see runtime errors of the files it just wrote.
+  if (!wsp.probe && (!wsp.open || wsp.tab !== "preview" || $("#wsp").classList.contains("folded"))) return;
   if (wsp.building) { wsp.queued = true; return; }
   wsp.building = true;
   try { do { wsp.queued = false; await wspBuildOnce(); } while (wsp.queued); }
@@ -7641,6 +7684,10 @@ async function wspBuildOnce() {
     for (const p of [...wsp.cache.keys()]) if (!keep.has(p)) wsp.cache.delete(p);
     await wspFetch(live.filter((f) => wsp.cache.get(f.path)?.sig !== wspSig(f)));
     wspConClear();
+    wsp.run = { id: (wsp.run?.id ?? 0) + 1, sig: wsp.ssig, page, entry, t0: performance.now(), errors: new Map(), warnings: new Map(), logs: 0, static: [] };
+    wsp.builtSig = wsp.ssig;
+    wspReportSoon();
+    wspCheckSoon();
     const doc = await wspAssemble(page);
     wsp.doc = doc;
     let out = sbxWrap(doc);
@@ -7673,24 +7720,125 @@ function wspConBadge() {
   const n = $("#wsp-con-n");
   n.className = wsp.errs ? "err" : wsp.warns ? "warn" : "";
   n.textContent = wsp.errs ? `${wsp.errs} error${wsp.errs > 1 ? "s" : ""}` : wsp.warns ? `${wsp.warns} warning${wsp.warns > 1 ? "s" : ""}` : wsp.logs ? String(wsp.logs) : "";
+  $("#wsp-con-fix").hidden = !wsp.errs;
 }
 function wspConOpen(on) {
   $("#wsp-con-b").hidden = !on;
   $("#wsp-con-h").setAttribute("aria-expanded", String(on));
 }
+// Where a console entry came from, as workspace path:line:col. Module frames
+// carry their sourceURL (ws.local/<path>); inline page scripts are named
+// ws.local/__inline/<first line>/<page>, so their lines are offset back.
+const WSP_LOC = /https:\/\/ws\.local\/(?:__inline\/(\d+)\/)?([^\s:()?#]+)[^\s:()]*:(\d+)(?::(\d+))?/;
+function wspLocate(d) {
+  if (d.loc) return d.loc;
+  for (const src of [d.file && d.line ? `${d.file}:${d.line}:${d.col || 0}` : "", d.stack || "", d.site || "", d.text || ""]) {
+    const m = WSP_LOC.exec(src);
+    if (m) return { path: decodeURIComponent(m[2]), line: Number(m[3]) + (m[1] ? Number(m[1]) - 1 : 0), col: Number(m[4]) || 0 };
+  }
+  if (d.kind === "resource" && d.ref) {
+    if (wsp.cache.has(d.ref)) return { path: d.ref, line: 0, col: 0 };
+    // A missing file: point at the page line that references it.
+    const page = wsp.run?.page, html = page && wsp.cache.get(page)?.content;
+    const at = html ? html.indexOf(d.ref) : -1;
+    if (at >= 0) { const before = html.slice(0, at); return { path: page, line: before.split("\n").length, col: at - before.lastIndexOf("\n") }; }
+  }
+  return null;
+}
+const wspLocText = (l) => l ? `${l.path}${l.line ? ":" + l.line + (l.col ? ":" + l.col : "") : ""}` : "";
+function wspRecord(d, loc) {
+  const run = wsp.run;
+  if (!run || d.static) return;
+  if (d.level !== "error" && d.level !== "warn") { run.logs++; return; }
+  const bag = d.level === "error" ? run.errors : run.warnings;
+  const key = d.text + "|" + wspLocText(loc);
+  const prev = bag.get(key);
+  if (prev) { prev.count++; return; }
+  if (bag.size >= 40) return;
+  bag.set(key, { message: String(d.text).slice(0, 600), ...(loc ? { path: loc.path, line: loc.line || undefined, col: loc.col || undefined } : {}), kind: d.kind || (d.level === "error" ? "console" : "warn"), ...(d.stack ? { stack: String(d.stack).replace(/data:text\/javascript;base64,[\w+/=]+/g, "module").slice(0, 1200) } : {}), count: 1 });
+  wspReportSoon();
+}
+// The run's outcome goes to the router once the app settles, stamped with the
+// workspace sig it was built from; app_debug compares it against the current one.
+function wspReportSoon() { clearTimeout(wsp.repTimer); wsp.repTimer = setTimeout(wspReport, 1500); }
+async function wspReport() {
+  const run = wsp.run;
+  if (!run || !run.sig) return;
+  const body = { sig: run.sig, page: run.page, entry: run.entry || run.page, errors: [...run.errors.values()], warnings: [...run.warnings.values()], logs: run.logs, ms: Math.round(performance.now() - run.t0) };
+  const key = JSON.stringify([body.sig, body.page, body.errors, body.warnings]);
+  if (key === wsp.repKey) return;
+  wsp.repKey = key;
+  try { await wsExec("app_report", body); } catch { wsp.repKey = ""; }
+}
+// Static diagnostics for the files just built, listed under the runtime output.
+function wspCheckSoon() { clearTimeout(wsp.chkTimer); wsp.chkTimer = setTimeout(wspCheck, 600); }
+async function wspCheck() {
+  const run = wsp.run;
+  if (!run) return;
+  let r;
+  try { r = await wsExec("ws_check", { limit: 40 }); } catch { return; }
+  if (wsp.run !== run) return;
+  run.static = (r.diagnostics ?? []).filter((d) => d.severity === "error" || d.severity === "warning");
+  for (const d of run.static) wspLog({ level: d.severity === "error" ? "error" : "warn", text: `[check] ${d.message}`, static: true, loc: { path: d.path, line: d.line, col: d.col } });
+}
+function wspGoto(loc) {
+  if (!loc?.path || !wsFiles.some((f) => f.path === loc.path)) { toast(`${loc?.path || "that file"} is not in the workspace`, true); return; }
+  wspEdit(loc.path, false, loc.line ? { line: loc.line, col: loc.col } : null);
+}
+function wspFixPrompt() {
+  const run = wsp.run;
+  const rt = run ? [...run.errors.values()] : [];
+  const st = run ? run.static.filter((d) => d.severity === "error") : [];
+  const line = (e) => `- ${e.path ? `${e.path}${e.line ? ":" + e.line + (e.col ? ":" + e.col : "") : ""} ` : ""}\`${String(e.message).replace(/`/g, "'")}\`${e.count > 1 ? ` (×${e.count})` : ""}`;
+  return [
+    `Fix every error in the workspace app${run?.page ? ` (${run.page})` : ""}.`,
+    ...(rt.length ? ["", "The live preview reported:", ...rt.slice(0, 20).map(line)] : []),
+    ...(st.length ? ["", "Static check (ws_check):", ...st.slice(0, 20).map(line)] : []),
+    "",
+    "Use app_debug to see the code around each error, fix the cause with fs_patch, then call app_debug with wait_ms until it reports no errors.",
+  ].join("\n");
+}
+async function wspFix() {
+  if (chatCtl) { toast("wait for the current reply to finish", true); return; }
+  if (!wsp.errs) { toast("no errors to fix"); return; }
+  $("#pauto").checked = true;
+  $("#cinput").value = wspFixPrompt();
+  await sendChat();
+}
+// After an agent round that touched the workspace: refresh, and run the app
+// (even with the live view hidden) so its runtime report is ready for app_debug.
+async function wspProbe() {
+  await wsRefresh(true);
+  if (!wsp.ssig || wsp.ssig === wsp.builtSig) return;
+  wsp.probe = true;
+  try { await wspBuild(); } finally { wsp.probe = false; }
+}
+const WSP_TOUCH = /^(fs_write|fs_patch|fs_move|fs_delete|app_debug|ws_check)$/;
+
 function wspLog(d) {
   const body = $("#wsp-con-b");
+  const loc = wspLocate(d);
+  wspRecord(d, loc);
   if (wsp.logs >= 500) body.firstChild?.remove();
   wsp.logs++;
   if (d.level === "error") wsp.errs++;
   if (d.level === "warn") wsp.warns++;
   const row = document.createElement("div");
   row.className = "cl " + (d.level || "log");
-  row.textContent = d.text + (d.line ? `  :${d.line}${d.col ? ":" + d.col : ""}` : "");
-  if (d.stack) {
+  row.textContent = d.text;
+  if (loc) {
+    const a = document.createElement("button");
+    a.className = "cl-loc"; a.type = "button";
+    a.textContent = wspLocText(loc);
+    a.title = "Open in the editor";
+    a.addEventListener("click", (e) => { e.stopPropagation(); wspGoto(loc); });
+    row.prepend(a);
+  } else if (d.line) row.textContent += `  :${d.line}${d.col ? ":" + d.col : ""}`;
+  if (d.stack && !d.static) {
     const st = document.createElement("span");
     st.className = "st";
-    st.textContent = String(d.stack).split("\n").filter((l) => /\bat\b|@/.test(l)).slice(0, 4).join("\n").replace(/data:text\/javascript;base64,[\w+/=]+/g, "module");
+    st.textContent = String(d.stack).split("\n").filter((l) => /\bat\b|@/.test(l)).slice(0, 4).join("\n").replace(/data:text\/javascript;base64,[\w+/=]+/g, "module")
+      .replace(new RegExp(WSP_LOC.source, "g"), (all, off, p, l, c) => `${decodeURIComponent(p)}:${Number(l) + (off ? Number(off) - 1 : 0)}${c ? ":" + c : ""}`);
     if (st.textContent) row.appendChild(st);
   }
   const stick = body.scrollHeight - body.scrollTop - body.clientHeight < 30;
@@ -7701,6 +7849,7 @@ function wspLog(d) {
 }
 $("#wsp-con-h").addEventListener("click", (e) => {
   if (e.target.id === "wsp-con-clr") { wspConClear(); return; }
+  if (e.target.id === "wsp-con-fix") { wspFix(); return; }
   wspConOpen($("#wsp-con-b").hidden);
 });
 window.addEventListener("message", (e) => {
@@ -7892,17 +8041,25 @@ $("#wsp-insp").addEventListener("click", (e) => {
   else if (a === "entry") { wsp.entry = wspEntry() === sel && wsp.entry === sel ? "" : sel; wsp.page = ""; wspSave(); wspRenderTree(); wspInspect(); wspBuild(); }
   else if (a === "download") wspDownload(sel);
 });
-async function wspEdit(path, reload = false) {
+async function wspEdit(path, reload = false, at = null) {
   wspGuard(async () => {
     wsp.sel = path; wsp.editing = path; wsp.dirty = false; wsp.buffer = null; wsp.stale = null; wsp.ask = null;
     const f = wsFiles.find((x) => x.path === path);
     if (reload || !f || wsp.cache.get(path)?.sig !== wspSig(f)) {
-      try { const r = await wsReadFull(path); wsp.cache.set(path, { sig: f ? wspSig(f) : "", content: r.content ?? "", binary: Boolean(r.binary), mime: r.mime || "" }); }
+      try { const r = await wsReadFull(path); wsp.cache.set(path, { sig: f ? wspSig(f) : "", sha: r.sha256, content: r.content ?? "", binary: Boolean(r.binary), mime: r.mime || "" }); }
       catch (e) { toast("open failed: " + e.message, true); return; }
     }
     wspRenderTree(); wspInspect(); wspRenderEditor(true); wspTab("edit");
     const ed = $("#wi-ed");
-    if (ed) { ed.setSelectionRange(0, 0); ed.focus(); ed.scrollTop = ed.scrollLeft = 0; }
+    if (!ed) return;
+    if (!at?.line) { ed.setSelectionRange(0, 0); ed.focus(); ed.scrollTop = ed.scrollLeft = 0; return; }
+    const lines = ed.value.split("\n");
+    const n = Math.min(Math.max(1, at.line), lines.length);
+    const start = lines.slice(0, n - 1).reduce((a, l) => a + l.length + 1, 0);
+    ed.focus();
+    ed.setSelectionRange(start + Math.max(0, Math.min((at.col || 1) - 1, lines[n - 1].length)), start + lines[n - 1].length);
+    const lh = parseFloat(getComputedStyle(ed).lineHeight) || 18;
+    ed.scrollTop = Math.max(0, (n - 4) * lh);
   });
 }
 async function wspSaveFile() {
@@ -7910,13 +8067,20 @@ async function wspSaveFile() {
   const ed = $("#wi-ed");
   if (!path || !ed) return;
   try {
-    const r = await wsExec("fs_write", { path, content: ed.value });
+    const sha = wsp.cache.get(path)?.sha;
+    const r = await wsExec("fs_write", { path, content: ed.value, ...(sha && wsp.stale !== path ? { expect_sha256: sha } : {}) });
     wsp.dirty = false; wsp.buffer = null; wsp.stale = null;
-    wsp.cache.set(path, { sig: "", content: ed.value, binary: false, mime: wsp.cache.get(path)?.mime || "" });
-    toast(`saved ${path} · ${r.bytes} B`);
-    await wsRefresh(true);
+    wsp.cache.set(path, { sig: "", sha: r.sha256, content: ed.value, binary: false, mime: wsp.cache.get(path)?.mime || "" });
+    const d = r.diagnostics?.[0];
+    toast(`saved ${path} · ${r.bytes} B${d ? ` · ${r.diagnostics.length} problem${r.diagnostics.length > 1 ? "s" : ""}: line ${d.line}: ${d.message}` : ""}`, Boolean(d && d.severity === "error"));
+    // Re-run the app behind the editor so the console reflects the save.
+    await (wsp.live ? wspProbe() : wsRefresh(true));
     wspInspect();
-  } catch (e) { toast("save failed: " + e.message, true); }
+  } catch (e) {
+    // Someone (usually the agent) changed the file after it was opened: keep the buffer, flag it stale.
+    if (/changed since you read it/.test(e.message)) { wsp.stale = path; wspInspect(); toast(`${path} changed on the server since you opened it — save again to overwrite, or revert to load it`, true); return; }
+    toast("save failed: " + e.message, true);
+  }
 }
 async function wspMove(from, to) {
   const r = await wsExec("fs_read", { path: from, encoding: "auto", limit: 5000 });
@@ -8129,7 +8293,7 @@ splitter($("#wsp-split-y"), {
 });
 // The console's top edge resizes it too: drag the header.
 $("#wsp-con-h").addEventListener("pointerdown", (e) => {
-  if ($("#wsp-con-b").hidden || e.button !== 0 || e.target.id === "wsp-con-clr") return;
+  if ($("#wsp-con-b").hidden || e.button !== 0 || e.target.id === "wsp-con-clr" || e.target.id === "wsp-con-fix") return;
   const y0 = e.clientY, h0 = wsp.con, h = e.currentTarget;
   let moved = false;
   e.preventDefault();

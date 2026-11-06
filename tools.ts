@@ -1280,6 +1280,14 @@ export function toToolSpecs(options: ToolProjectionOptions = {}): unknown[] {
 }
 
 /** The system-prompt fragment that teaches a model the plane's conventions. */
+/** How to change workspace files so the edits land exactly and the app works. */
+export const WORKSPACE_DISCIPLINE = [
+  "Workspace files are the user's project and its live preview: when asked to build, change or fix code, do it in the workspace with fs_* tools rather than pasting whole files into the reply.",
+  "Read before editing (fs_read, or fs_grep to locate), then fs_patch with `old` copied exactly from what you read and expect_sha256 set to the sha256 you read; one fs_patch call can carry several edits to a file.",
+  "If an edit is refused, the error says where the anchor diverged or why — correct that edit, do not rewrite the file.",
+  "After a set of changes run ws_check (or app_debug, which adds what the live preview observed at runtime), fix every error it reports, and repeat until it is clean; use app_debug with wait_ms to confirm the preview runs the new files.",
+].join(" ");
+
 export function toolPreamble(names?: string[]): string {
   const tools = names?.length ? names.map((n) => getTool(n)?.name ?? normalizeToolName(n)) : listTools().filter((t) => !t.admin).map((t) => t.name);
   return [
@@ -1287,6 +1295,7 @@ export function toolPreamble(names?: string[]): string {
     `Available: ${tools.join(", ")}.`,
     "Call them with a single valid JSON object of arguments; the router executes them and returns the result as a tool message.",
     "Prefer tools to guessing: web_search/web_fetch for current facts, fs_* for durable files, memory_* across conversations, rag_* for large documents, calculate/data/time/crypto for exact computation.",
+    ...(tools.includes("fs_patch") ? [WORKSPACE_DISCIPLINE] : []),
   ].join(" ");
 }
 
@@ -1860,6 +1869,7 @@ export function mergeToolDeclarations(clientTools: unknown[], options: { names?:
  *  Chosen for agentic utility, not novelty: web, files, memory, retrieval,
  *  clipboard, planning and exact compute. Admin tools are never auto-attached. */
 export const DEFAULT_AUTO_TOOLS = [
+  "app_debug",
   "calculate",
   "clipboard",
   "crypto",
@@ -1884,6 +1894,7 @@ export const DEFAULT_AUTO_TOOLS = [
   "time",
   "web_fetch",
   "web_search",
+  "ws_check",
 ];
 
 /** The default set, plus every forged tool: a tool created on the fly is
