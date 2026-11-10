@@ -2313,7 +2313,7 @@ return { words: t.split(/\s+/).filter(Boolean).length, chars: t.length };</texta
           </div>
           <div class="setrow">
             <div><div class="lbl">Router URL</div><div class="dim">Public endpoint of your router</div></div>
-            <div class="field"><input id="set-curl" autocomplete="off" placeholder="https://nokey-router.ziggyware.deno.net"></div>
+            <div class="field"><input id="set-curl" autocomplete="off" placeholder="https://localhost:8000"></div>
           </div>
           <div class="setrow">
             <div><div class="lbl">Router API key</div><div class="dim">Bearer key sent with every request</div></div>
@@ -2721,7 +2721,7 @@ const store = {
     document.cookie = `enc_${k}=; path=/; max-age=0; SameSite=Strict`; // secrets must not ride on every request
   }
 })();
-const ORIGIN = /^https?:/.test(location.protocol) ? location.origin : "https://nokey-router.ziggyware.deno.net";
+const ORIGIN = /^https?:/.test(location.protocol) ? location.origin : "https://localhost:8000";
 const creds = () => { const c = store.get("creds", {}); return { url: (c.url || ORIGIN).replace(/\/+$/, ""), key: c.key || "", admin: c.admin || "" }; };
 // A stable per-browser session scopes the tool plane's namespace, so
 // memory, RAG and files compound across chats instead of resetting.

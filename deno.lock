@@ -4,6 +4,7 @@
     "jsr:@deno/esbuild-plugin@^1.2.0": "1.2.0",
     "jsr:@deno/installer-shell-setup@*": "0.3.4",
     "jsr:@deno/loader@~0.3.3": "0.3.5",
+    "jsr:@std/assert@^1.0.19": "1.0.19",
     "jsr:@std/bytes@^1.0.6": "1.0.6",
     "jsr:@std/encoding@1": "1.0.10",
     "jsr:@std/encoding@^1.0.10": "1.0.10",
@@ -12,6 +13,7 @@
     "jsr:@std/html@1": "1.0.4",
     "jsr:@std/http@^1.0.15": "1.0.20",
     "jsr:@std/internal@^1.0.10": "1.0.10",
+    "jsr:@std/internal@^1.0.12": "1.0.14",
     "jsr:@std/jsonc@1": "1.0.2",
     "jsr:@std/media-types@1": "1.1.0",
     "jsr:@std/path@1": "1.1.2",
@@ -19,9 +21,12 @@
     "jsr:@std/semver@1": "1.0.5",
     "jsr:@std/uuid@^1.0.7": "1.0.9",
     "npm:@opentelemetry/api@1.10.0": "1.10.0",
+    "npm:@opentelemetry/api@^1.10.0": "1.10.0",
+    "npm:@types/node@^26.6.6": "26.6.6",
     "npm:esbuild-wasm@0.25.7": "0.25.7",
     "npm:esbuild@0.25.7": "0.25.7",
     "npm:hono@4.13.16": "4.13.16",
+    "npm:hono@^4.13.17": "4.13.17",
     "npm:preact-render-to-string@^6.5.11": "6.5.13_preact@10.27.1",
     "npm:sucrase@3.35.0": "3.35.0",
     "npm:typescript@5.9.3": "5.9.3"
@@ -39,6 +44,12 @@
     },
     "@deno/loader@0.3.5": {
       "integrity": "72f6ce9c6e7242c6e070705dbd8a838884dd236d5dd0bd907d08bece92db5722"
+    },
+    "@std/assert@1.0.19": {
+      "integrity": "eaada96ee120cb980bc47e040f82814d786fe8162ecc53c91d8df60b8755991e",
+      "dependencies": [
+        "jsr:@std/internal@^1.0.12"
+      ]
     },
     "@std/bytes@1.0.6": {
       "integrity": "f6ac6adbd8ccd99314045f5703e23af0a68d7f7e58364b47d2c7f408aeb5820a"
@@ -67,6 +78,9 @@
     "@std/internal@1.0.10": {
       "integrity": "e3be62ce42cab0e177c27698e5d9800122f67b766a0bea6ca4867886cbde8cf7"
     },
+    "@std/internal@1.0.14": {
+      "integrity": "291516b3d4c35024d6ffbc0a9df5bf4c64116e05b50012cf846710152d2ffdf7"
+    },
     "@std/jsonc@1.0.2": {
       "integrity": "909605dae3af22bd75b1cbda8d64a32cf1fd2cf6efa3f9e224aba6d22c0f44c7"
     },
@@ -76,7 +90,7 @@
     "@std/path@1.1.2": {
       "integrity": "c0b13b97dfe06546d5e16bf3966b1cadf92e1cc83e56ba5476ad8b498d9e3038",
       "dependencies": [
-        "jsr:@std/internal"
+        "jsr:@std/internal@^1.0.10"
       ]
     },
     "@std/semver@1.0.5": {
@@ -257,6 +271,12 @@
     "@pkgjs/parseargs@0.11.0": {
       "integrity": "sha512-+1VkjdD0QBLPodGrJUeqarH8VAIvQODIbwh9XpP5Syisf7YoQgsJKPNFoqqLQlu+VQ/tVSshMR6loPMn8U+dPg=="
     },
+    "@types/node@26.6.6": {
+      "integrity": "sha512-MzQj+8Kx3XI40OmUAE6Qoh58ZMNstNNMwn2nfd3qWsfe7nDNSqJNzes4njhz6AHwrSHOffSLwXU6yb474Q4aog==",
+      "dependencies": [
+        "undici-types"
+      ]
+    },
     "ansi-regex@5.0.1": {
       "integrity": "sha512-quJQXlTSUGL2LH9SUXo8VwsY4soanhgo6LNSm84E1LBcE8s3O0wpdiRzyR9z/ZZJMlMWv37qOOb9pdJlMUEKFQ=="
     },
@@ -372,6 +392,9 @@
     },
     "hono@4.13.16": {
       "integrity": "sha512-AOLOEhvrV+iH92xXCnFr/5+3KjPKcI3xP63XJtX5spAnkznPdHijlIsUTpi7/9EhWqrTCekw5c5zh1K+YsVw7A=="
+    },
+    "hono@4.13.17": {
+      "integrity": "sha512-vZIcbkvjOR5hHRWERbGkr8fGfF0GGM1ooYkuH448iO3b2AdVEr3AXZSw4Z3Kn+1L5z0CVoVeyV29VGYmFh05kQ=="
     },
     "is-fullwidth-code-point@3.0.0": {
       "integrity": "sha512-zymm5+u+sCsSWyD9qNaejV3DFvhCKclKdizYaJUuHA83RLjb7nSuGnddCHGv0hk+KY7BMAlsWeK4Ueg6EV6XQg=="
@@ -511,6 +534,9 @@
       "integrity": "sha512-jl1vZzPDinLr9eUt3J/t7V6FgNEw9QjvBPdysz9KfQDD41fQrC2Y4vKQdiaUpFT4bXlb1RHhLpp8wtm6M5TgSw==",
       "bin": true
     },
+    "undici-types@8.9.0": {
+      "integrity": "sha512-KTDyRTYX8sWmKXAikPHHSyc63CRPETMctyjKFupcC6OBLXT3xsN0e9aF7m+mIXutFWpUXuedtowG7iLOzp0kQg=="
+    },
     "which@2.0.2": {
       "integrity": "sha512-BLI3Tl1TW3Pvl70l3yq3Y64i+awpwXqsGBYWkkqMtnbXgrMD+yj7rhW0kuEDxzJaYXGjEW5ogapKNMEKNMjibA==",
       "dependencies": [
@@ -537,10 +563,18 @@
   },
   "workspace": {
     "dependencies": [
+      "jsr:@std/assert@^1.0.19",
       "npm:@opentelemetry/api@1.10.0",
       "npm:hono@4.13.16",
       "npm:sucrase@3.35.0",
       "npm:typescript@5.9.3"
-    ]
+    ],
+    "packageJson": {
+      "dependencies": [
+        "npm:@opentelemetry/api@^1.10.0",
+        "npm:@types/node@^26.6.6",
+        "npm:hono@^4.13.17"
+      ]
+    }
   }
 }

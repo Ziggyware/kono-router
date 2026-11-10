@@ -1,0 +1,10 @@
+{
+  "name": "nokey-router",
+  "version": "1.0.0",
+  "type": "module",
+  "dependencies": {
+    "@opentelemetry/api": "^1.10.0",
+    "@types/node": "^26.6.6",
+    "hono": "^4.13.17"
+  }
+}
