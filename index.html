@@ -5,13 +5,13 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="color-scheme" content="dark light">
 <meta name="theme-color" content="#06070a">
-<meta name="description" content="nokey-router — one OpenAI-compatible endpoint that routes across every free model lane.">
+<meta name="description" content="kono-router — one OpenAI-compatible endpoint that routes across every free model lane.">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<meta name="apple-mobile-web-app-title" content="nokey">
+<meta name="apple-mobile-web-app-title" content="kono">
 <meta name="format-detection" content="telephone=no">
-<title>nokey-router</title>
+<title>kono-router</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect x='1.2' y='1.2' width='21.6' height='21.6' rx='7' fill='%23b6ff3c'/%3E%3Cpath d='M7.7 16.3V7.7l8.6 8.6V7.7' fill='none' stroke='%2307120a' stroke-width='2.3' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -19,7 +19,7 @@
 <script>try{const t=JSON.parse(localStorage.getItem("nk.theme")||'"auto"');if(["light","ocean","violet"].includes(t))document.documentElement.dataset.theme=t;else if(t==="auto"&&matchMedia("(prefers-color-scheme: light)").matches)document.documentElement.dataset.theme="light"}catch{}</script>
 <style>
 /* =====================================================================
-   nokey-router · design system v2
+   kono-router · design system v2
    dark-first, glass surfaces, fluid type, safe-area aware
    ===================================================================== */
 :root {
@@ -1658,9 +1658,9 @@ select.tool-form-in { background: var(--bg-3); color: var(--fg); }
 <div id="prog" aria-hidden="true"></div>
 <div id="scrim" aria-hidden="true"></div>
 <header>
-  <a class="brand" href="#chat" aria-label="nokey-router home">
+  <a class="brand" href="#chat" aria-label="kono-router home">
     <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="1.2" y="1.2" width="21.6" height="21.6" rx="7" fill="url(#lg)"/><path d="M7.7 16.3V7.7l8.6 8.6V7.7" fill="none" stroke="#07120a" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"/></svg>
-    <b>nokey<span>router</span></b>
+    <b>kono<span>router</span></b>
     <em>v6</em>
   </a>
   <span class="vtitle" id="vtitle"></span>
@@ -1697,7 +1697,7 @@ select.tool-form-in { background: var(--bg-3); color: var(--fg); }
       <div class="welcome" id="welcome">
         <div class="wmark">
           <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="1.2" y="1.2" width="21.6" height="21.6" rx="7" fill="url(#lg)"/><path d="M7.7 16.3V7.7l8.6 8.6V7.7" fill="none" stroke="#07120a" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"/></svg>
-          <b style="font:650 15px/1 var(--sans);letter-spacing:-.02em">nokey-router</b>
+          <b style="font:650 15px/1 var(--sans);letter-spacing:-.02em">kono-router</b>
         </div>
         <h1>One endpoint. Every free model.</h1>
         <p>Streaming chat, tool calls, vision and images — routed by Bayesian lane scoring with an exhaustive fallback sweep.</p>
@@ -1907,7 +1907,7 @@ select.tool-form-in { background: var(--bg-3); color: var(--fg); }
     <div class="row" id="mctl" data-fold="top" data-fold-label="Image controls" style="margin-bottom:12px;align-items:stretch">
       <textarea id="mprompt" class="grow" rows="2" aria-label="Image prompt"></textarea>
       <div style="display:grid;gap:6px">
-        <div class="row"><select id="mmodel" aria-label="Image model" style="max-width:340px"><option>nokey-image</option><option>nokey-image-flux</option><option>nokey-image-horde</option></select>
+        <div class="row"><select id="mmodel" aria-label="Image model" style="max-width:340px"><option>kono-image</option><option>kono-image-flux</option><option>kono-image-horde</option></select>
           <select id="msize" aria-label="Size"><option>1024x1024</option><option>1024x576</option><option>576x1024</option><option>1792x1024</option><option>1024x1792</option><option>512x512</option></select>
           <select id="mn" aria-label="Count"><option>1</option><option>2</option><option>3</option><option>4</option></select></div>
         <button class="btn" id="mgo" title="Generate (Enter in the prompt box also submits)">generate</button>
@@ -2349,7 +2349,7 @@ return { words: t.split(/\s+/).filter(Boolean).length, chars: t.length };</texta
             <div><b>About</b><small>Version, docs and shortcuts</small></div>
           </div>
           <div class="setrow">
-            <div><div class="lbl">Version</div><div class="dim">nokey-router · v6</div></div>
+            <div><div class="lbl">Version</div><div class="dim">kono-router · v6</div></div>
             <span class="grow"></span><span class="dim">2026-11-04</span>
           </div>
           <div class="setrow">
@@ -2741,7 +2741,7 @@ function headers(admin = false, json = true) {
   if (json) h["Content-Type"] = "application/json";
   if (c.key) h.Authorization = "Bearer " + c.key;
   if (admin && c.admin) h["x-admin-secret"] = c.admin;
-  h["x-nokey-session"] = sessionId();
+  h["x-kono-session"] = sessionId();
   return h;
 }
 
@@ -3247,7 +3247,7 @@ function prefillConnection() {
 }
 function exportChat() {
   const blob = new Blob([JSON.stringify({ model: $("#pmodel").value, system: $("#psys").value, messages: conv.messages.map((m) => ({ ...wire(m), ...(m.reasoning_content ? { reasoning_content: m.reasoning_content } : {}) })) }, null, 2)], { type: "application/json" });
-  const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = `nokey-chat-${Date.now()}.json`; a.click(); URL.revokeObjectURL(a.href);
+  const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = `kono-chat-${Date.now()}.json`; a.click(); URL.revokeObjectURL(a.href);
 }
 function confirmDialog(msg, ok, label = "Clear all") {
   $("#dconfirm-msg").textContent = msg;
@@ -3509,7 +3509,7 @@ async function complete() {
     // router's own tool plane and the router runs the agent loop server-
     // side. The dashboard never forwards client tool definitions and never
     // asks the user to hand-feed tool results into the prompt.
-    ...($("#pauto").checked ? { tools: "auto", nokey_rounds: 16, ...(wsp.runnerOk ? { nokey_runner: true } : {}), ...(gateAlways ? { nokey_gate: "always" } : {}) } : {}),
+    ...($("#pauto").checked ? { tools: "auto", kono_rounds: 16, ...(wsp.runnerOk ? { kono_runner: true } : {}), ...(gateAlways ? { kono_gate: "always" } : {}) } : {}),
   };
   gateAlways = false;
   const k = m._m, t0 = performance.now();
@@ -3525,7 +3525,7 @@ async function complete() {
       const j = await res.json();
       const msg = j.choices?.[0]?.message ?? {};
       Object.assign(m, { content: msg.content ?? "", ...(msg.reasoning_content ? { reasoning_content: msg.reasoning_content } : {}), ...(msg.tool_calls ? { tool_calls: msg.tool_calls } : {}) });
-      Object.assign(k, { ttft: j.telemetry?.observed_ttft_ms, finish: j.choices?.[0]?.finish_reason, tuple: j.nokey?.tuple_id, provider: j.provider, degraded: j.nokey?.degraded, rounds: j.nokey?.tool_rounds, executed: j.nokey?.tools_executed });
+      Object.assign(k, { ttft: j.telemetry?.observed_ttft_ms, finish: j.choices?.[0]?.finish_reason, tuple: j.kono?.tuple_id, provider: j.provider, degraded: j.kono?.degraded, rounds: j.kono?.tool_rounds, executed: j.kono?.tools_executed });
     } else {
       let rs0 = 0;
       for await (const { data, comment } of sse(res, chatCtl.signal)) {
@@ -3536,16 +3536,16 @@ async function complete() {
         if (j.error) throw new Error(j.error.message);
         // Router status frames carry bookkeeping only (empty choices): the
         // plane ran a tool round itself and is about to re-dispatch.
-        if (j.nokey?.type === "tool_round") {
-          k.rounds = j.nokey.round;
-          k.toolRun = (j.nokey.tools ?? []).map((t) => `${t.name}${t.ok ? "" : " ✗"}`).join(", ");
-          if ((j.nokey.tools ?? []).some((t) => WSP_TOUCH.test(t.name))) { k.touched = true; wspProbe(); }
+        if (j.kono?.type === "tool_round") {
+          k.rounds = j.kono.round;
+          k.toolRun = (j.kono.tools ?? []).map((t) => `${t.name}${t.ok ? "" : " ✗"}`).join(", ");
+          if ((j.kono.tools ?? []).some((t) => WSP_TOUCH.test(t.name))) { k.touched = true; wspProbe(); }
           repaint();
           continue;
         }
         // The router's build gate sent the agent back: show why, keep streaming.
-        if (j.nokey?.type === "build_gate") {
-          const g = j.nokey;
+        if (j.kono?.type === "build_gate") {
+          const g = j.kono;
           k.gate = g.gate_round;
           k.toolRun = `build gate ${g.gate_round}: ` + [g.static_errors ? `${g.static_errors} static` : "", g.runtime_errors ? `${g.runtime_errors} runtime` : "", g.tests?.failed ? `${g.tests.failed} failing tests` : "", !g.static_errors && !g.runtime_errors && !g.tests ? "untested" : ""].filter(Boolean).join(", ") + " — continuing";
           k.touched = true;
@@ -3566,7 +3566,7 @@ async function complete() {
         }
         if (j.provider) k.provider = j.provider;
         if (j.choices?.[0]?.finish_reason) k.finish = j.choices[0].finish_reason;
-        if (j.nokey) { k.tuple = j.nokey.tuple_id ?? k.tuple; k.degraded = j.nokey.degraded; k.rounds = j.nokey.tool_rounds ?? k.rounds; }
+        if (j.kono) { k.tuple = j.kono.tuple_id ?? k.tuple; k.degraded = j.kono.degraded; k.rounds = j.kono.tool_rounds ?? k.rounds; }
         repaint();
       }
     }
@@ -3634,7 +3634,7 @@ function parallelModels(n) {
 function parLetter(i) { return String.fromCharCode(65 + i); }
 
 async function parFetch(model, messages, rounds = 8) {
-  const body = { model, messages, stream: false, ...(rounds > 0 && $("#pauto")?.checked ? { tools: "auto", nokey_rounds: rounds } : {}) };
+  const body = { model, messages, stream: false, ...(rounds > 0 && $("#pauto")?.checked ? { tools: "auto", kono_rounds: rounds } : {}) };
   const d = await req("/v1/chat/completions", { method: "POST", body });
   const text = d.choices?.[0]?.message?.content ?? "";
   if (!String(text).trim()) throw new Error("empty answer");
@@ -3930,7 +3930,7 @@ cmd("toggle settings", () => { go("chat"); openSettings(); }, "chat");
 // =====================================================================
 const AFILES = ["main.ts", "math.ts", "trace.ts", "index.html", "openapi.json", "CHANGES.md", "services.json", "deno.json"];
 const ARCH_PROMPT = [
-  "You are the Architect, the embedded agent of the nokey-router workspace. You act through tools.",
+  "You are the Architect, the embedded agent of the kono-router workspace. You act through tools.",
   "",
   "TO CALL A TOOL reply with exactly one fenced block:",
   "```action",
@@ -3951,7 +3951,7 @@ const ARCH_PROMPT = [
   "- run_probe {mode} — admin. Canary-probe top candidates.",
   "- force_sync {} — admin. Full catalog sync.",
   "- list_plugins {} — installed workspace plugins.",
-  "- install_plugin {code} — installs a plugin LIVE and persists it. code must call NokeyPlugins.register({ id, name, description, admin?, mount(el, ctx) }).",
+  "- install_plugin {code} — installs a plugin LIVE and persists it. code must call KonoPlugins.register({ id, name, description, admin?, mount(el, ctx) }).",
   "  ctx: base(), apiKey(), adminSecret(), fetchJson(url, opts) -> {res, data}, toast(msg, bad?), log(msg), esc(s), chat(messages, opts) -> completion JSON,",
   "  chatStream(messages, onDelta(delta, full), opts{model, max_tokens, temperature, tools, onReasoning(delta, full), onToolCalls(calls)}) -> full text, image(prompt, model?) -> URL,",
   "  models(), health(), probe(mode), sync(), resurrect(limit), source(file), traces(limit), trace(id), storeFor(id) -> {get, set, del}.",
@@ -4063,11 +4063,11 @@ async function runTool(a) {
     case "ping_model": {
       const model = String(a.model ?? "free:smart"), t0 = performance.now();
       const d = await req("/v1/chat/completions", { method: "POST", body: { model, messages: [{ role: "user", content: "Reply with exactly: pong" }], max_tokens: 32 } });
-      return { ok: true, detail: `${model}: ${ms(performance.now() - t0)} via ${d.nokey?.tuple_id ?? d.provider}; degraded=${Boolean(d.nokey?.degraded)}; reply "${String(d.choices?.[0]?.message?.content ?? "").slice(0, 100)}"; trace ${d.nokey?.trace_id ?? ""}` };
+      return { ok: true, detail: `${model}: ${ms(performance.now() - t0)} via ${d.kono?.tuple_id ?? d.provider}; degraded=${Boolean(d.kono?.degraded)}; reply "${String(d.choices?.[0]?.message?.content ?? "").slice(0, 100)}"; trace ${d.kono?.trace_id ?? ""}` };
     }
     case "run_probe": { needAdmin(); const d = await req("/v1/probe", { method: "POST", admin: true, body: { mode: a.mode ?? "smart" } }); return { ok: true, detail: (d.results ?? []).map((r) => r.ok ? `${r.passed ? "PASS" : "WRONG"} ${r.tupleId} ${ms(r.ms)}` : `FAIL ${r.tupleId} ${r.error ?? ""}`).join("\n") || "no candidates" }; }
     case "force_sync": { needAdmin(); const d = await req("/v1/sync", { method: "POST", admin: true, body: {} }); return { ok: true, detail: `catalog synced: ${d.total_models} models` }; }
-    case "list_plugins": return { ok: true, detail: NokeyPlugins._list.map((p) => `- ${p.id} "${p.name}"${p.admin ? " [admin]" : ""}${p.builtin ? " [builtin]" : ""}: ${p.description ?? ""}`).join("\n") || "none" };
+    case "list_plugins": return { ok: true, detail: KonoPlugins._list.map((p) => `- ${p.id} "${p.name}"${p.admin ? " [admin]" : ""}${p.builtin ? " [builtin]" : ""}: ${p.description ?? ""}`).join("\n") || "none" };
     case "install_plugin": {
       const r = installPlugin(String(a.code ?? ""));
       return r.ok ? { ok: true, detail: `installed and persisted: ${r.ids.join(", ")} (Plugins view)` } : { ok: false, detail: r.error };
@@ -4108,7 +4108,7 @@ async function sendArch() {
       const working = line(`<span class="dim">round ${rounds} · thinking</span>`);
       const res = await req("/v1/chat/completions", { method: "POST", signal: arch.ctl.signal, body: { model: $("#amodel")?.value.trim() || "free:smart", temperature: 0.2, messages: [{ role: "system", content: ARCH_PROMPT }, ...arch.history] } });
       const reply = res.choices?.[0]?.message?.content ?? "";
-      const tr = res.nokey?.trace_id ?? "";
+      const tr = res.kono?.trace_id ?? "";
       working.remove();
       arch.history.push({ role: "assistant", content: reply });
       const action = parseAction(reply);
@@ -4179,7 +4179,7 @@ const pctx = {
     if (calls.length) o.onToolCalls?.(calls);
     return full;
   },
-  image: async (prompt, model = "nokey-image") => { const d = await req("/v1/images/generations", { method: "POST", body: { prompt, model, response_format: "url" } }); const it = d.data?.[0] ?? {}; return it.url || (it.b64_json ? "data:image/png;base64," + it.b64_json : ""); },
+  image: async (prompt, model = "kono-image") => { const d = await req("/v1/images/generations", { method: "POST", body: { prompt, model, response_format: "url" } }); const it = d.data?.[0] ?? {}; return it.url || (it.b64_json ? "data:image/png;base64," + it.b64_json : ""); },
   models: async () => (await req("/v1/models")).data ?? [],
   health: () => req("/health"),
   probe: (mode = "smart") => req("/v1/probe", { method: "POST", admin: true, body: { mode } }),
@@ -4191,7 +4191,7 @@ const pctx = {
   storeFor: (id) => ({ get: (k, d = null) => store.get(`plugin:${id}:${k}`, d), set: (k, v) => store.set(`plugin:${id}:${k}`, v), del: (k) => store.del(`plugin:${id}:${k}`) }),
 };
 let pluginsShown = false, loadingBuiltins = true;
-const NokeyPlugins = window.NokeyPlugins = {
+const KonoPlugins = window.KonoPlugins = {
   _list: [],
   register(p) {
     if (!p || typeof p.id !== "string" || typeof p.mount !== "function") throw new Error("register({ id, name, mount(el, ctx) }) required");
@@ -4202,19 +4202,19 @@ const NokeyPlugins = window.NokeyPlugins = {
   },
 };
 function installPlugin(code, persist = true) {
-  if (!code.includes("NokeyPlugins.register")) return { ok: false, error: "code must call NokeyPlugins.register({...})" };
-  const before = new Map(NokeyPlugins._list.map((p) => [p.id, p]));
-  try { new Function("NokeyPlugins", "ctx", code)(NokeyPlugins, pctx); }
+  if (!code.includes("KonoPlugins.register")) return { ok: false, error: "code must call KonoPlugins.register({...})" };
+  const before = new Map(KonoPlugins._list.map((p) => [p.id, p]));
+  try { new Function("KonoPlugins", "ctx", code)(KonoPlugins, pctx); }
   catch (e) { return { ok: false, error: "plugin threw: " + e.message }; }
-  const ids = NokeyPlugins._list.filter((p) => before.get(p.id) !== p).map((p) => p.id);
+  const ids = KonoPlugins._list.filter((p) => before.get(p.id) !== p).map((p) => p.id);
   if (!ids.length) return { ok: false, error: "code ran but registered no plugin" };
   if (persist) { const saved = store.get("plugins", {}); for (const id of ids) saved[id] = code; store.set("plugins", saved); }
   return { ok: true, ids };
 }
 function renderPlugins() {
   pluginsShown = true;
-  $("#plcount").textContent = `${NokeyPlugins._list.length} plugins`;
-  $("#plgrid").replaceChildren(...NokeyPlugins._list.map((p) => {
+  $("#plcount").textContent = `${KonoPlugins._list.length} plugins`;
+  $("#plgrid").replaceChildren(...KonoPlugins._list.map((p) => {
     const card = document.createElement("div");
     card.className = "card";
     card.innerHTML = `<div class="h"><b>${esc(p.name ?? p.id)}</b>${p.admin ? `<span class="badge adm">admin</span>` : ""}<span class="grow"></span>${p.builtin ? "" : `<button class="btn q" data-rm="${esc(p.id)}" aria-label="Uninstall ${esc(p.name ?? p.id)}">×</button>`}</div>
@@ -4228,10 +4228,10 @@ function renderPlugins() {
 $("#plgrid").onclick = (e) => {
   const b = e.target.closest("[data-rm]"); if (!b) return;
   const saved = store.get("plugins", {}); delete saved[b.dataset.rm]; store.set("plugins", saved);
-  NokeyPlugins._list = NokeyPlugins._list.filter((p) => p.id !== b.dataset.rm);
+  KonoPlugins._list = KonoPlugins._list.filter((p) => p.id !== b.dataset.rm);
   renderPlugins();
 };
-const PLUGIN_EXAMPLE = `NokeyPlugins.register({
+const PLUGIN_EXAMPLE = `KonoPlugins.register({
   id: 'lane-race',
   name: 'Lane Race',
   description: 'Fires the same prompt at every lane in parallel and ranks them by time to answer.',
@@ -4243,7 +4243,7 @@ const PLUGIN_EXAMPLE = `NokeyPlugins.register({
       const lanes = ['free:fast', 'free:smart', 'free:code', 'free:reasoning'];
       const runs = lanes.map(async (model) => {
         const t0 = performance.now();
-        try { const d = await ctx.chat([{ role: 'user', content: input.value }], { model, max_tokens: 64 }); return { model, ms: performance.now() - t0, by: d.nokey?.tuple_id ?? d.provider }; }
+        try { const d = await ctx.chat([{ role: 'user', content: input.value }], { model, max_tokens: 64 }); return { model, ms: performance.now() - t0, by: d.kono?.tuple_id ?? d.provider }; }
         catch (e) { return { model, ms: Infinity, by: e.message }; }
       });
       for (const r of (await Promise.all(runs)).sort((a, b) => a.ms - b.ms)) tb.insertAdjacentHTML('beforeend', '<tr><td>' + r.model + '</td><td>' + (isFinite(r.ms) ? Math.round(r.ms) + 'ms' : '—') + '</td><td class="t">' + ctx.esc(r.by) + '</td></tr>');
@@ -4256,7 +4256,7 @@ $("#plgo").onclick = () => { const r = installPlugin($("#plcode").value); r.ok ?
 enter.plugins = renderPlugins;
 
 // built-ins
-NokeyPlugins.register({
+KonoPlugins.register({
   id: "model-ping", name: "Model Ping", description: "Minimal completion to any model id or lane: latency, serving tuple, trace.",
   mount(el, ctx) {
     el.innerHTML = `<div class="row"><input class="grow" list="modellist" value="free:smart" aria-label="Model"><button class="btn">ping</button></div><div style="margin-top:8px"></div>`;
@@ -4264,13 +4264,13 @@ NokeyPlugins.register({
     btn.onclick = async () => {
       out.innerHTML = `<span class="dim">…</span>`; const t0 = performance.now();
       try { const d = await ctx.chat([{ role: "user", content: "Reply with exactly: pong" }], { model: inp.value.trim(), max_tokens: 32 });
-        out.innerHTML = `<span class="${d.nokey?.degraded ? "warn" : "ok"}">${ms(performance.now() - t0)}</span> <span class="mid">${esc(d.nokey?.tuple_id ?? d.provider ?? "")}</span> <a href="#" data-tr="${esc(d.nokey?.trace_id ?? "")}">trace</a><div class="dim">${esc(String(d.choices?.[0]?.message?.content ?? "").slice(0, 120))}</div>`;
+        out.innerHTML = `<span class="${d.kono?.degraded ? "warn" : "ok"}">${ms(performance.now() - t0)}</span> <span class="mid">${esc(d.kono?.tuple_id ?? d.provider ?? "")}</span> <a href="#" data-tr="${esc(d.kono?.trace_id ?? "")}">trace</a><div class="dim">${esc(String(d.choices?.[0]?.message?.content ?? "").slice(0, 120))}</div>`;
         $("a", out).onclick = (e) => { e.preventDefault(); openTrace(e.target.dataset.tr); };
       } catch (e) { out.innerHTML = `<span class="no">${esc(e.message)}</span>`; }
     };
   },
 });
-NokeyPlugins.register({
+KonoPlugins.register({
   id: "prompt-lab", name: "Prompt Lab", description: "Streaming mini-chat built only on the SDK: models, chatStream with live reasoning, storeFor.",
   mount(el, ctx) {
     const st = ctx.storeFor("prompt-lab"), hist = st.get("history", []);
@@ -4291,7 +4291,7 @@ NokeyPlugins.register({
     clr.onclick = () => { hist.length = 0; st.set("history", []); render(); };
   },
 });
-NokeyPlugins.register({
+KonoPlugins.register({
   id: "image-quickgen", name: "Image QuickGen", description: "One-shot image through /v1/images/generations.",
   mount(el, ctx) {
     el.innerHTML = `<div class="row"><input class="grow" aria-label="Prompt"><button class="btn">generate</button></div><div style="margin-top:8px"></div>`;
@@ -4303,7 +4303,7 @@ NokeyPlugins.register({
     };
   },
 });
-NokeyPlugins.register({
+KonoPlugins.register({
   id: "lane-probe", name: "Lane Probe", admin: true, description: "Server canary against a lane's top candidates; verified IQ written back.",
   mount(el, ctx) {
     el.innerHTML = `<div class="row"><select class="grow" aria-label="Lane"><option>fast</option><option selected>smart</option><option>code</option><option>reasoning</option></select><button class="btn">probe</button></div><div style="margin-top:8px"></div>`;
@@ -4315,7 +4315,7 @@ NokeyPlugins.register({
     };
   },
 });
-NokeyPlugins.register({
+KonoPlugins.register({
   id: "catalog-sync", name: "Catalog Sync", admin: true, description: "Full provider sweep: rediscover models, report totals.",
   mount(el, ctx) {
     el.innerHTML = `<button class="btn">sync</button><div style="margin-top:8px"></div>`;
@@ -4348,8 +4348,8 @@ async function genOnce() {
   try {
     const d = await req("/v1/images/generations", { method: "POST", body: { prompt, model, size, n } });
     const got = d.data ?? [];
-    const items = got.map((it, i) => ({ src: it.url || "data:image/png;base64," + it.b64_json, prompt, model, backend: d.nokey?.backends?.[i] ?? "", ms: performance.now() - card.t0, trace: d.nokey?.trace_id }));
-    const pend = Number(d.nokey?.pending || 0);
+    const items = got.map((it, i) => ({ src: it.url || "data:image/png;base64," + it.b64_json, prompt, model, backend: d.kono?.backends?.[i] ?? "", ms: performance.now() - card.t0, trace: d.kono?.trace_id }));
+    const pend = Number(d.kono?.pending || 0);
     const idx = gallery.indexOf(card);
     const repl = [...items];
     if (pend > 0) { card.note = `still processing — ${pend} image${pend > 1 ? "s" : ""} still under review across all providers`; repl.push(card); }
@@ -4394,7 +4394,7 @@ function renderGallery() {
     ? `<figure class="pending"><div class="ph"><span class="spin" aria-hidden="true"></span><span>${esc(g.note || "generating…")}</span></div>
       <figcaption><span title="${esc(g.prompt)}">${esc(g.prompt)}</span><b title="model">${esc(g.model)}</b></figcaption></figure>`
     : `<figure><a href="${esc(g.src)}" target="_blank" rel="noopener"><img src="${esc(g.src)}" alt="${esc(g.prompt)}" loading="lazy"></a>
-    <figcaption><span title="${esc(g.prompt)}">${esc(g.prompt)}</span>${g.backend ? `<b title="backend that produced this image">${esc(g.backend.split("::").pop())}</b>` : ""}<b>${ms(g.ms)}</b>${g.trace ? `<a href="#" data-tr="${esc(g.trace)}">trace</a>` : ""}<a href="${esc(g.src)}" download="nokey-${Date.now()}.png">save</a></figcaption></figure>`).join("");
+    <figcaption><span title="${esc(g.prompt)}">${esc(g.prompt)}</span>${g.backend ? `<b title="backend that produced this image">${esc(g.backend.split("::").pop())}</b>` : ""}<b>${ms(g.ms)}</b>${g.trace ? `<a href="#" data-tr="${esc(g.trace)}">trace</a>` : ""}<a href="${esc(g.src)}" download="kono-${Date.now()}.png">save</a></figcaption></figure>`).join("");
 }
 $("#mgo").onclick = genMedia;
 $("#mloop").onclick = () => { mLoop = !mLoop; setMButtons(); if (mLoop && !mBusy) genMedia(); };
@@ -4409,7 +4409,7 @@ enter.media = async () => {
   if (mediaModelsLoaded) return;
   try {
     const all = (await req("/v1/models")).data ?? [];
-    const img = all.filter((m) => String(m.owned_by).startsWith("nokey-image:"));
+    const img = all.filter((m) => String(m.owned_by).startsWith("kono-image:"));
     if (!img.length) return;
     const by = new Map();
     for (const m of img) { const p = m.id.split("::")[0].replace(/^services_json_/, ""); by.set(p, [...(by.get(p) ?? []), m.id]); }
@@ -4451,7 +4451,7 @@ const cleanVendor = (v) => String(v ?? "").trim().toLowerCase().replace(/^servic
 const modelVendor = (m) => {
   const id = String(m?.id ?? "");
   if (/^free:/i.test(id)) return LANE_GROUP;
-  if (/^nokey-image/i.test(id)) return IMAGE_GROUP;
+  if (/^kono-image/i.test(id)) return IMAGE_GROUP;
   const slash = id.indexOf("/");
   return cleanVendor(slash > 0 ? id.slice(0, slash) : m?.owned_by);
 };
@@ -4534,7 +4534,7 @@ function showModelResults(query = modelSearch) {
   const capability = $("#model-cap").value, minimum = Number($("#model-context").value);
   const unique = new Map();
   for (const m of catalog) {
-    if (!m.id || /^nokey-image/i.test(m.id)) continue;
+    if (!m.id || /^kono-image/i.test(m.id)) continue;
     if (capability && !caps(m).split(" ").includes(capability)) continue;
     const context = Number(m.context_window) || 0;
     if (context < minimum) continue;
@@ -4835,7 +4835,7 @@ const TOOL_SEEDS = {
   data: { op: "query", data: { a: { b: [10, 20, 30] } }, path: "$.a.b[1]" },
   text: { op: "similarity", text: "gpt-4o-mini", candidates: ["gpt-4o", "claude-3-5-sonnet", "gpt-4o-mini-2024"] },
   time: { op: "now" },
-  crypto: { op: "digest", algorithm: "sha-256", data: "nokey-router" },
+  crypto: { op: "digest", algorithm: "sha-256", data: "kono-router" },
   web_search: { query: "deno kv", limit: 3 },
   web_fetch: { url: "https://example.com" },
   http_request: { method: "GET", url: "https://api.github.com/zen" },
@@ -4895,7 +4895,7 @@ const TOOL_EXAMPLES = {
   },
   crypto: {
     title: "Cryptographic hash digest",
-    request: { op: "digest", algorithm: "sha-256", data: "nokey-router-asck" },
+    request: { op: "digest", algorithm: "sha-256", data: "kono-router-asck" },
     response: { ok: true, algorithm: "sha-256", digest: "b5d4045c3f466fa91fe2cc6abe79232a1a57cdf104f7a26e716e0a1e2789df78", bytes: 32 }
   },
   web_search: {
@@ -4996,7 +4996,7 @@ const TOOL_EXAMPLES = {
   router_capabilities: {
     title: "Inspect router engine capabilities",
     request: {},
-    response: { ok: true, engine: "nokey-router v6", kernel: "asck-t-v2", models: 140, endpoints: 102 }
+    response: { ok: true, engine: "kono-router v6", kernel: "asck-t-v2", models: 140, endpoints: 102 }
   },
   router_catalog: {
     title: "Inspect model catalog by mode",
@@ -5049,7 +5049,7 @@ const TOOL_EXAMPLE_SETS = {
     { title: "Undo last change", args: { op: "undo", slot: "draft" } },
   ],
   crypto: [
-    { title: "SHA-256 digest", args: { op: "digest", algorithm: "sha-256", data: "nokey-router" } },
+    { title: "SHA-256 digest", args: { op: "digest", algorithm: "sha-256", data: "kono-router" } },
     { title: "HMAC", args: { op: "hmac", algorithm: "sha-256", key: "secret", data: "message" } },
     { title: "UUIDv7 ×3", args: { op: "id", id_kind: "uuid7", count: 3 } },
     { title: "base64url encode", args: { op: "encode", encoding: "base64url", data: "hello world?" } },
@@ -6047,7 +6047,7 @@ $("#btn-export-techpack")?.addEventListener("click", () => {
   const blob = new Blob([JSON.stringify(pack, null, 2)], { type: "application/json" });
   const a = document.createElement("a");
   a.href = URL.createObjectURL(blob);
-  a.download = "nokey-techpack.json";
+  a.download = "kono-techpack.json";
   a.click();
   toast("Exported custom tech pack");
 });
@@ -6413,7 +6413,7 @@ $("#sb-clear-console")?.addEventListener("click", () => {
 let commRoom = "general";
 let commMessages = [];
 let commStreamCtl = null;
-const commChannel = typeof BroadcastChannel !== "undefined" ? new BroadcastChannel("nokey-community") : null;
+const commChannel = typeof BroadcastChannel !== "undefined" ? new BroadcastChannel("kono-community") : null;
 
 function getCommUser() {
   let user = store.get("comm_user", "");
@@ -6630,7 +6630,7 @@ $("#btn-create-channel")?.addEventListener("click", (e) => {
 
 $("#comm-share-app")?.addEventListener("click", () => {
   const input = $("#comm-input");
-  input.value += `Hey everyone, check out this application built with nokey-router App Builder:\n\`\`\`html\n<!DOCTYPE html>\n<html>\n<head><title>Community App</title></head>\n<body><h1>Hello from App Builder!</h1></body>\n</html>\n\`\`\`\n`;
+  input.value += `Hey everyone, check out this application built with kono-router App Builder:\n\`\`\`html\n<!DOCTYPE html>\n<html>\n<head><title>Community App</title></head>\n<body><h1>Hello from App Builder!</h1></body>\n</html>\n\`\`\`\n`;
   input.focus();
 });
 
@@ -7425,7 +7425,7 @@ async function askNotch() {
   ans.hidden = false;
   ans.textContent = "…";
   try {
-    const sys = "You are an inline assistant inside the nokey-router dashboard, helping the user with ONE form field.\n"
+    const sys = "You are an inline assistant inside the kono-router dashboard, helping the user with ONE form field.\n"
       + "Field: " + notchLabel(field) + "\n"
       + "What it is: " + (field.dataset.notchContext || "") + "\n"
       + "Current contents:\n" + (field.value || "(empty)") + "\n\n"
@@ -8103,7 +8103,7 @@ const WSP_TEST_AGENT = "<scr" + "ipt>(" + wspTestAgent.toString() + ")();</scr" 
 async function wspTestDoc(c) {
   if (c.kind === "unit") {
     // A synthetic entry that imports every test module; it lives in the cache only while assembling.
-    const entry = "__nokey_tests__.js";
+    const entry = "__kono_tests__.js";
     wsp.cache.set(entry, { sig: "", content: c.files.map((f) => `import "./${f}";`).join("\n") + "\n", binary: false, mime: "text/javascript" });
     try { return await wspAssemble(entry); } finally { wsp.cache.delete(entry); }
   }
@@ -9151,7 +9151,7 @@ $("#gh-push")?.addEventListener("click", async () => {
       if (read.binary) { skipped++; continue; }
       let sha;
       try { sha = (await ghApi(`/repos/${repo}/contents/${ghPath(file.path)}?ref=${encodeURIComponent(branch)}`)).sha; } catch { /* new file */ }
-      await ghApi(`/repos/${repo}/contents/${ghPath(file.path)}`, { method: "PUT", body: JSON.stringify({ message: "sync from nokey workspace", branch, content: b64encodeText(read.content ?? ""), ...(sha ? { sha } : {}) }) });
+      await ghApi(`/repos/${repo}/contents/${ghPath(file.path)}`, { method: "PUT", body: JSON.stringify({ message: "sync from kono workspace", branch, content: b64encodeText(read.content ?? ""), ...(sha ? { sha } : {}) }) });
       done++;
       stat.textContent = `pushing… ${done}`;
     }
@@ -9224,7 +9224,7 @@ $("#ws-zip")?.addEventListener("click", async () => {
     if (!files.length) { toast("workspace is empty", true); return; }
     const a = document.createElement("a");
     a.href = URL.createObjectURL(zipStore(files));
-    a.download = "nokey-workspace.zip";
+    a.download = "kono-workspace.zip";
     a.click();
     setTimeout(() => URL.revokeObjectURL(a.href), 4000);
     toast(`downloaded ${files.length} file(s)`);

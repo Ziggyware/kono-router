@@ -32,7 +32,7 @@ const RING_MAX = 256;
 const IO_MAX = 32_000;
 const ring = new Map<string, TraceRec>(); // insertion-ordered: oldest first
 const subscribers = new Set<(e: TraceEvent) => void>();
-const tracer = otel.getTracer("nokey-router");
+const tracer = otel.getTracer("kono-router");
 const als = new AsyncLocalStorage<Span>();
 const now = () => performance.timeOrigin + performance.now();
 const hex = (bytes: number) => [...crypto.getRandomValues(new Uint8Array(bytes))].map((b) => b.toString(16).padStart(2, "0")).join("");

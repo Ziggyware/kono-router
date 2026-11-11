@@ -3,7 +3,7 @@
   "info": {
     "title": "kono-router",
     "version": "asck-v1",
-    "description": "OpenAI-compatible free-inference router. Chat and image routes never fail: after an exhaustive endpoint sweep they return 200 with `nokey.degraded=true` (buffered responses also set `X-Nokey-Degraded: 1`; streams send headers before routing settles, so they signal it in-band). Every request is traced: `traceparent` is honoured inbound and returned outbound, spans are exported via OpenTelemetry and kept in a per-isolate ring under `/v1/traces`. The ASCK-T tool plane adds first-class tool support: `GET /v1/tools` lists executable built-ins (calculation, data/JSON, text, time, crypto, durable files, clipboard, tasks, memory, RAG, embeddings, web search/fetch, HTTP and mesh introspection) with their learned reliability, `POST /v1/tools/execute` runs them directly, and a chat request can attach them with `\"tools\": \"auto\"` so the router executes the calls itself and loops until the model answers."
+    "description": "OpenAI-compatible free-inference router. Chat and image routes never fail: after an exhaustive endpoint sweep they return 200 with `kono.degraded=true` (buffered responses also set `X-Kono-Degraded: 1`; streams send headers before routing settles, so they signal it in-band). Every request is traced: `traceparent` is honoured inbound and returned outbound, spans are exported via OpenTelemetry and kept in a per-isolate ring under `/v1/traces`. The ASCK-T tool plane adds first-class tool support: `GET /v1/tools` lists executable built-ins (calculation, data/JSON, text, time, crypto, durable files, clipboard, tasks, memory, RAG, embeddings, web search/fetch, HTTP and mesh introspection) with their learned reliability, `POST /v1/tools/execute` runs them directly, and a chat request can attach them with `\"tools\": \"auto\"` so the router executes the calls itself and loops until the model answers."
   },
   "servers": [
     {
@@ -313,7 +313,7 @@
         },
         "responses": {
           "200": {
-            "description": "Completion. With stream=true, headers and a `: trace <id>` comment are sent immediately, `: routing` heartbeats follow every 5 s until an upstream commits, then chunks stream in real time: `delta.reasoning_content` (including leading inline <think> blocks), `delta.content`, `delta.tool_calls` (stable index; id and type on each call's first chunk). The final chunk carries `nokey`. No response stays silent longer than NOKEY_IDLE_MS (default 15 s): streams send `: keepalive` comments whenever nothing else has been sent (a quiet upstream, a server-side tool round); buffered responses still unfinished at that point commit the 200 and send whitespace (valid before JSON) until the body is ready, so their timing headers move into `nokey`/`telemetry`.",
+            "description": "Completion. With stream=true, headers and a `: trace <id>` comment are sent immediately, `: routing` heartbeats follow every 5 s until an upstream commits, then chunks stream in real time: `delta.reasoning_content` (including leading inline <think> blocks), `delta.content`, `delta.tool_calls` (stable index; id and type on each call's first chunk). The final chunk carries `kono`. No response stays silent longer than KONO_IDLE_MS (default 15 s): streams send `: keepalive` comments whenever nothing else has been sent (a quiet upstream, a server-side tool round); buffered responses still unfinished at that point commit the 200 and send whitespace (valid before JSON) until the body is ready, so their timing headers move into `kono`/`telemetry`.",
             "headers": {
               "traceparent": {
                 "description": "W3C trace context of this request's root span",
@@ -327,17 +327,17 @@
                   "type": "string"
                 }
               },
-              "X-Nokey-Attempts": {
+              "X-Kono-Attempts": {
                 "schema": {
                   "type": "integer"
                 }
               },
-              "X-Nokey-Endpoints": {
+              "X-Kono-Endpoints": {
                 "schema": {
                   "type": "integer"
                 }
               },
-              "X-Nokey-Degraded": {
+              "X-Kono-Degraded": {
                 "schema": {
                   "type": "string",
                   "enum": [
@@ -2248,8 +2248,8 @@
           "parallel_tool_calls": {
             "type": "boolean"
           },
-          "nokey_tools": {
-            "description": "Attach built-in tools alongside any client tools: true/\"auto\" for the default set, \"all\" for every non-admin tool, or a comma/space separated list of names. Equivalent to the x-nokey-tools request header.",
+          "kono_tools": {
+            "description": "Attach built-in tools alongside any client tools: true/\"auto\" for the default set, \"all\" for every non-admin tool, or a comma/space separated list of names. Equivalent to the x-kono-tools request header.",
             "oneOf": [
               {
                 "type": "boolean"
@@ -2265,30 +2265,30 @@
               }
             ]
           },
-          "nokey_preamble": {
+          "kono_preamble": {
             "type": "boolean",
             "default": true,
             "description": "Prepend a one-line system message describing the attached tools. Set false to leave the message list untouched."
           },
-          "nokey_rounds": {
+          "kono_rounds": {
             "type": "integer",
             "minimum": 0,
             "maximum": 32,
-            "description": "Server-side agent rounds for tools:\"auto\" (default NOKEY_TOOL_ROUNDS, 8). The build gate extends it while it sends the agent back to work."
+            "description": "Server-side agent rounds for tools:\"auto\" (default KONO_TOOL_ROUNDS, 8). The build gate extends it while it sends the agent back to work."
           },
-          "nokey_gate": {
+          "kono_gate": {
             "oneOf": [{ "type": "boolean" }, { "type": "string", "enum": ["always"] }],
             "default": true,
-            "description": "Build gate. When an agent turn changed the session workspace, the final answer is checked: static diagnostics, runtime errors of the current files and app_test results (and, with a test runner, that a test run passed against the current files). While anything is unmet the findings go back to the agent as a user turn and the loop continues (status frame `nokey.type = build_gate` on streams). false disables it; \"always\" checks even when nothing changed."
+            "description": "Build gate. When an agent turn changed the session workspace, the final answer is checked: static diagnostics, runtime errors of the current files and app_test results (and, with a test runner, that a test run passed against the current files). While anything is unmet the findings go back to the agent as a user turn and the loop continues (status frame `kono.type = build_gate` on streams). false disables it; \"always\" checks even when nothing changed."
           },
-          "nokey_gate_rounds": {
+          "kono_gate_rounds": {
             "type": "integer",
             "minimum": 1,
             "maximum": 12,
             "default": 6,
             "description": "Most times the build gate may send the agent back in one request."
           },
-          "nokey_runner": {
+          "kono_runner": {
             "type": "boolean",
             "default": false,
             "description": "The client runs app_test jobs in a browser (the dashboard's hidden preview, via the admin app_runner tool) for the duration of this request. Lets app_test wait for results and makes the gate require a passing test run."
@@ -2441,7 +2441,7 @@
           }
         }
       },
-      "NokeyMeta": {
+      "KonoMeta": {
         "type": "object",
         "properties": {
           "degraded": {
@@ -2526,8 +2526,8 @@
           "model": {
             "type": "string"
           },
-          "nokey": {
-            "$ref": "#/components/schemas/NokeyMeta"
+          "kono": {
+            "$ref": "#/components/schemas/KonoMeta"
           },
           "telemetry": {
             "type": "object",
@@ -2621,11 +2621,11 @@
           "model": {
             "type": "string",
             "enum": [
-              "nokey-image",
-              "nokey-image-flux",
-              "nokey-image-horde"
+              "kono-image",
+              "kono-image-flux",
+              "kono-image-horde"
             ],
-            "default": "nokey-image"
+            "default": "kono-image"
           },
           "size": {
             "type": "string",
@@ -2675,7 +2675,7 @@
               }
             }
           },
-          "nokey": {
+          "kono": {
             "type": "object",
             "properties": {
               "degraded": {
@@ -2914,7 +2914,7 @@
           },
           "enabled": {
             "type": "boolean",
-            "description": "false when NOKEY_TOOLS=0"
+            "description": "false when KONO_TOOLS=0"
           },
           "session": {
             "type": "object",
@@ -2926,7 +2926,7 @@
               "scope_header": {
                 "type": "string",
                 "examples": [
-                  "x-nokey-session"
+                  "x-kono-session"
                 ]
               },
               "storage": {
@@ -2942,7 +2942,7 @@
             "properties": {
               "max_rounds": {
                 "type": "integer",
-                "description": "NOKEY_TOOL_ROUNDS; 0 disables the server-side agent loop"
+                "description": "KONO_TOOL_ROUNDS; 0 disables the server-side agent loop"
               },
               "auto_tools": {
                 "type": "array",
