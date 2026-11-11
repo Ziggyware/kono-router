@@ -1,5 +1,49 @@
+/**
+ * ============================================================================
+ * NOKEY TOOL PLANE — ASCK-T v1 (Adaptive Stochastic Control Kernel · Tools)
+ * ============================================================================
+ * First-class tool support for the keyless mesh: real, executable tool
+ * implementations plus the learning machinery that makes them compound.
+ *
+ * The router already forwarded `tools` to upstreams as opaque JSON. That left
+ * three gaps this module closes:
+ *
+ *  1. NOTHING TO CALL. A client had to bring every tool itself. The plane ships
+ *     a registry of deterministic, dependency-free, network-free implementations
+ *     (math, statistics, text, JSON, time, crypto, encoding, sampling) that run
+ *     inside the isolate with no warm-up cost, so any model on any keyless relay
+ *     instantly gains a grounded, verifiable skill set.
+ *
+ *  2. NOTHING LEARNED. Tool calls were fire-and-forget bytes. Every execution
+ *     now updates a Beta-Bernoulli success posterior and a scalar Kalman filter
+ *     over ln(latency) for the tool itself — and, in main.ts, for the
+ *     (provider, model) tuple that produced the call. Evidence compounds across
+ *     requests and decays with the same 6 h half-life as the routing kernel, so
+ *     the mesh gets better at *tools* specifically, not just at latency.
+ *
+ *  3. NOTHING REPAIRED. Small free models mangle tool arguments constantly:
+ *     markdown fences, prose around the JSON, single quotes, bare keys, Python
+ *     literals, trailing commas, `max_tokens` truncation mid-object. The plane
+ *     parses them through a graded ladder (strict → extract → single-pass
+ *     repair → double-decode → scalar salvage) and validates/coerces against the
+ *     declared JSON Schema. A repaired call still counts as a call — and the
+ *     repair rate is itself a learned signal about the model that emitted it.
+ *
+ * Design rules (same as math.ts): pure and side-effect free apart from the
+ * in-memory registry; O(size of input) with hard caps everywhere; zero
+ * dependencies beyond ./math.ts; no `eval`, no `Function`, no network, no fs.
+ * Every tool is therefore safe to expose on a public, keyless endpoint.
+ *
+ * References: JSON Schema 2020-12 (subset); OpenAI function calling / strict
+ * mode; Anthropic tool use; Gemini function declarations; Crockford base32
+ * (ULID); Box–Muller (1958); Freedman & Diaconis (1981, bin width);
+ * Kalman (1960); Garivier & Moulines (2008); Wilson (1927).
+ * ============================================================================
+ */
 
 import { registerToolbox } from "./toolbox/index.ts";
+
+
 import {
   clamp,
   discountedPosterior,
@@ -14,6 +58,16 @@ import {
   wilsonLowerBound,
 } from "./math.ts";
 
+import { isPlainObject, repairJsonText } from "./tools-text.ts";
+
+import type { Json } from "./tools-text.ts";
+
+export { repairJsonText, TEXT_CALL_OPENERS, parseTextToolCalls } from "./tools-text.ts";
+
+export type { Json, TextToolCall } from "./tools-text.ts";
+
+
+
 export type JsonValue =
   | null
   | boolean
@@ -22,28 +76,41 @@ export type JsonValue =
   | JsonValue[]
   | { [key: string]: JsonValue };
 
-export type Json = Record<string, unknown>;
+
+
+// ---------------------------------------------------------------------------
+// Small shared helpers
+// ---------------------------------------------------------------------------
 
 const MAX_DEPTH = 24;
 
+
+/** Validation budget. The HTTP body limit is 512KB, so ~250k scalar nodes is
+ *  the most any single payload can hold; the cap only stops pathological
+ *  nesting/fan-out, and it reports once instead of per node. */
 const MAX_NODES = 250_000;
 
-function isPlainObject(v: unknown): v is Json {
-  return typeof v === "object" && v !== null && !Array.isArray(v);
-}
+
 
 function asString(v: unknown): string | undefined {
   return typeof v === "string" ? v : undefined;
 }
 
+
+
 function asNumber(v: unknown): number | undefined {
   return typeof v === "number" && Number.isFinite(v) ? v : undefined;
 }
+
+
 
 function asBool(v: unknown): boolean | undefined {
   return typeof v === "boolean" ? v : undefined;
 }
 
+
+
+/** Cheap, bounded deep clone used before mutating a caller's payload. */
 export function cloneJson<T>(value: T, depth = 0): T {
   if (depth > MAX_DEPTH) return value;
   if (Array.isArray(value)) return value.map((v) => cloneJson(v, depth + 1)) as unknown as T;
@@ -55,7 +122,11 @@ export function cloneJson<T>(value: T, depth = 0): T {
   return value;
 }
 
+
+
 const REGEX_CACHE = new Map<string, RegExp | null>();
+
+
 function cachedRegex(pattern: string, flags = ""): RegExp | null {
   const key = `${flags}\u0000${pattern}`;
   if (REGEX_CACHE.has(key)) return REGEX_CACHE.get(key)!;
@@ -70,6 +141,9 @@ function cachedRegex(pattern: string, flags = ""): RegExp | null {
   return re;
 }
 
+
+
+/** Bounded LRU — the plane caches compiled expressions, paths and schemas. */
 class Lru<K, V> {
   #map = new Map<K, V>();
   constructor(readonly capacity: number) {}
@@ -97,26 +171,38 @@ class Lru<K, V> {
   }
 }
 
+
+
 export function utf8Bytes(text: string): number {
   return new TextEncoder().encode(text).byteLength;
 }
 
-export interface SchemaIssue {
 
+
+// ---------------------------------------------------------------------------
+// 1. JSON SCHEMA SUBSET — validate, coerce, repair, project
+// ---------------------------------------------------------------------------
+
+export interface SchemaIssue {
+  /** JSON-pointer-ish location, "" for the root. */
   path: string;
   keyword: string;
   message: string;
-
+  /** "error" rejects the payload; "repair" means the plane fixed it. */
   severity: "error" | "repair";
 }
 
-export interface ValidateOptions {
 
+
+export interface ValidateOptions {
+  /** Rewrite the payload to satisfy the schema where it is lossless to do so. */
   coerce?: boolean;
   maxDepth?: number;
-
+  /** Fill missing values from schema `default`s (implied by coerce). */
   applyDefaults?: boolean;
 }
+
+
 
 export interface ValidationResult {
   ok: boolean;
@@ -125,6 +211,8 @@ export interface ValidationResult {
   repaired: boolean;
   repairs: number;
 }
+
+
 
 const SUPPORTED_FORMATS: Record<string, RegExp> = {
   "date-time": /^\d{4}-\d{2}-\d{2}[Tt ]\d{2}:\d{2}(:\d{2}(\.\d+)?)?(([Zz])|([+-]\d{2}:?\d{2}))?$/,
@@ -139,6 +227,8 @@ const SUPPORTED_FORMATS: Record<string, RegExp> = {
   "json-string": /^[\s\S]*$/,
 };
 
+
+
 interface SchemaCtx {
   root: Json;
   coerce: boolean;
@@ -147,11 +237,15 @@ interface SchemaCtx {
   nodes: number;
   limitHit: boolean;
   issues: SchemaIssue[];
-
+  /** Every mutation the validator made, including filling declared defaults. */
   repairs: number;
-
+  /** Mutations that repaired *damage*: filling a declared default is not one,
+   *  so `repaired` stays a signal about the caller's payload rather than about
+   *  how many optional keys a schema happens to declare. */
   damaged: number;
 }
+
+
 
 function issue(ctx: SchemaCtx, path: string, keyword: string, message: string, severity: SchemaIssue["severity"] = "error") {
   ctx.issues.push({ path, keyword, message, severity });
@@ -161,6 +255,9 @@ function issue(ctx: SchemaCtx, path: string, keyword: string, message: string, s
   }
 }
 
+
+
+/** Resolve a local JSON pointer (`#/$defs/Foo`). External refs are rejected. */
 function resolveRef(ctx: SchemaCtx, ref: string, seen: Set<string>): Json | null {
   if (!ref.startsWith("#")) {
     issue(ctx, "", "$ref", `external $ref not supported: ${ref.slice(0, 60)}`);
@@ -184,6 +281,8 @@ function resolveRef(ctx: SchemaCtx, ref: string, seen: Set<string>): Json | null
   return isPlainObject(node) ? node : null;
 }
 
+
+
 function canonical(v: unknown): string {
   try {
     return JSON.stringify(v) ?? String(v);
@@ -192,6 +291,9 @@ function canonical(v: unknown): string {
   }
 }
 
+
+
+/** Type coercion ladder. Returns undefined when the value cannot be coerced. */
 function coerceToType(value: unknown, type: string): unknown {
   switch (type) {
     case "number": {
@@ -233,17 +335,18 @@ function coerceToType(value: unknown, type: string): unknown {
       if (typeof value === "string") {
         const t = value.trim();
         if (!t) return undefined;
-        if (t.startsWith("[")) return undefined;
+        if (t.startsWith("[")) return undefined; // let the JSON repair ladder handle it
         if (t.includes(",")) return t.split(",").map((s: string) => s.trim());
         return [t];
       }
-
+      // A bare scalar where a list was asked for is the single most common
+      // small-model mistake; wrapping it is lossless and keeps the call alive.
       if (value !== null && value !== undefined && typeof value !== "object") return [value];
       return undefined;
     }
     case "object": {
       if (isPlainObject(value)) return value;
-      if (typeof value === "string") return undefined;
+      if (typeof value === "string") return undefined; // JSON repair ladder owns this
       if (Array.isArray(value) && value.every((e) => Array.isArray(e) && e.length === 2)) {
         return Object.fromEntries(value.map(([k, v]) => [String(k), v]));
       }
@@ -254,13 +357,17 @@ function coerceToType(value: unknown, type: string): unknown {
   }
 }
 
+
+
 function typeOf(value: unknown): string {
   if (value === null) return "null";
   if (Array.isArray(value)) return "array";
   const t = typeof value;
   if (t === "number") return Number.isInteger(value) ? "integer" : "number";
-  return t;
+  return t; // "string" | "boolean" | "object" | "undefined"
 }
+
+
 
 function matchesType(value: unknown, type: string): boolean {
   const actual = typeOf(value);
@@ -268,6 +375,8 @@ function matchesType(value: unknown, type: string): boolean {
   if (type === "number" && actual === "integer") return true;
   return false;
 }
+
+
 
 function checkValue(value: unknown, schema: unknown, path: string, ctx: SchemaCtx, depth: number, refs: Set<string>): JsonValue {
   if (++ctx.nodes > MAX_NODES) {
@@ -288,6 +397,7 @@ function checkValue(value: unknown, schema: unknown, path: string, ctx: SchemaCt
   }
   if (!isPlainObject(schema)) return value as JsonValue;
 
+  // $ref is resolved first so the target's constraints apply.
   const ref = asString(schema.$ref);
   if (ref) {
     const target = resolveRef(ctx, ref, refs);
@@ -297,6 +407,7 @@ function checkValue(value: unknown, schema: unknown, path: string, ctx: SchemaCt
     return checkValue(value, target, path, ctx, depth, nested);
   }
 
+  // ---- combinator keywords -------------------------------------------------
   if (Array.isArray(schema.allOf) && schema.allOf.length > 0) {
     let current = value;
     for (const sub of schema.allOf) current = checkValue(current, sub, path, ctx, depth + 1, refs);
@@ -306,7 +417,8 @@ function checkValue(value: unknown, schema: unknown, path: string, ctx: SchemaCt
     const before = ctx.issues.length;
     let matched = false;
     let best: JsonValue = value as JsonValue;
-
+    // Fewest damage repairs wins: a branch that fits without rewriting the
+    // value describes it better than one that has to coerce it into shape.
     let bestScore = Number.POSITIVE_INFINITY;
     for (const sub of schema.anyOf) {
       const probe: SchemaCtx = { ...ctx, issues: [], repairs: 0, damaged: 0, limitHit: false };
@@ -342,6 +454,7 @@ function checkValue(value: unknown, schema: unknown, path: string, ctx: SchemaCt
     if (probe.issues.every((i) => i.severity !== "error")) issue(ctx, path, "not", "value must not match the `not` schema");
   }
 
+  // ---- type ----------------------------------------------------------------
   const declared = schema.type;
   const types = Array.isArray(declared) ? declared.map(String) : declared ? [String(declared)] : [];
   if (types.length > 0 && !types.some((t) => matchesType(value, t))) {
@@ -362,13 +475,14 @@ function checkValue(value: unknown, schema: unknown, path: string, ctx: SchemaCt
     }
   }
 
+  // ---- enum / const --------------------------------------------------------
   if (Array.isArray(schema.enum) && schema.enum.length > 0) {
     const allowed = schema.enum.map(canonical);
     const here = canonical(value);
     if (!allowed.includes(here)) {
       let fixed = false;
       if (ctx.coerce) {
-
+        // Case/whitespace-insensitive enum matching rescues "High" for "high".
         const want = String(value).trim().toLowerCase();
         for (const candidate of schema.enum) {
           if (typeof candidate === "string" && candidate.trim().toLowerCase() === want) {
@@ -389,6 +503,7 @@ function checkValue(value: unknown, schema: unknown, path: string, ctx: SchemaCt
     } else issue(ctx, path, "const", `must equal ${canonical(schema.const)}`);
   }
 
+  // ---- numbers -------------------------------------------------------------
   const num = asNumber(value);
   if (num !== undefined) {
     const lo = asNumber(schema.minimum);
@@ -405,7 +520,8 @@ function checkValue(value: unknown, schema: unknown, path: string, ctx: SchemaCt
       const kw = belowFloor ? (floorExclusive ? "exclusiveMinimum" : "minimum") : (ceilExclusive ? "exclusiveMaximum" : "maximum");
       const limit = belowFloor ? floorValue : ceilValue;
       const target = clamp(num, lo ?? xlo ?? -Infinity, hi ?? xhi ?? Infinity);
-
+      // An exclusive bound cannot be satisfied by clamping onto it, so only
+      // inclusive violations are repaired; the rest stay honest errors.
       const repairable = ctx.coerce && Number.isFinite(target) && target !== num &&
         !(belowFloor && floorExclusive) && !(aboveCeil && ceilExclusive);
       if (repairable) {
@@ -421,6 +537,7 @@ function checkValue(value: unknown, schema: unknown, path: string, ctx: SchemaCt
     }
   }
 
+  // ---- strings -------------------------------------------------------------
   const str = asString(value);
   if (str !== undefined) {
     const minLen = asNumber(schema.minLength);
@@ -452,6 +569,7 @@ function checkValue(value: unknown, schema: unknown, path: string, ctx: SchemaCt
     }
   }
 
+  // ---- arrays --------------------------------------------------------------
   if (Array.isArray(value)) {
     const arr = value;
     const minItems = asNumber(schema.minItems);
@@ -499,6 +617,7 @@ function checkValue(value: unknown, schema: unknown, path: string, ctx: SchemaCt
     }
   }
 
+  // ---- objects -------------------------------------------------------------
   if (isPlainObject(value)) {
     const props = isPlainObject(schema.properties) ? schema.properties : {};
     const patternProps = isPlainObject(schema.patternProperties) ? schema.patternProperties : {};
@@ -514,13 +633,17 @@ function checkValue(value: unknown, schema: unknown, path: string, ctx: SchemaCt
         issue(ctx, `${path}/${key}`, "required", "filled from schema default", "repair");
         continue;
       }
-
+      // Deliberately NOT filled with an empty string/array: inventing a value
+      // for a required key hides the model's mistake and produces a tool call
+      // that looks valid but means nothing. The error goes back to the model,
+      // and the repair ladder's failure is what the tuple posterior learns from.
       void sub;
       issue(ctx, `${path}/${key}`, "required", "missing required property");
     }
 
     if (defaults) {
-
+      // Models omit optional parameters constantly; a declared `default` is the
+      // author's intent, so filling it beats failing the call.
       for (const [key, sub] of Object.entries(props)) {
         if (value[key] !== undefined || !isPlainObject(sub) || sub.default === undefined) continue;
         value[key] = cloneJson(sub.default);
@@ -528,7 +651,8 @@ function checkValue(value: unknown, schema: unknown, path: string, ctx: SchemaCt
       }
     }
     if (ctx.coerce) {
-
+      // `null` for an optional key that cannot be null is a non-answer, not a
+      // value: drop it so the tool sees "absent" and applies its own default.
       for (const key of Object.keys(value)) {
         if (value[key] !== null || required.includes(key)) continue;
         const sub = props[key];
@@ -578,6 +702,9 @@ function checkValue(value: unknown, schema: unknown, path: string, ctx: SchemaCt
   return value as JsonValue;
 }
 
+
+
+/** Validate (and optionally repair) a payload against a JSON Schema subset. */
 export function validateJson(input: unknown, schema: unknown, options: ValidateOptions = {}): ValidationResult {
   const coerce = options.coerce ?? false;
   const ctx: SchemaCtx = {
@@ -597,19 +724,30 @@ export function validateJson(input: unknown, schema: unknown, options: ValidateO
   return { ok: errors.length === 0, value: value as JsonValue, issues: ctx.issues, repaired: ctx.damaged > 0, repairs: ctx.repairs };
 }
 
+
+
+// ---------------------------------------------------------------------------
+// 2. MODEL-EMITTED ARGUMENT PARSING — the graded repair ladder
+// ---------------------------------------------------------------------------
+
 export type ParseStrategy = "native" | "strict" | "extract" | "repair" | "double-decode" | "salvage" | "empty";
+
+
 
 export interface ParseArgsResult {
   ok: boolean;
   value: JsonValue;
   strategy: ParseStrategy;
   repaired: boolean;
-
+  /** Machine-readable repair steps, e.g. ["fence", "bare-keys", "truncated"]. */
   repairs: string[];
   issues: SchemaIssue[];
   error?: string;
 }
 
+
+
+/** Strip markdown fences and surrounding prose down to the JSON candidate. */
 export function extractJsonCandidate(raw: string): string {
   let text = raw.trim().replace(/^\uFEFF/, "");
   const fence = text.match(/```(?:json|jsonc|javascript|js|tool|function)?\s*([\s\S]*?)```/i);
@@ -617,7 +755,7 @@ export function extractJsonCandidate(raw: string): string {
   const firstObj = text.search(/[[{]/);
   if (firstObj > 0) {
     const head = text.slice(0, firstObj);
-
+    // Only strip prose: a leading "-" or digit means the payload IS a scalar.
     if (/[a-z]{3,}/i.test(head)) text = text.slice(firstObj);
   }
   const open = text[0];
@@ -651,203 +789,9 @@ export function extractJsonCandidate(raw: string): string {
   return text.trim() || raw.trim();
 }
 
-export function repairJsonText(source: string): { text: string; repairs: string[] } {
-  const repairs: string[] = [];
-  const out: string[] = [];
-  const stack: string[] = [];
-  let inString = false;
-  let quote = '"';
-  let i = 0;
-  const n = source.length;
 
-  const literals: Record<string, string> = {
-    true: "true",
-    false: "false",
-    null: "null",
-    none: "null",
-    nil: "null",
-    undefined: "null",
-    nan: "null",
-    infinity: "1e999",
-    "-infinity": "-1e999",
-  };
 
-  const skipWs = (from: number): number => {
-    let j = from;
-    while (j < n && /\s/.test(source[j])) j++;
-    return j;
-  };
-
-  while (i < n) {
-    const ch = source[i];
-
-    if (inString) {
-      if (ch === "\\") {
-        const nxt = source[i + 1];
-        if (nxt === "\n") {
-          repairs.push("line-continuation");
-          i += 2;
-          continue;
-        }
-        if (nxt === undefined) {
-          out.push("\\\\");
-          i++;
-          continue;
-        }
-        out.push(ch, nxt);
-        i += 2;
-        continue;
-      }
-      if (ch === quote) {
-        out.push('"');
-        inString = false;
-        i++;
-        continue;
-      }
-      if (quote === "'" && ch === '"') {
-        out.push('\\"');
-        i++;
-        continue;
-      }
-      if (ch === "\n") {
-        repairs.push("raw-newline");
-        out.push("\\n");
-        i++;
-        continue;
-      }
-      if (ch === "\r") {
-        out.push("\\r");
-        i++;
-        continue;
-      }
-      if (ch === "\t") {
-        out.push("\\t");
-        i++;
-        continue;
-      }
-      const code = ch.charCodeAt(0);
-      if (code < 0x20) {
-        repairs.push("control-char");
-        out.push(`\\u${code.toString(16).padStart(4, "0")}`);
-        i++;
-        continue;
-      }
-      out.push(ch);
-      i++;
-      continue;
-    }
-
-    if (ch === "/" && source[i + 1] === "/") {
-      repairs.push("comment");
-      while (i < n && source[i] !== "\n") i++;
-      continue;
-    }
-    if (ch === "/" && source[i + 1] === "*") {
-      repairs.push("comment");
-      const end = source.indexOf("*/", i + 2);
-      i = end < 0 ? n : end + 2;
-      continue;
-    }
-    if (ch === '"' || ch === "'") {
-      if (ch === "'") repairs.push("single-quote");
-      inString = true;
-      quote = ch;
-      out.push('"');
-      i++;
-      continue;
-    }
-    if (ch === "{" || ch === "[") {
-      stack.push(ch === "{" ? "}" : "]");
-      out.push(ch);
-      i++;
-      continue;
-    }
-    if (ch === "}" || ch === "]") {
-      const expected = stack.pop();
-      if (expected && expected !== ch) repairs.push("mismatched-bracket");
-
-      for (let k = out.length - 1; k >= 0; k--) {
-        if (/^\s+$/.test(out[k])) continue;
-        if (out[k] === ",") {
-          out.splice(k, 1);
-          repairs.push("trailing-comma");
-        }
-        break;
-      }
-      out.push(ch);
-      i++;
-      continue;
-    }
-    if (/[A-Za-z_$]/.test(ch)) {
-      let j = i;
-      while (j < n && /[A-Za-z0-9_$]/.test(source[j])) j++;
-      const word = source.slice(i, j);
-      const after = skipWs(j);
-      if (source[after] === ":") {
-        repairs.push("bare-key");
-        out.push(`"${word}"`);
-        i = j;
-        continue;
-      }
-      const mapped = literals[word.toLowerCase()];
-      if (mapped) {
-        if (!["true", "false", "null"].includes(word)) repairs.push("literal");
-        out.push(mapped);
-        i = j;
-        continue;
-      }
-
-      repairs.push("bare-word");
-      out.push(`"${word}"`);
-      i = j;
-      continue;
-    }
-    if (/\s/.test(ch)) {
-      out.push(ch);
-      i++;
-      continue;
-    }
-    out.push(ch);
-    i++;
-  }
-
-  if (inString) {
-    repairs.push("unterminated-string");
-    out.push('"');
-  }
-
-  if (stack.length > 0) {
-    repairs.push("truncated");
-    let text = out.join("");
-
-    for (let pass = 0; pass < 4; pass++) {
-      const trimmed = text.replace(/\s+$/, "");
-      if (trimmed.endsWith(",")) {
-        text = trimmed.slice(0, -1);
-        continue;
-      }
-      if (trimmed.endsWith(":")) {
-        const cut = Math.max(trimmed.lastIndexOf(","), trimmed.lastIndexOf("{"));
-        text = cut > 0 ? trimmed.slice(0, cut) : trimmed.slice(0, -1);
-        continue;
-      }
-      if (trimmed.endsWith("[") || trimmed.endsWith("{")) {
-        text = trimmed.slice(0, -1);
-        stack.pop();
-        continue;
-      }
-      text = trimmed;
-      break;
-    }
-    out.length = 0;
-    out.push(text);
-    while (stack.length > 0) out.push(stack.pop()!);
-  }
-
-  const repairedText = out.join("").trim();
-  return { text: repairedText || "{}", repairs: [...new Set(repairs)] };
-}
-
+/** Last-ditch: harvest `"key": scalar` pairs from an otherwise hopeless blob. */
 function salvageScalars(text: string): Json | null {
   const re = /["']?([A-Za-z_$][\w$-]*)["']?\s*[:=]\s*("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|-?\d+(?:\.\d+)?(?:[eE][-+]?\d+)?|true|false|null|none|nan)/gi;
   const out: Json = {};
@@ -875,6 +819,9 @@ function salvageScalars(text: string): Json | null {
   return found > 0 ? out : null;
 }
 
+
+
+/** Parse model-emitted arguments through the graded ladder, then validate. */
 export function parseToolArguments(raw: unknown, schema?: unknown, options: ValidateOptions = {}): ParseArgsResult {
   const coerce = options.coerce ?? true;
 
@@ -895,7 +842,8 @@ export function parseToolArguments(raw: unknown, schema?: unknown, options: Vali
   };
 
   if (raw === undefined || raw === null || (typeof raw === "string" && raw.trim() === "")) {
-
+    // No arguments at all is fine for a zero-property tool; a schema with
+    // required keys still gets to reject it precisely.
     return finish({}, "empty", []);
   }
   if (typeof raw !== "string") return finish(raw, "native", []);
@@ -904,7 +852,7 @@ export function parseToolArguments(raw: unknown, schema?: unknown, options: Vali
   try {
     const strict: unknown = JSON.parse(text);
     if (typeof strict === "string") {
-
+      // `"{\"a\":1}"` — the whole argument object arrived as a JSON string.
       try {
         return finish(JSON.parse(strict), "double-decode", ["double-encoded"]);
       } catch {
@@ -961,8 +909,18 @@ export function parseToolArguments(raw: unknown, schema?: unknown, options: Vali
   };
 }
 
+
+
+// ---------------------------------------------------------------------------
+// 3. TOOL REGISTRY
+// ---------------------------------------------------------------------------
+
 export type { ToolCaps, ToolContext, ToolKind, ToolSpec } from "./toolbox/types.ts";
+
+
 import type { ToolCaps, ToolContext, ToolSpec } from "./toolbox/types.ts";
+
+
 
 export interface ToolExecutionOk {
   ok: true;
@@ -970,13 +928,16 @@ export interface ToolExecutionOk {
   result: JsonValue;
   ms: number;
   strategy: ParseStrategy;
-
+  /** True only when the caller's payload had to be fixed; declared defaults do
+   *  not count, so this is the honest "the model damaged its call" signal. */
   repaired: boolean;
   repairs: string[];
   issues: SchemaIssue[];
   truncated: boolean;
   bytes: number;
 }
+
+
 
 export interface ToolExecutionErr {
   ok: false;
@@ -991,22 +952,39 @@ export interface ToolExecutionErr {
   suggestions?: Array<{ name: string; score: number }>;
 }
 
+
+
 export type ToolExecution = ToolExecutionOk | ToolExecutionErr;
 
+
+
 const REGISTRY = new Map<string, ToolSpec>();
+
+
 const ALIASES = new Map<string, string>();
 
+
+/** Underscore-collapsed index: `MathEvaluate`, `math-evaluate` and
+ *  `math_evaluate` are the same tool, and similarity matching cannot see that. */
 const SQUASHED = new Map<string, string>();
 
+
+
+/** Canonical wire-safe form: `router.health`, `router-health` and
+ *  `RouterHealth` all collapse to `router_health`. */
 export function normalizeToolName(name: string): string {
   return name.trim().toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 64);
 }
+
+
 
 export function defineTool(spec: ToolSpec): ToolSpec {
   const canonical = normalizeToolName(spec.name);
   if (!/^[a-z0-9_]{1,64}$/.test(canonical)) throw new Error(`invalid tool name: ${spec.name}`);
   return { ...spec, name: canonical };
 }
+
+
 
 export function registerTool(spec: ToolSpec): ToolSpec {
   const tool = defineTool(spec);
@@ -1022,9 +1000,13 @@ export function registerTool(spec: ToolSpec): ToolSpec {
   return tool;
 }
 
+
+
 export function registerTools(specs: ToolSpec[]): ToolSpec[] {
   return specs.map(registerTool);
 }
+
+
 
 export function unregisterTool(name: string): boolean {
   const canonical = normalizeToolName(name);
@@ -1036,14 +1018,21 @@ export function unregisterTool(name: string): boolean {
   return Boolean(existing);
 }
 
+
+
 export function listTools(): ToolSpec[] {
   return [...REGISTRY.values()].sort((a, b) => a.name.localeCompare(b.name));
 }
+
+
 
 export function getTool(name: string): ToolSpec | undefined {
   return REGISTRY.get(normalizeToolName(name));
 }
 
+
+
+/** Exact → alias → dotted/camel variants → fuzzy (trigram-Dice + Jaccard). */
 export function resolveTool(name: string): { tool?: ToolSpec; suggestions: Array<{ name: string; score: number }> } {
   const canonical = normalizeToolName(name);
   const direct = REGISTRY.get(canonical);
@@ -1053,13 +1042,13 @@ export function resolveTool(name: string): { tool?: ToolSpec; suggestions: Array
     const tool = REGISTRY.get(viaAlias);
     if (tool) return { tool, suggestions: [] };
   }
-
+  // Punctuation-collapsed exact hit (camelCase, PascalCase, kebab-case).
   const squashed = SQUASHED.get(canonical.replace(/_/g, ""));
   if (squashed) {
     const tool = REGISTRY.get(squashed);
     if (tool) return { tool, suggestions: [] };
   }
-
+  // Unique prefix: a name cut short by a token limit is still unambiguous.
   if (canonical.length >= 6) {
     const prefixed = [...REGISTRY.values()].filter((t) => t.name.startsWith(canonical));
     if (prefixed.length === 1) return { tool: prefixed[0], suggestions: [] };
@@ -1081,14 +1070,24 @@ export function resolveTool(name: string): { tool?: ToolSpec; suggestions: Array
   return { suggestions: scored.slice(0, 3).map((s) => ({ name: s.tool.name, score: Number(s.score.toFixed(3)) })) };
 }
 
+
+
+// ---------------------------------------------------------------------------
+// 4. VENDOR PROJECTIONS — one registry, every wire format
+// ---------------------------------------------------------------------------
+
 export type ToolFlavor = "openai" | "openai-strict" | "anthropic" | "gemini";
 
+
+
+/** OpenAI strict mode rejects most numeric/string constraints and demands
+ *  `additionalProperties: false` with every property required. */
 export function toStrictSchema(schema: unknown): Json {
   if (Array.isArray(schema)) return { type: "array", items: toStrictSchema(schema[0] ?? {}) };
   if (!isPlainObject(schema)) return {};
   const out: Json = {};
   if (Array.isArray(schema.anyOf) && schema.anyOf.length === 2 && schema.anyOf.some((b) => isPlainObject(b) && b.type === "null")) {
-
+    // "nullable" unions: strict mode keeps anyOf but each branch must be strict.
     out.anyOf = (schema.anyOf as unknown[]).filter((b) => !(isPlainObject(b) && b.type === "null")).map(toStrictSchema);
     out.anyOf = [...(out.anyOf as unknown[]), { type: "null" }];
     if (typeof schema.description === "string") out.description = schema.description;
@@ -1120,6 +1119,8 @@ export function toStrictSchema(schema: unknown): Json {
   return out;
 }
 
+
+
 const GEMINI_TYPE_MAP: Record<string, string> = {
   object: "OBJECT",
   array: "ARRAY",
@@ -1129,6 +1130,8 @@ const GEMINI_TYPE_MAP: Record<string, string> = {
   boolean: "BOOLEAN",
   null: "NULL",
 };
+
+
 
 function toGeminiSchema(schema: unknown): Json {
   if (!isPlainObject(schema)) return {};
@@ -1148,12 +1151,17 @@ function toGeminiSchema(schema: unknown): Json {
   return out;
 }
 
+
+
 export interface ToolProjectionOptions {
   flavor?: ToolFlavor;
   names?: string[];
   includeAdmin?: boolean;
 }
 
+
+
+/** Project the registry onto a vendor's tool-call wire format. */
 export function toToolSpecs(options: ToolProjectionOptions = {}): unknown[] {
   const flavor = options.flavor ?? "openai";
   const wanted = options.names?.length ? new Set(options.names.map(normalizeToolName)) : null;
@@ -1173,6 +1181,10 @@ export function toToolSpecs(options: ToolProjectionOptions = {}): unknown[] {
   }
 }
 
+
+
+/** The system-prompt fragment that teaches a model the plane's conventions. */
+/** How to change workspace files so the edits land exactly and the app works. */
 export const WORKSPACE_DISCIPLINE = [
   "Workspace files are the user's project and its live preview: when asked to build, change or fix code, do it in the workspace with fs_* tools rather than pasting whole files into the reply.",
   "Read before editing (fs_read, or fs_grep to locate), then fs_patch with `old` copied exactly from what you read and expect_sha256 set to the sha256 you read; one fs_patch call can carry several edits to a file.",
@@ -1181,12 +1193,16 @@ export const WORKSPACE_DISCIPLINE = [
   "Then open the app and test it: write tests/<flow>.test.json UI cases for the behaviour the user asked for (and *.test.js unit tests for non-trivial logic), run app_test {all: true}, and fix until they pass. A build is finished only when it is clean and its tests pass; the router checks this and will send you back if not.",
 ].join(" ");
 
+
+
 export const TEAM_DISCIPLINE = "Use agent_team to work in parallel whenever a job has independent parts: builders on separate files or areas, a tester writing tests while you build, a reviewer or researcher alongside; give each agent a self-contained task, then integrate and verify their work.";
+
+
 
 export function toolPreamble(names?: string[]): string {
   const tools = names?.length ? names.map((n) => getTool(n)?.name ?? normalizeToolName(n)) : listTools().filter((t) => !t.admin).map((t) => t.name);
   return [
-    "You have server-side tools executed by the kono-router tool plane.",
+    "You have server-side tools executed by the nokey-router tool plane.",
     `Available: ${tools.join(", ")}.`,
     "Call them with a single valid JSON object of arguments; the router executes them and returns the result as a tool message.",
     "Prefer tools to guessing: web_search/web_fetch for current facts, fs_* for durable files, memory_* across conversations, rag_* for large documents, calculate/data/time/crypto for exact computation.",
@@ -1195,6 +1211,12 @@ export function toolPreamble(names?: string[]): string {
   ].join(" ");
 }
 
+
+
+// ---------------------------------------------------------------------------
+// 5. EXECUTION SANDBOX
+// ---------------------------------------------------------------------------
+
 export interface ExecuteOptions {
   timeoutMs?: number;
   maxResultBytes?: number;
@@ -1202,17 +1224,26 @@ export interface ExecuteOptions {
   locals?: Json;
   now?: number;
   signal?: AbortSignal;
-
+  /** Presenting the admin secret unlocks `admin: true` tools. */
   admin?: boolean;
   event?: (name: string, attrs?: Json) => void;
-
+  /** Skip schema validation/coercion (used by trusted internal callers). */
   rawArgs?: boolean;
 }
 
+
+
 export const DEFAULT_TOOL_TIMEOUT_MS = 4_000;
+
+
 export const DEFAULT_MAX_RESULT_BYTES = 64 * 1024;
+
+
 const MAX_ARG_BYTES = 128 * 1024;
 
+
+
+/** Recursively halve the largest arrays until the payload fits the cap. */
 function capResult(value: unknown, maxBytes: number): { value: JsonValue; truncated: boolean; bytes: number } {
   let text = safeStringify(value);
   if (utf8Bytes(text) <= maxBytes) return { value: value as JsonValue, truncated: false, bytes: utf8Bytes(text) };
@@ -1258,6 +1289,8 @@ function capResult(value: unknown, maxBytes: number): { value: JsonValue; trunca
   return { value: current as JsonValue, truncated: true, bytes: utf8Bytes(text) };
 }
 
+
+
 export function safeStringify(value: unknown, maxBytes = 8 * 1024 * 1024): string {
   const seen = new WeakSet<object>();
   try {
@@ -1276,6 +1309,9 @@ export function safeStringify(value: unknown, maxBytes = 8 * 1024 * 1024): strin
   }
 }
 
+
+
+/** Rename synonym keys before validation, which would otherwise drop them as undeclared. */
 function renameArgs(raw: unknown, aliases: Record<string, string>): unknown {
   let obj = raw;
   if (typeof raw === "string") { try { obj = JSON.parse(raw); } catch { return raw; } }
@@ -1288,6 +1324,9 @@ function renameArgs(raw: unknown, aliases: Record<string, string>): unknown {
   return out;
 }
 
+
+
+/** Execute one tool call end-to-end: resolve → repair → validate → run → cap. */
 export async function executeTool(name: string, rawArgs: unknown, options: ExecuteOptions = {}): Promise<ToolExecution> {
   const started = performance.now();
   const maxResultBytes = options.maxResultBytes ?? DEFAULT_MAX_RESULT_BYTES;
@@ -1295,7 +1334,8 @@ export async function executeTool(name: string, rawArgs: unknown, options: Execu
 
   const { tool, suggestions } = resolveTool(name);
   if (!tool) {
-
+    // The nearest names go in the message too, not only in the structured
+    // field: a model retrying from the text alone still gets the correction.
     const hint = suggestions.length > 0 ? `; did you mean ${suggestions.slice(0, 3).map((x) => `"${x.name}"`).join(", ")}?` : "";
     return {
       ok: false,
@@ -1332,6 +1372,7 @@ export async function executeTool(name: string, rawArgs: unknown, options: Execu
     };
   }
 
+  // Per-tool deadlines are the default; an explicit caller timeout (timeout_ms) overrides it either way.
   const toolTimeout = tool.timeoutMs ?? DEFAULT_TOOL_TIMEOUT_MS;
   const timeoutMs = options.timeoutMs ?? toolTimeout;
   const ctrl = new AbortController();
@@ -1347,6 +1388,8 @@ export async function executeTool(name: string, rawArgs: unknown, options: Execu
     event: options.event,
   };
 
+  // The deadline promise is armed BEFORE the tool starts, so its rejection is
+  // queued first: a tool that resolves politely on abort cannot win the race.
   const deadline = new Promise<never>((_resolve, reject) => {
     ctrl.signal.addEventListener("abort", () => reject(ctrl.signal.reason ?? new Error("TOOL_TIMEOUT")), { once: true });
   });
@@ -1388,11 +1431,25 @@ export async function executeTool(name: string, rawArgs: unknown, options: Execu
   }
 }
 
+
+
+/** Execute several calls at once (parallel tool calls), preserving order. */
+// Tools that read or write tenant state. A batch may legitimately be
+// `fs_write` then `fs_read` (or `memory_write` then `memory_recall`), so these
+// run in call order while purely functional calls stay parallel.
+// Workspace checks, app runs/tests and agent teams read (or write) the same
+// files, so a batch like fs_write + ws_check sees the write.
 const STATEFUL_TOOL = /^(?:fs_|memory_|rag_|ws_|app_|clipboard$|task$|agent_team$)/;
 
+
+
+/** True when a call reads or writes tenant state and must keep call order
+ *  relative to other stateful calls in the same batch. */
 export function isStatefulTool(name: string): boolean {
   return STATEFUL_TOOL.test(normalizeToolName(name));
 }
+
+
 
 export async function executeToolCalls(
   calls: Array<{ id?: string; name?: string; arguments?: unknown }>,
@@ -1414,6 +1471,9 @@ export async function executeToolCalls(
   return Promise.all(results);
 }
 
+
+
+/** Shape a tool execution into the OpenAI `role: "tool"` message body. */
 export function toolResultContent(execution: ToolExecution): string {
   if (execution.ok) {
     return safeStringify(execution.result, DEFAULT_MAX_RESULT_BYTES);
@@ -1426,16 +1486,36 @@ export function toolResultContent(execution: ToolExecution): string {
   });
 }
 
+
+
+// ---------------------------------------------------------------------------
+// 6. SKILL MEMORY — the compounding part
+// ---------------------------------------------------------------------------
+
+// The kernel's Kalman filter clamps its mean to a TTFT-shaped range
+// (50ms–300s) because network latency never legitimately lands below it. Tool
+// executions do: a pure computation finishes in tens of microseconds. The
+// plane therefore runs the same Bayesian update with tool-scale bounds.
 export const TOOL_KALMAN_Q = 0.05;
+
+
 export const TOOL_KALMAN_R = 0.15;
+
+
 const TOOL_LOG_MIN = Math.log(0.02);
+
+
 const TOOL_LOG_MAX = Math.log(120_000);
+
+
 
 interface LatencyState {
   mu: number;
   variance: number;
   updatedAtMs: number;
 }
+
+
 
 function observeToolLatency(state: LatencyState, ms: number, nowMs: number): LatencyState {
   const y = clamp(Math.log(Math.max(1e-3, ms)), TOOL_LOG_MIN, TOOL_LOG_MAX);
@@ -1449,37 +1529,48 @@ function observeToolLatency(state: LatencyState, ms: number, nowMs: number): Lat
   };
 }
 
+
+
 function toolPredictiveSigma(state: LatencyState, nowMs: number): number {
   const stale = stalenessHours(state, nowMs);
   return clamp(Math.sqrt(state.variance + TOOL_KALMAN_R + TOOL_KALMAN_Q * (1 + stale)), 0.1, 1.5);
 }
 
+
+
 function toolQuantileMs(mu: number, sigma: number, p: number): number {
   return Math.exp(clamp(mu + sigma * normalQuantile(p), TOOL_LOG_MIN, TOOL_LOG_MAX));
 }
 
+
+
+/** Round a sub-millisecond latency without flattening it to zero. */
 function roundMs(ms: number): number {
   if (!Number.isFinite(ms)) return 0;
   return ms >= 10 ? Math.round(ms) : Number(ms.toFixed(2));
 }
+
+
 
 export interface ToolSkillRecord {
   tool: string;
   calls: number;
   errors: number;
   repairs: number;
-
+  /** Beta-Bernoulli success posterior, discounted toward uniform over 6 h. */
   alpha: number;
   beta: number;
-
+  /** Kalman posterior over ln(execution ms). */
   mu_log_ms: number;
   var_log_ms: number;
   updated_at: number;
   last_ok_at: number;
   last_error: string | null;
-
+  /** Per-error-code counters: the plane learns *how* a tool fails. */
   error_codes: Record<string, number>;
 }
+
+
 
 export function emptyToolSkill(tool: string, now: number): ToolSkillRecord {
   return {
@@ -1498,6 +1589,8 @@ export function emptyToolSkill(tool: string, now: number): ToolSkillRecord {
   };
 }
 
+
+
 export interface ToolObservation {
   ok: boolean;
   ms: number;
@@ -1506,6 +1599,9 @@ export interface ToolObservation {
   code?: string | null;
 }
 
+
+
+/** One Bayesian update of a tool's skill record (Kalman + discounted Beta). */
 export function observeToolSkill(record: ToolSkillRecord, obs: ToolObservation, now: number): ToolSkillRecord {
   const posterior = observeToolLatency(
     { mu: record.mu_log_ms, variance: clamp(record.var_log_ms, 0.01, 2.5), updatedAtMs: record.updated_at },
@@ -1519,7 +1615,8 @@ export function observeToolSkill(record: ToolSkillRecord, obs: ToolObservation, 
     calls: Math.min(10_000_000, record.calls + 1),
     errors: Math.min(10_000_000, record.errors + (obs.ok ? 0 : 1)),
     repairs: Math.min(10_000_000, record.repairs + (obs.repaired ? 1 : 0)),
-
+    // Successes are worth slightly less than failures: a tool that starts
+    // breaking must fall out of rotation faster than it climbs back in.
     alpha: clamp(obs.ok ? record.alpha * 0.98 + 1 : record.alpha * 0.9, 1, 60),
     beta: clamp(obs.ok ? record.beta * 0.9 : record.beta + 1.4, 1, 60),
     mu_log_ms: posterior.mu,
@@ -1531,14 +1628,16 @@ export function observeToolSkill(record: ToolSkillRecord, obs: ToolObservation, 
   };
 }
 
+
+
 export interface ToolSkillSummary {
   tool: string;
   calls: number;
   errors: number;
   success_rate: number;
-
+  /** Wilson lower bound: the honest, evidence-weighted reliability floor. */
   competence: number;
-
+  /** Thompson draw — what the router actually samples when ranking. */
   competence_draw: number;
   p50_ms: number;
   p95_ms: number;
@@ -1548,6 +1647,8 @@ export interface ToolSkillSummary {
   top_errors: Array<{ code: string; count: number }>;
   last_error: string | null;
 }
+
+
 
 export function skillSummary(record: ToolSkillRecord, now: number, deterministic = false): ToolSkillSummary {
   const post = discountedPosterior(record.alpha, record.beta, record.updated_at, now);
@@ -1575,6 +1676,12 @@ export function skillSummary(record: ToolSkillRecord, now: number, deterministic
   };
 }
 
+
+
+// --- per-(provider, model) tool competence ---------------------------------
+// Kept as a plain struct so it can live inside the existing MeshModelRecord
+// without a KV migration: absent fields simply read as "no evidence yet".
+
 export interface TupleToolStats {
   tool_alpha?: number;
   tool_beta?: number;
@@ -1583,18 +1690,23 @@ export interface TupleToolStats {
   tool_last_at?: number;
 }
 
+
+
 export interface TupleToolObservation {
-
+  /** The tuple produced a well-formed, schema-valid tool call. */
   valid: boolean;
-
+  /** Arguments only parsed after the repair ladder intervened. */
   repaired?: boolean;
 }
+
+
 
 export function observeTupleToolStats(record: TupleToolStats, obs: TupleToolObservation, now: number): Required<Pick<TupleToolStats, "tool_alpha" | "tool_beta" | "tool_pulls" | "tool_repairs" | "tool_last_at">> {
   const alpha = record.tool_alpha ?? 1;
   const beta = record.tool_beta ?? 1;
   return {
-
+    // A repaired-but-valid call is a half success: the intent was right, the
+    // wire format was not. That is exactly the signal worth compounding.
     tool_alpha: clamp(obs.valid ? alpha * 0.97 + (obs.repaired ? 0.6 : 1) : alpha * 0.92, 1, 40),
     tool_beta: clamp(obs.valid ? beta * 0.92 : beta + (obs.repaired ? 0.8 : 1.4), 1, 40),
     tool_pulls: Math.min(1_000_000, (record.tool_pulls ?? 0) + 1),
@@ -1603,6 +1715,10 @@ export function observeTupleToolStats(record: TupleToolStats, obs: TupleToolObse
   };
 }
 
+
+
+/** Score contribution for tool-bearing requests. 0 without evidence, so the
+ *  generic UCB term still drives exploration of unproven tuples. */
 export function toolRoutingBonus(
   stats: TupleToolStats,
   options: { deterministic?: boolean; now: number; weight?: number } = { now: Date.now() },
@@ -1617,6 +1733,9 @@ export function toolRoutingBonus(
   return Number(((draw - 0.5) * weight).toFixed(5));
 }
 
+
+
+/** Learned reliability of a tuple specifically at emitting valid tool calls. */
 export function tupleToolCompetence(stats: TupleToolStats, now: number): number {
   const pulls = stats.tool_pulls ?? 0;
   if (pulls <= 0) return 0;
@@ -1624,17 +1743,26 @@ export function tupleToolCompetence(stats: TupleToolStats, now: number): number 
   return Number(wilsonLowerBound(Math.max(0, post.alpha - 1), Math.max(1, post.alpha + post.beta - 2)).toFixed(4));
 }
 
+
+
+// ---------------------------------------------------------------------------
+// 7. CALL PARTITIONING — which tool calls does the router own?
+// ---------------------------------------------------------------------------
+
 export interface NormalizedToolCall {
   id: string;
   index: number;
   name: string;
   arguments: string;
-
+  /** Set when the name resolves in the plane's registry. */
   builtin: boolean;
-
+  /** Canonical registry name (differs from `name` for aliases/misspellings). */
   resolved?: string;
 }
 
+
+
+/** Normalise a completion's tool_calls into a stable, wire-safe shape. */
 export function normalizeToolCalls(calls: unknown[]): NormalizedToolCall[] {
   const out: NormalizedToolCall[] = [];
   calls.forEach((raw, i) => {
@@ -1657,17 +1785,28 @@ export function normalizeToolCalls(calls: unknown[]): NormalizedToolCall[] {
   return out;
 }
 
+
+
 export interface ToolCallPartition {
-
+  /** Calls the plane can execute itself. */
   mine: NormalizedToolCall[];
-
+  /** Calls that belong to the client and must be returned untouched. */
   theirs: NormalizedToolCall[];
 }
 
-export interface PartitionOptions {
 
+
+/** The router only self-executes when it owns *every* call in the response:
+ *  returning a mix of executed and unexecuted calls would break the OpenAI
+ *  contract (the client must answer all of them). */
+export interface PartitionOptions {
+  /** Names the *caller* declared itself. A client tool that shadows a built-in
+   *  stays the client's: the plane never hijacks a caller's own API, even when
+   *  the model spells the name exactly like a built-in. */
   clientNames?: Iterable<string>;
 }
+
+
 
 export function partitionToolCalls(calls: unknown[], options: PartitionOptions = {}): ToolCallPartition {
   const shadowed = new Set<string>();
@@ -1676,14 +1815,20 @@ export function partitionToolCalls(calls: unknown[], options: PartitionOptions =
     if (key) shadowed.add(key);
   }
   const normalized = normalizeToolCalls(calls);
-
+  // Only a caller-declared name belongs to the caller. An undeclared name is a
+  // hallucination: the plane executes it (UNKNOWN_TOOL + suggestions) so the
+  // model self-corrects instead of the call landing on a human to answer.
   const isMine = (c: NormalizedToolCall): boolean => !shadowed.has(normalizeToolName(c.name));
   const mine = normalized.filter(isMine);
   const theirs = normalized.filter((c) => !isMine(c));
-
+  // All-or-nothing per round: executing half of a parallel batch would leave
+  // the caller to reconcile a partial assistant turn.
   return theirs.length > 0 ? { mine: [], theirs: normalized } : { mine, theirs: [] };
 }
 
+
+
+/** Merge client-declared tools with the plane's built-ins, de-duplicated. */
 export function mergeToolDeclarations(clientTools: unknown[], options: { names?: string[]; flavor?: ToolFlavor } = {}): unknown[] {
   const out: unknown[] = [];
   const seen = new Set<string>();
@@ -1698,7 +1843,7 @@ export function mergeToolDeclarations(clientTools: unknown[], options: { names?:
     const fn = isPlainObject(tool.function) ? tool.function : tool;
     const name = asString(fn.name);
     if (!name) continue;
-
+    // A client tool that shadows a built-in wins: never hijack the caller's API.
     push(name, tool);
   }
   for (const spec of toToolSpecs({ flavor: options.flavor ?? "openai", names: options.names })) {
@@ -1710,6 +1855,11 @@ export function mergeToolDeclarations(clientTools: unknown[], options: { names?:
   return out;
 }
 
+
+
+/** The safe default set a request advertises with `tools: "auto"`.
+ *  Chosen for agentic utility, not novelty: web, files, memory, retrieval,
+ *  clipboard, planning and exact compute. Admin tools are never auto-attached. */
 export const DEFAULT_AUTO_TOOLS = [
   "agent_team",
   "app_debug",
@@ -1741,10 +1891,16 @@ export const DEFAULT_AUTO_TOOLS = [
   "ws_check",
 ];
 
+
+
+/** The default set, plus every forged tool: a tool created on the fly is
+ *  pointless if the next request cannot see it. */
 export function defaultAutoToolNames(): string[] {
   const forged = listTools().filter((t) => t.dynamic && !t.admin).map((t) => t.name);
   return [...new Set([...DEFAULT_AUTO_TOOLS, ...forged])];
 }
+
+
 
 export function resolveAutoToolNames(requested: unknown): string[] | null {
   if (requested === true || requested === "auto" || requested === "*") return defaultAutoToolNames();
@@ -1769,138 +1925,12 @@ export function resolveAutoToolNames(requested: unknown): string[] | null {
   return null;
 }
 
+
+
+// ---------------------------------------------------------------------------
+// 8. REGISTRATION
+// ---------------------------------------------------------------------------
+// The kernel owns validation, repair, sandboxing and skill memory. The toolbox
+// owns capabilities. Registration is the only seam between them.
+
 registerToolbox(registerTool, { validateJson });
-
-export const TEXT_CALL_OPENERS = ["<tool_call>", "<function=", "<function_calls>", "<function ", "<invoke "];
-
-export interface TextToolCall { name: string; arguments: Record<string, unknown> }
-
-function textArgValue(raw: string): unknown {
-  const v = raw.replace(/^\s*\n|\n\s*$/g, "").trim();
-  if (/^(?:-?\d+(?:\.\d+)?(?:e[+-]?\d+)?|true|false|null)$/i.test(v) || /^[[{]/.test(v)) {
-    try { return JSON.parse(v); } catch { /* keep the string */ }
-  }
-  return v;
-}
-
-export function parseTextToolCalls(text: string): { calls: TextToolCall[]; rest: string } | null {
-  const calls: TextToolCall[] = [];
-  const block = /<tool_call>\s*([\s\S]*?)\s*(?:<\/tool_call>|$)|<function=([^>\s]+)>\s*([\s\S]*?)\s*(?:<\/function>|(?=<function=)|$)|<function_calls>\s*([\s\S]*?)\s*(?:<\/function_calls>|$)|<function\s([^>]*?)>\s*([\s\S]*?)\s*(?:<\/function>|$)|<invoke\s([^>]*?)>\s*([\s\S]*?)\s*(?:<\/invoke>|$)/gi;
-  let rest = "";
-  let last = 0;
-  for (let m; (m = block.exec(text));) {
-    if (m[0] === "") { block.lastIndex++; continue; }
-    const parsed = m[1] !== undefined ? parseCallBody(m[1])
-      : m[2] !== undefined ? parseFunctionBody(m[2], m[3])
-      : m[4] !== undefined ? parseInvokeList(m[4])
-      : m[5] !== undefined ? parseElementBody(m[5], m[6])
-      : parseInvokeBody(m[7], m[8]);
-    if (!parsed.length) continue;
-    calls.push(...parsed);
-    rest += text.slice(last, m.index);
-    last = m.index + m[0].length;
-  }
-  if (!calls.length) return null;
-  rest += text.slice(last);
-  return { calls, rest: rest.trim() };
-}
-
-function tagAttr(attrs: string, key: string): string {
-  const m = attrs.match(new RegExp(`${key}\\s*=\\s*"([^"]*)"|${key}\\s*=\\s*'([^']*)'|${key}\\s*=\\s*([^\\s>]+)`, "i"));
-  return (m?.[1] ?? m?.[2] ?? m?.[3] ?? "").trim();
-}
-
-function parseInvokeList(body: string): TextToolCall[] {
-  const out: TextToolCall[] = [];
-  for (const m of body.matchAll(/<invoke\s([^>]*?)>\s*([\s\S]*?)\s*(?:<\/invoke>|$)/gi)) out.push(...parseInvokeBody(m[1], m[2]));
-  return out;
-}
-
-function parseInvokeBody(attrs: string, body: string): TextToolCall[] {
-  const name = tagAttr(attrs, "name");
-  return name ? parseAttributedBody(name, attrs, body) : [];
-}
-
-function parseElementBody(attrs: string, body: string): TextToolCall[] {
-  const name = tagAttr(attrs, "name");
-  return name ? parseAttributedBody(name, attrs, body) : [];
-}
-
-function parseAttributedBody(name: string, attrs: string, body: string): TextToolCall[] {
-  if (body.trim()) {
-    const fromBody = parseFunctionBody(name, body);
-    if (fromBody.length) return fromBody;
-  }
-  const raw = tagAttr(attrs, "arguments");
-  if (raw) {
-    try { const j = JSON.parse(raw); if (isPlainObject(j)) return [{ name, arguments: j as Record<string, unknown> }]; } catch { /* not JSON */ }
-  }
-  return parseFunctionBody(name, body);
-}
-
-function parseCallBody(body: string): TextToolCall[] {
-  const fn = body.match(/^<function=([^>\s]+)>\s*([\s\S]*?)\s*(?:<\/function>\s*)?$/i);
-  if (fn) return parseFunctionBody(fn[1], fn[2]);
-  try {
-    const j = JSON.parse(body);
-    const one = (o: Record<string, unknown>): TextToolCall | null => {
-      const name = typeof o.name === "string" ? o.name : typeof (o.function as Json)?.name === "string" ? String((o.function as Json).name) : "";
-      let args = o.arguments ?? o.parameters ?? (o.function as Json)?.arguments ?? {};
-      if (typeof args === "string") { try { args = JSON.parse(args); } catch { return null; } }
-      return name && isPlainObject(args) ? { name, arguments: args as Record<string, unknown> } : null;
-    };
-    const list = (Array.isArray(j) ? j : [j]).filter(isPlainObject).map(one);
-    return list.every(Boolean) ? (list as TextToolCall[]) : [];
-  } catch {
-    return [];
-  }
-}
-
-function parseFunctionBody(name: string, body: string): TextToolCall[] {
-  const params = [...body.matchAll(/<parameter\s*(?:=\s*([^>\s]+)|name\s*=\s*"([^"]+)"|name\s*=\s*'([^']+)'|name\s*=\s*([^>\s]+))\s*>([\s\S]*?)(?=<\/parameter>|<parameter[\s=>]|<\/function>|<\/tool_call>|<\/invoke>|$)(?:<\/parameter>)?/gi)]
-    .map((p) => [p[1] ?? p[2] ?? p[3] ?? p[4], p[5]] as const);
-  if (params.length) return [{ name, arguments: Object.fromEntries(params.map(([k, v]) => [k, textArgValue(v)])) }];
-  const trimmed = body.trim();
-  if (!trimmed) return [{ name, arguments: {} }];
-  try { const j = JSON.parse(trimmed); return isPlainObject(j) ? [{ name, arguments: j }] : []; } catch { return []; }
-}
-
-export class LruCache<K, V> {
-  #map = new Map<K, V>();
-  public capacity: number;
-
-  constructor(capacity: number) {
-    this.capacity = capacity;
-  }
-
-  get(key: K): V | undefined {
-    const val = this.#map.get(key);
-    if (val !== undefined) {
-      // Refresh recency by re-inserting
-      this.#map.delete(key);
-      this.#map.set(key, val);
-    }
-    return val;
-  }
-
-  set(key: K, value: V): void {
-    if (this.#map.has(key)) {
-      this.#map.delete(key);
-    } else if (this.#map.size >= this.capacity) {
-    // Evict oldest (first item in Map iteration order)
-    const oldestKey = this.#map.keys().next().value;
-    if (oldestKey !== undefined) {
-      this.#map.delete(oldestKey);
-      }
-    }
-    this.#map.set(key, value);
-  }
-
-  clear(): void {
-  this.#map.clear();
-  }
-
-  size(): number {
-    return this.#map.size;
-  }
-}

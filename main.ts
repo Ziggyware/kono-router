@@ -1,42 +1,955 @@
-import{PRICING_HTML as jo,FORGE_DOCS_HTML as qo}from"./main-strings.ts";import{Hono as Oo}from"hono";import{compile as No}from"./compiler/index.ts";import{getTrace as Fo,listTraces as $o,startTrace as Ae,subscribe as Jo}from"./trace.ts";import{cors as zo}from"hono/cors";import{bodyLimit as Vo}from"hono/body-limit";import{clamp as ce,discountedPosterior as Bo,modelSimilarity as He}from"./math.ts";import{defaultAutoToolNames as St,emptyToolSkill as Mt,executeTool as Uo,isStatefulTool as Ho,listTools as Ee,mergeToolDeclarations as Ko,normalizeToolName as Ke,observeToolSkill as Go,parseToolArguments as Xo,registerTool as Wo,resolveAutoToolNames as Yo,unregisterTool as Rt,skillSummary as Qo,toolPreamble as Zo,toToolSpecs as It}from"./tools.ts";import{armsForClass as en,betaMean as Ce,calibrationBuckets as tn,chooseThompson as on,classifyTask as nn,correctionFor as sn,decideCompute as rn,DEFAULT_STRATEGY_ARMS as Pe,effectivePosterior as Ge,emptyCell as ge,estimateShrinkageKappa as an,evaluateArmPolicies as ln,failureSignature as Xe,fitRegretExponent as cn,gradeReward as At,observeCell as Te,posteriorLowerBound as dn,PROMPT_VARIANTS as un,pruneCells as mn,rankLessons as pn,regretCurve as fn,rewardPerExtraToken as gn,shouldPruneLesson as hn,thompsonPropensity as yn}from"./learning.ts";import{evaluate as _n}from"./toolbox/calc.ts";import{workspaceBrief as bn,workspaceSigFor as wn}from"./toolbox/project.ts";import{buildGate as kn}from"./toolbox/testing.ts";import{logErr as R,serviceJsonProviders as vn,UNIVERSAL_MODEL_ALIAS as De,registerMeshTools as Cn,freeTierConsume as Tn,FREE_TIER_DAILY as We,requireAdmin as ne,SSE_HEADERS as Et,FEEDBACK_VALUES as xn,loadTextFile as Le,buildHealthPayload as Sn,endpointCoverage as Mn,errText as A,buildModelList as Rn,isAdminContext as be,TOOL_FLAVORS as In,toolPlaneEnabled as Ye,maxToolRounds as Pt,toolNamespace as Qe,runTracedTool as Dt,normalizeMessages as Lt,runCanaryProbeOnTopCandidates as An,ensureCatalogSynced as En,runResurrectionProbe as Pn,SOURCE_FILES as jt,getRoomMessages as qt,broadcastCommunityMessage as Dn,allPosts as Ot,hotRank as Nt,newId as Ft,cleanHandle as $t,activeProviderList as Ln,PROVIDERS as jn,getRankedCandidates as Jt,allSweepCandidates as zt,ESCALATION_POLICY as qn,WIDE_POLICY as On,SWEEP_POLICY as Nn,combineSignals as Fn,hedgedDispatch as $n,toolCaps as je,collectUpstream as Vt,recordTupleSuccess as Ze,recordTupleFailure as et,gradeToolCalls as tt,learnToolVerdict as ot,executeOwnedToolCalls as nt,idleBuffered as Jn,strictErrors as st,degradedCompletion as Bt,HEARTBEAT_MS as zn,degradedSse as Vn,mergeToolCalls as Bn,keepalive as Un,idleMs as Hn,openAIImageBackends as Ut,generateViaOpenAIImages as Ht,noteImageOutcome as qe,IMAGE_MODELS as Oe,parseImageSize as rt,generateViaHorde as Kn,generateViaPollinations as Gn,bytesToBase64 as Xn}from"./main-split1.ts";import{__register_main_split1 as Wn}from"./main-split1.ts";const v=await Deno.openKv(),Kt="mesh_models_v5_2",re=new Map;let Gt=0;const Yn=15e3;let Xt=null;function Wt(e=!1){const t=()=>Xt??=Qn(e).finally(()=>Xt=null);return e||re.size===0?t():(Date.now()-Gt>=Yn&&t().catch(o=>console.error("L1 refresh:",o)),Promise.resolve(re))}async function Qn(e){const t=Date.now(),o=v.list({prefix:[Kt]}),n=new Map;for await(const s of o)s.value&&n.set(s.value.tuple_id,s.value);if(n.size>0||e){re.clear();for(const[s,r]of n)re.set(s,r);Gt=t}return re}async function pr(e,t,o=4){const n=[Kt,e],s=re.get(e);s&&re.set(e,t(s));for(let r=0;r<o;r++){const a=await v.get(n);if(!a.value)return;const c=t(a.value);if((await v.atomic().check(a).set(n,c).commit()).ok){re.set(e,c);return}await new Promise(u=>setTimeout(u,10*(r+1)+Math.random()*15))}}const Yt="mesh_tool_skills_v1",se=new Map;let Qt=0,Zt=null;const Zn=3e4;async function es(e){const t=Date.now(),o=new Map;for await(const n of v.list({prefix:[Yt]}))n.value?.tool&&o.set(n.value.tool,n.value);if(o.size>0||e){se.clear();for(const[n,s]of o)se.set(n,s);Qt=t}return se}function at(e=!1){const t=()=>Zt??=es(e).finally(()=>Zt=null);return e||se.size===0?t():(Date.now()-Qt>=Zn&&t().catch(o=>console.error("tool skill refresh:",o)),Promise.resolve(se))}async function ts(e,t,o=3){const n=[Yt,e],s=Date.now(),a=se.get(e)??Mt(e,s),c=t(a);se.set(e,c);for(let i=0;i<o;i++){const u=await v.get(n),S=t(u.value??Mt(e,s));if((await v.atomic().set(n,S).commit()).ok){se.set(e,S);return}await new Promise(l=>setTimeout(l,10*(i+1)+Math.random()*15))}console.warn(`[tools] skill CAS gave up for ${e} after ${o} attempts`)}async function fr(e,t){try{await ts(e,o=>Go(o,{ok:t.ok,ms:t.ms,repaired:t.repaired??!1,error:t.ok?null:t.error,code:t.ok?null:t.code},Date.now()))}catch(o){console.error("[tools] skill update failed:",o)}}const it="mesh_learning_cells_v1",eo="mesh_learning_arm_cells_v1",to="mesh_learning_arms_v1",Ne="mesh_learning_decisions_v1",lt="mesh_lessons_v1",oo=7*864e5,os=24*36e5,no=30,ct=4e3,Z=new Map,me=new Map,we=new Map,pe=new Map;let so=0,ro=!1,ao=null;const io=3e4,ke=(e,t,o)=>`${e}|${t}|${o}`,dt=(e,t)=>`${e}|${t}`;async function ns(e){const t=new Map;for await(const r of v.list({prefix:[it]}))r.value?.tuple_id&&t.set(ke(r.value.scope,r.value.tuple_id,r.value.task_class),r.value);const o=new Map;for await(const r of v.list({prefix:[eo]}))r.value?.arm_id&&o.set(dt(r.value.arm_id,r.value.task_class),r.value);const n=new Map(Pe.map(r=>[r.id,r]));for await(const r of v.list({prefix:[to]}))r.value?.id&&n.set(r.value.id,r.value);const s=new Map;for await(const r of v.list({prefix:[lt]}))r.value?.id&&s.set(r.value.id,r.value);if(t.size>0||e){Z.clear();for(const[r,a]of t)Z.set(r,a)}if(o.size>0||e){me.clear();for(const[r,a]of o)me.set(r,a)}we.clear();for(const[r,a]of n)we.set(r,a);if(s.size>0||e){pe.clear();for(const[r,a]of s)pe.set(r,a)}so=Date.now(),ro=!0}function ut(e=!1){const t=()=>ao??=ns(e).finally(()=>ao=null);return e||!ro?t():(Date.now()-so>=io&&t().catch(o=>console.error("learning refresh:",o)),Promise.resolve())}async function ss(){return await ut(),[...we.values()]}let Fe={at:0,value:8};function mt(){const e=Date.now();if(e-Fe.at<io)return Fe.value;const t=[...Z.values()].filter(o=>o.scope==="global").map(o=>({successes:o.rewardSum,trials:o.pulls}));return Fe={at:e,value:an(t,8)},Fe.value}function lo(e,t){return Bo(Number(e.alpha_success||2),Number(e.beta_failure||1),e.last_success_at??e.last_probed??t,t)}function rs(e,t,o){if(e&&e!=="global"){const n=Z.get(ke(e,t,o));if(n&&n.pulls>=no)return e}return"global"}function co(e,t,o,n){const s=rs(o,e.tuple_id,t),r=Z.get(ke(s,e.tuple_id,t))??ge(),a=Ge(r,lo(e,n),mt());return{...a,mean:Ce(a.alpha,a.beta),pulls:r.pulls,scope:s}}function as(e){let t=0,o=0;for(const n of me.values())n.arm_id===e&&(t+=Math.max(0,n.alpha-1),o+=Math.max(0,n.beta-1));return{alpha:1+t,beta:1+o}}async function uo(e,t,o){for(let n=0;n<3;n++){const s=await v.get(e),r=o(s.value??t());if((await v.atomic().check(s).set(e,r).commit()).ok)return r;await new Promise(c=>setTimeout(c,10*(n+1)+Math.random()*10))}return null}async function mo(e,t,o,n,s){const r=ke(e,t,o),a=Z.get(r)??{...ge(),scope:e,tuple_id:t,task_class:o};Z.set(r,{...Te(a,n,s),scope:e,tuple_id:t,task_class:o});const c=await uo([it,e,t,o],()=>({...ge(),scope:e,tuple_id:t,task_class:o}),i=>({...Te(i,n,s),scope:e,tuple_id:t,task_class:o}));c&&Z.set(r,c)}async function is(e,t,o,n){const s=dt(e,t),r=me.get(s)??{...ge(),arm_id:e,task_class:t};me.set(s,{...Te(r,o,n),arm_id:e,task_class:t});const a=await uo([eo,e,t],()=>({...ge(),arm_id:e,task_class:t}),c=>({...Te(c,o,n),arm_id:e,task_class:t}));a&&me.set(s,a)}async function ls(e,t,o){const n={...Te(e,t,o),id:e.id,taskClass:e.taskClass,failureSignature:e.failureSignature,correction:e.correction,createdAt:e.createdAt,pruned:e.pruned};hn(n)&&(n.pruned=!0),pe.set(e.id,n),await v.set([lt,e.id],n).catch(R)}function cs(e,t){let o=2166136261;const n=`${e}|${t}`;for(let s=0;s<n.length;s++)o^=n.charCodeAt(s),o=Math.imul(o,16777619);return`lesson_${(o>>>0).toString(16)}`}async function pt(e,t){const o=cs(e,t);if(pe.has(o))return;const n={...ge(),id:o,taskClass:e,failureSignature:t,correction:sn(t),createdAt:Date.now(),pruned:!1};pe.set(o,n),await v.set([lt,o],n).catch(R);try{await Uo("memory_write",{text:`Router lesson [${e}] ${t}: ${n.correction}`,tags:["kono-lesson",e,t],kind:"insight",importance:.7,source:"kono-router-learning"},{caps:{kv:v,namespace:"router_lessons"},admin:!0})}catch(s){R(s)}}async function ds(){if(Z.size<=ct)return;const e=[...Z.values()],t=new Set(mn(e,ct,Date.now()).map(o=>ke(o.scope,o.tuple_id,o.task_class)));for(const o of e){const n=ke(o.scope,o.tuple_id,o.task_class);t.has(n)||(Z.delete(n),await v.delete([it,o.scope,o.tuple_id,o.task_class]).catch(()=>{}))}}async function po(e,t){const o=Date.now();await mo("global",e.tupleId,e.taskClass,t.reward,o).catch(R),e.tenant&&e.tenant!=="global"&&await mo(e.tenant,e.tupleId,e.taskClass,t.reward,o).catch(R),await is(e.armId,e.taskClass,t.reward,o).catch(R);for(const n of e.lessonIds){const s=pe.get(n);s&&await ls(s,t.reward,o).catch(R)}ds().catch(R)}async function us(e,t){const o={traceId:e.traceId,ts:e.ts,taskClass:e.taskClass,action:e.armId,tupleId:e.tupleId,propensity:e.armPropensity,armPropensity:e.armPropensity,tuplePropensity:e.tuplePropensity,tokens:e.tokens,extraTokens:e.extraTokens,expectedReward:e.expectedReward,computeMode:e.computeMode,lessonIds:e.lessonIds,tenant:e.tenant,reward:t};await v.set([Ne,e.traceId],o,{expireIn:oo}).catch(R)}async function fo(e){const{ctx:t,cand:o}=e,n=e.ranked.slice(0,8);n.some(u=>u.tupleId===o.tupleId)||n.push(o);const s=n.map(u=>{const S=re.get(u.tupleId),b=S?co(S,t.taskCtx.taskClass,t.tenant,e.now):{alpha:2,beta:1,pulls:0};return{id:u.tupleId,alpha:b.alpha,beta:b.beta,pulls:b.pulls}}),r=s.find(u=>u.id===o.tupleId)??s[0],a=yn(s,o.tupleId,Math.random,120),c={traceId:t.traceId,ts:e.now,taskClass:t.taskCtx.taskClass,tupleId:o.tupleId,armId:t.arm.id,tenant:t.tenant,armPropensity:t.armPropensity,tuplePropensity:a,tokens:e.tokens,extraTokens:e.extraTokens,expectedReward:r?Number(Ce(r.alpha,r.beta).toFixed(4)):.5,computeMode:t.compute.mode,lessonIds:t.lessons.map(u=>u.id)};if(!c.traceId)return;const i=At(e.signals,{tupleId:o.tupleId,armId:t.arm.id});await us(c,i?.reward??null),i&&await po(c,i)}function ms(e,t){const o=e.replace(/,/g,"").match(/\d+(?:\.\d+)?(?:\s*[-+*/^%()]\s*\d+(?:\.\d+)?)+/);if(!o)return null;const n=o[0].trim();if(n.length>120)return null;let s;try{s=_n(n)}catch{return null}return Number.isFinite(s)?{pass:(t.match(/-?\d+(?:\.\d+)?/g)??[]).map(Number).some(c=>Math.abs(c-s)<=Math.max(1e-6,Math.abs(s)*1e-6)),expected:s}:null}function ps(e,t){let o=e.trim();if(!o)return null;const n=o.match(/```(?:json)?\s*([\s\S]*?)```/);n&&(o=n[1].trim());let s;try{s=JSON.parse(o)}catch{return{pass:!1,signature:"parse"}}const r=t??{},c=(r.json_schema??{}).schema??(r.type==="json_schema"?r.schema:void 0);if(c!==void 0){const i=Xo(s,c,{coerce:!1});return{pass:i.ok,signature:i.ok?"":"invalid"}}return{pass:!0,signature:""}}const ft="mesh_forged_tools_v1",he=new Map;let gt=0,$e=null;const fs=3e4,go=16384,gs=new Set(["web","files","memory","rag","vector","clipboard","task","compute","data","text","time","crypto","mesh"]),hs=Object.getPrototypeOf(async function(){}).constructor;function ho(e){const t=new hs("args","api","Deno","process","globalThis","self","window","Function",e);return async(o,n)=>{const s={now:n.now,signal:n.signal,deadlineMs:n.deadlineMs,namespace:n.caps?.namespace??"shared",kv:n.caps?.kv,fetch:(r,a)=>(n.caps?.fetch??fetch)(r,a),locals:n.locals,event:n.event};return await t(o,s,void 0,void 0,void 0,void 0,void 0,void 0)}}function ys(e){const t=Ke(String(e.name??""));if(!/^[a-z0-9_]{1,64}$/.test(t))throw new Error(`invalid tool name: ${String(e.name??"").slice(0,64)}`);if(Ee().find(c=>c.name===t&&!c.dynamic))throw new Error(`"${t}" is a built-in tool and cannot be overwritten`);const n=String(e.description??"").trim();if(!n)throw new Error("a description is required \u2014 it is how models decide to call the tool");if(n.length>1024)throw new Error("description exceeds 1024 chars");const s=typeof e.parameters=="object"&&e.parameters!==null&&!Array.isArray(e.parameters)?e.parameters:{type:"object",properties:{}},r=String(e.code??"");if(!r.trim())throw new Error("code (a JavaScript function body) is required");if(r.length>go)throw new Error(`code exceeds ${go} chars`);ho(r);const a=Date.now();return{name:t,description:n,parameters:s,kind:gs.has(String(e.kind))?String(e.kind):"compute",code:r,deterministic:e.deterministic===!0,admin:e.admin===!0,timeout_ms:e.timeout_ms===void 0?void 0:Math.round(ce(Number(e.timeout_ms)||4e3,100,3e4)),created_at:he.get(t)?.created_at??a,updated_at:a}}function yo(e){he.set(e.name,e),Wo({name:e.name,description:e.description,parameters:e.parameters,kind:e.kind,deterministic:e.deterministic,admin:e.admin,timeoutMs:e.timeout_ms,dynamic:!0,run:ho(e.code)})}async function _s(e){const t=ys(e);return await v.set([ft,t.name],t),yo(t),t}async function bs(e){const t=Ke(e);return he.has(t)?(he.delete(t),Rt(t),await v.delete([ft,t]),!0):!1}async function ws(){const e=new Map;for await(const t of v.list({prefix:[ft]})){const o=t.value;o&&typeof o.name=="string"&&typeof o.code=="string"&&e.set(o.name,o)}for(const t of[...he.keys()])e.has(t)||(he.delete(t),Rt(t));for(const t of e.values()){const o=he.get(t.name);if(!o||o.updated_at!==t.updated_at)try{yo(t)}catch(n){console.error("forged tool register:",n)}}gt=Date.now()}function xe(e=!1){return!e&&gt>0&&Date.now()-gt<fs?Promise.resolve():($e||($e=ws().catch(t=>console.error("forged tool refresh:",t)).finally(()=>{$e=null})),$e)}function _o(e=Date.now(),t=!0){const o={};for(const[n,s]of se)o[n]=Qo(s,e,t);return o}function bo(e=Date.now()){let t=0,o=0,n=0;for(const s of se.values())t+=s.calls,o+=s.errors,n+=s.repairs;return{tools:Ee().length,instrumented:se.size,calls:t,errors:o,repairs:n}}const wo=new TextEncoder;function ks(e,t){const o=wo.encode(e),n=wo.encode(t);if(o.byteLength!==n.byteLength){let r=1;for(let a=0;a<n.byteLength;a++)r|=n[a]^n[a];return r===0}let s=0;for(let r=0;r<o.byteLength;r++)s|=o[r]^n[r];return s===0}const Se=new Map,ko=ce(Number(Deno.env.get("KONO_RATE_BURST"))||120,5,1e4),vs=ce(Number(Deno.env.get("KONO_RATE_REFILL"))||8,.1,1e3);function Cs(e){const t=Date.now(),o=Se.get(e)??{tokens:ko,lastRefill:t},n=Math.max(0,(t-o.lastRefill)/1e3);return o.tokens=Math.min(ko,o.tokens+n*vs),o.lastRefill=t,Se.size>5e3&&Se.clear(),o.tokens<1?(Se.set(e,o),!1):(o.tokens-=1,Se.set(e,o),!0)}function gr(e){const t=["Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/142.0.0.0 Safari/537.36","OpenAI/v1 PythonBindings/1.82.0","continue-dev/1.4.12 (darwin-arm64)","cline/4.1.0 vscode/1.105.0","roo-code/3.18.0 (win32-x64)","opencode-ai/2.6.4 (linux-x64)"],o=Object.entries({Accept:"application/json, text/event-stream","Accept-Language":"en-US,en;q=0.9","Cache-Control":"no-cache","User-Agent":t[Math.floor(Math.random()*t.length)],...e,"Content-Type":"application/json"});for(let s=o.length-1;s>0;s--){const r=Math.floor(Math.random()*(s+1));[o[s],o[r]]=[o[r],o[s]]}const n=new Headers;for(const[s,r]of o)n.set(s,r);return n}function hr(){const t=(Deno.env.get("OPENROUTER_API_KEY")||Deno.env.get("OPENROUTER_API_KEYS")||"").split(",").map(o=>o.trim()).filter(Boolean);return t.length===0?null:t[Math.floor(Math.random()*t.length)]}function yr(e,t=128e3){const o=e.toLowerCase();if(/embed|bge-|e5-|whisper|tts|kokoro|flux|sdxl|stable-diffusion|\bsd3|dall-e|gpt-image|imagen|veo-|bria|recraft|ideogram|kandinsky|hidream|seedream|seededit|cogview|qwen-image|playground-v|kling|hunyuan-video|ltx-video|wan-?2|moderation|guard|content-safety|rerank|suno|udio|respan/i.test(o))return{iqPrior:0,supportsReasoning:!1,supportsVision:!1,isCodingSpecialist:!1};let n=.56;/claude-opus-5(\.5)?|claude-sonnet-5(\.5)?|claude-fable-5(\.1)?|kimi-k3(\.1)?-pro|gemini-4-argon|argon|gpt-6(\.1)?-(terra|astra)|space-bunny-alpha/i.test(o)?n=.975:/grok-4(\.[13457]|-heavy)?(?!-mini)|gemini-(3\.[158]|2\.8)-(pro|flash)|qwen3\.8-max|deepseek-v4(\.1)?-(pro|flash)|glm-5\.3|thinkingmachines\/inkling(?!-small)|nemotron-3-ultra-550b|laguna-s-2\.1|dots-3-note|claude-4-[57]|claude-opus-4|gpt-5\.6-sol|o3(?!-mini)|o4(?!-mini)/i.test(o)?n=.935:/gpt-6-luna|gpt-5\.6-luna|kimi-k[23]|deepseek-v4-flash|deepseek-v3\.2|deepseek-r1|inkling-small|nemotron-3-super-120b|qwen3\.8-27b|qwen3(\.5)?-(32b|72b|235b|coder)|gemma-?4-(31b|26b)|north-mini-code|laguna-xs-2\.1|recursive\/flint|xing4\.0-29b|mimo-v2\.6|hy4-preview|minimax-m2|ling-3\.0-flash|solar-pro-4|openrouter\/free|kilo-auto\/free|claude-3-[57]-sonnet|gpt-4\.1(?!-nano|-mini)|llama-4-(maverick|behemoth)/i.test(o)?n=.875:/nemotron-3\.5-lightning|nemotron-3-nano-omni|nemotron-3\.5-bolt|apodex-1\.1-mini|gemma-?3-27b|llama-3\.3-70b|llama-4-scout|qwen-?2\.5-(coder-32b|72b)|codestral|mistral-large|glm-4\.5|grok-4-mini|grok-3|gpt-4o-mini|claude-3-5-haiku|kilo-auto\/small/i.test(o)?n=.77:/lfm-2\.5-2\.6b|gemma-?[34]-(9b|12b)|qwen3-(8b|4b)|llama-3\.[12]-(8b|11b)|ministral|mistral-nemo|phi-4|flash-lite/i.test(o)?n=.52:/0\.5b|0\.6b|1b|1\.5b|tinyllama|smollm/i.test(o)&&(n=.35);const s=/argon|claude-opus-5|claude-sonnet-5|claude-fable-5|kimi-k3|gpt-6|grok-4|gemini-3|gemini-2\.8|deepseek-v4|deepseek-v3\.2|deepseek-r1|glm-5|qwen3\.8|inkling|nemotron-3|dots-3|xing4\.0|apodex|lfm-2\.5|o1|o3|o4|thinking|reason/i.test(o),r=/argon|claude-opus-5|claude-sonnet-5|kimi-k3|gpt-6|grok-4|gemini|qwen3\.8|gemma-?4-(26b|31b)|inkling|nemotron-3-nano-omni|dots-3|deepseek-v3\.2|vision|vl|pixtral|llama-4/i.test(o),a=/laguna|north-mini-code|flint|coder|codestral|devstral|codex|starcoder|codegemma|code-?llama|-code\b/i.test(o);return a&&(n+=.015),t>=256e3&&(n+=.01),t>=1e6&&(n+=.01),{iqPrior:Math.min(.995,Number(n.toFixed(3))),supportsReasoning:s,supportsVision:r,isCodingSpecialist:a}}const Ts=/rate limit exceeded|too many requests|cloudflare ray id|just a moment\.\.\.|api key is required|insufficient_quota|error code: 1020|visit https:\/\/|upgrade your plan|free tier limit|model is overloaded|service unavailable|provider returned error|<\s*!doctype|<\s*html|access denied|captcha|bad gateway|upstream connect error|service temporarily unavailable|enable javascript|origin (?:is|not) allowed/i;function xs(e){const t=e.length;if(t===0)return 0;const o=new Map;for(let s=0;s<t;s++){const r=e[s];o.set(r,(o.get(r)??0)+1)}let n=0;for(const s of o.values()){const r=s/t;n-=r*Math.log2(r)}return n}function _r(e){const t=e.trim();if(!t)throw new Error("POISON_EMPTY: Zero content tokens");if(Ts.test(t.slice(0,400)))throw new Error("POISON_SOFTBLOCK: Upstream proxy error disguised as 200 OK");if(t.length>=32&&xs(t.slice(0,128))<1.15)throw new Error("POISON_DEGENERATE: Low-entropy token collapse detected")}function vo(e){let t=!1;const o=[];for(const n of e)if(typeof n.content=="string")o.push(n.content);else if(Array.isArray(n.content)){for(const s of n.content)if(s&&typeof s=="object"){const r=s;r.type==="text"&&typeof r.text=="string"?o.push(r.text):(r.type==="image_url"||r.type==="image"||r.type==="input_image"||r.type==="video_url"||r.type==="input_audio")&&(t=!0)}}return{combinedText:o.join(`
-`),hasVisionPayload:t}}function Ss(e,t=!1,o){if(o==="high"||o==="xhigh"||o==="max")return"reasoning";const{combinedText:n}=vo(e);return t||/```|function\s+\w+|interface\s+\w+|def\s+\w+|import\s+\{|SELECT\s+.*\s+FROM|cargo\s+build|Deno\.|async\s+function|pub\s+fn\s+|#include\s*</i.test(n)?"code":/prove\s+that|formal\s+proof|theorem|lemma|eigenvalue|hamiltonian|lagrangian|step-by-step\s+derivation|game\s+theory|bayesian|time\s+complexity\s+proof/i.test(n)?"reasoning":n.length>1800||/architect|analyze|differential|rigorous|synthesize|tradeoff/i.test(n)?"smart":"fast"}async function br(){try{return await vn()}catch(e){return console.error("service-json provider load promise rejected:",e),[]}}function Co(...e){for(const t of e){if(typeof t=="string"&&t.length>0)return t;if(Array.isArray(t)){const o=t.map(n=>n&&typeof n=="object"&&typeof n.text=="string"?String(n.text):typeof n=="string"?n:"").join("").trim();if(o)return o}}}function To(e){if(Array.isArray(e)){let u="";for(const S of e){const b=To(S);b?.content&&(u+=b.content)}return u?{content:u}:null}if(!e||typeof e!="object")return null;const t=e;if(t.error){const u=t.error;throw new Error(`UPSTREAM_ERR: ${String(u.message??JSON.stringify(u))}`)}const o=Array.isArray(t.choices)?t.choices[0]:t.choices,n=o?.message??o?.delta??t.message??t.delta??{},s=Co(n.content,o?.text,o?.content,t.response,t.content,t.output,t.output_text,t.answer,t.completion,t.generated_text,t.text,t.data),r=Co(n.reasoning_content,n.reasoning,n.thinking,t.reasoning_content,t.reasoning,t.thinking),a=n.tool_calls??t.tool_calls,c=Array.isArray(a)&&a.length>0?a:void 0,i=typeof o?.finish_reason=="string"?o.finish_reason:typeof t.finish_reason=="string"?t.finish_reason:void 0;return!s&&!r&&!c&&!i?null:{content:s,reasoning:r,toolCalls:c,finish:i}}function wr(e){if(!e.startsWith("data:"))return null;const t=e.slice(5).trim();if(!t||t==="[DONE]")return null;let o;try{o=JSON.parse(t)}catch{return{content:t}}return To(o)}const kr="<think>",vr="</think>";function Cr(e,t){for(let o=Math.min(e.length,t.length-1);o>0;o--)if(t.startsWith(e.slice(-o).toLowerCase()))return o;return 0}const Tr=new Map,xr=new Map,Sr={openrouter:["openrouter/free",De],llm7:["gpt-oss",De],kilo:["kilo-auto/free","kilo-auto/small",De],opencode:["deepseek-v4.1-flash-free","glm-5.3-flash-free",De]};Cn(),xe(!0).catch(e=>console.error("forged tool boot hydrate:",e));const Mr=new Set(["system","user","assistant","tool","developer","function"]),k=new Oo;k.use("*",zo({origin:"*",exposeHeaders:["traceparent","Server-Timing","X-Kono-Attempts","X-Kono-Endpoints","X-Kono-Degraded","X-Kono-Free-Tier"]})),k.use("*",Vo({maxSize:512*1024})),k.use("/v1/*",async(e,t)=>{const o=e.req.header("cf-connecting-ip")||e.req.header("x-forwarded-for")?.split(",")[0].trim()||e.env?.remoteAddr?.hostname||"anon";if(!Cs(o))return e.json({error:{message:"Rate limit exceeded on edge isolate"}},429);const n=Deno.env.get("ROUTER_API_KEY");if(n){const s=e.req.header("authorization")||"",r=s.startsWith("Bearer ")?s.slice(7).trim():"";if(r&&ks(r,n)){await t();return}if(r)return e.json({error:{message:"Unauthorized: Invalid ROUTER_API_KEY"}},401);const a=await Tn(o).catch(()=>0);if(a>We)return e.json({error:{message:"Free tier exhausted: 50 requests per day without an API key. Unlimited requests are $5/month \u2014 see /pricing or contact Michael Morton at ziggyware@gmail.com or +1-979-661-2553.",type:"free_tier_exhausted",limit:We,pricing:"/pricing"}},429);e.header("X-Kono-Free-Tier",`${We-a} requests left today`)}await t()}),k.get("/v1/traces",ne,e=>{const t=Math.round(ce(Number(e.req.query("limit"))||100,1,256));return e.json({object:"list",data:$o(t)})}),k.get("/v1/traces/live",ne,e=>{const t=new TextEncoder;let o=()=>{};const n=new ReadableStream({start(s){const r=i=>{try{s.enqueue(t.encode(i))}catch{o()}};r(`: live
+import { Hono, type Context, type MiddlewareHandler } from "hono";
 
-`);const a=Jo(i=>r(`data: ${JSON.stringify(i)}
 
-`)),c=setInterval(()=>r(`: hb
+import { compile, type Complete } from "./compiler/index.ts";
 
-`),15e3);o=()=>{clearInterval(c),a()},e.req.raw.signal.addEventListener("abort",()=>{o();try{s.close()}catch{}},{once:!0})},cancel:()=>o()});return new Response(n,{headers:Et})}),k.get("/v1/traces/:id",ne,e=>{const t=Fo(e.req.param("id"));return t?e.json(t):e.json({error:{message:"Trace not in this isolate's ring"}},404)}),k.post("/v1/feedback",async e=>{const t=await e.req.json().catch(()=>({})),o=typeof t.trace_id=="string"?t.trace_id:"",n=typeof t.signal=="string"?t.signal:"",s=xn[n];if(!o||!s)return e.json({error:{message:"expected { trace_id, signal: thumbs_up|thumbs_down|regenerate|edit|abandon }"}},400);const a=(await v.get([Ne,o])).value;if(!a)return e.json({error:{message:"no decision recorded for that trace id"}},404);if(Date.now()-a.ts>os)return e.json({applied:!1,reason:"feedback window expired",trace_id:o});if(a.feedbackApplied)return e.json({applied:!1,reason:"feedback already applied",trace_id:o});const c=At([{kind:s.kind,value:s.value,weight:s.weight,source:"user"}],{tupleId:a.tupleId,armId:a.action});if(!c)return e.json({applied:!1,reason:"signal rejected",trace_id:o});const i={traceId:a.traceId,ts:a.ts,taskClass:a.taskClass,tupleId:a.tupleId,armId:a.action,tenant:a.tenant,armPropensity:a.armPropensity,tuplePropensity:a.tuplePropensity,tokens:a.tokens??0,extraTokens:a.extraTokens??0,expectedReward:a.expectedReward??.5,computeMode:a.computeMode,lessonIds:a.lessonIds};return await po(i,c),n==="thumbs_down"&&pt(a.taskClass,Xe("feedback","thumbs_down")).catch(R),await v.set([Ne,o],{...a,reward:c.reward,feedbackApplied:!0},{expireIn:oo}).catch(R),e.json({applied:!0,trace_id:o,reward:c.reward,task_class:a.taskClass,tuple:a.tupleId,arm:a.action})}),k.get("/v1/learning",ne,async e=>{await ut(!0).catch(R),await Wt(!1).catch(()=>{});const t=Date.now(),o=mt(),n=[];for await(const l of v.list({prefix:[Ne]}))l.value?.traceId&&n.push(l.value);n.sort((l,d)=>l.ts-d.ts);const s=n.filter(l=>l.reward!==null&&l.reward!==void 0),r=s.map(l=>({traceId:l.traceId,ts:l.ts,taskClass:l.taskClass,action:l.action,tupleId:l.tupleId,propensity:l.propensity,reward:l.reward,tokens:l.tokens,extraTokens:l.extraTokens,expectedReward:l.expectedReward,computeMode:l.computeMode,lessonIds:l.lessonIds})),a=[...Z.values()].filter(l=>l.scope==="global").map(l=>{const d=re.get(l.tuple_id),y=d?lo(d,t):{alpha:2,beta:1},T=Ge(l,y,o);return{tuple_id:l.tuple_id,task_class:l.task_class,pulls:l.pulls,mean:Number(Ce(T.alpha,T.beta).toFixed(4)),lower_bound:Number(dn(T.alpha,T.beta).toFixed(4)),variance:Number((T.alpha*T.beta/((T.alpha+T.beta)**2*(T.alpha+T.beta+1))).toFixed(4)),alpha:Number(T.alpha.toFixed(2)),beta:Number(T.beta.toFixed(2)),last_at:l.lastAt}}).sort((l,d)=>d.pulls-l.pulls).slice(0,200),c=new Map;for(const l of a)c.set(l.task_class,Math.max(c.get(l.task_class)??0,l.mean));const i=fn(r,l=>c.get(l)??.5),u=i.filter((l,d)=>d%Math.max(1,Math.floor(i.length/50))===0||d===i.length-1),S=[...me.values()].map(l=>({arm:l.arm_id,task_class:l.task_class,pulls:l.pulls,mean:Number(Ce(l.alpha,l.beta).toFixed(4))})),b={};for(const l of S){const y=S.filter(T=>T.task_class===l.task_class).reduce((T,M)=>T+M.pulls,0);(b[l.task_class]??={})[l.arm]=y>0?Number((l.pulls/y).toFixed(3)):0}return e.json({object:"learning",engine:"asck-l-v1",task_classes:["chat","qa","code","math","tool","vision","json","reasoning","multilingual","longform","summarize","creative"],kappa:o,exploration_floor:.05,tenant_evidence_min:no,posteriors:a,tenant_cells:[...Z.values()].filter(l=>l.scope!=="global").length,arms:{definitions:[...we.values()],cells:S,shares:b},regret:{curve:u,exponent:cn(i),total:i.length?i[i.length-1].regret:0,decisions:r.length},calibration:tn(r),reward_per_extra_token:gn(r),off_policy:ln(r.map(l=>({...l}))),lessons:[...pe.values()].map(l=>({id:l.id,task_class:l.taskClass,failure_signature:l.failureSignature,correction:l.correction,pulls:l.pulls,mean:Number(Ce(l.alpha,l.beta).toFixed(4)),pruned:l.pruned,created_at:l.createdAt})),decisions:{stored:n.length,rewarded:s.length,recent:n.slice(-20).map(l=>({trace_id:l.traceId,ts:l.ts,task_class:l.taskClass,tuple:l.tupleId,arm:l.action,arm_propensity:l.armPropensity,tuple_propensity:l.tuplePropensity,compute_mode:l.computeMode,expected_reward:l.expectedReward,reward:l.reward,tokens:l.tokens,extra_tokens:l.extraTokens}))},caps:{max_cells:ct,cells:Z.size,decision_ttl_days:7,feedback_ttl_hours:24}})}),k.post("/v1/learning/arms",ne,async e=>{const t=await e.req.json().catch(()=>({})),o=typeof t.id=="string"?t.id.trim().toLowerCase():"";if(!/^[a-z0-9_]{1,48}$/.test(o))return e.json({error:{message:"arm id must match [a-z0-9_]{1,48}"}},400);const n=["plain","verify","concise"].includes(String(t.prompt_variant))?String(t.prompt_variant):"plain",s=["single","verify_retry","best_of_n"].includes(String(t.compute))?String(t.compute):"single",r={id:o,label:typeof t.label=="string"?t.label.slice(0,120):o,promptVariant:n,temperatureDelta:Number(ce(Number(t.temperature_delta)||0,-1,1).toFixed(2)),compute:s,enabled:t.enabled!==!1,...Array.isArray(t.classes)?{classes:t.classes.filter(a=>typeof a=="string").slice(0,12)}:{}};return await v.set([to,o],r),we.set(o,r),e.json({arm:r,total_arms:we.size})}),k.get("/pricing",e=>new Response(jo,{headers:{"Content-Type":"text/html; charset=utf-8","Cache-Control":"no-cache"}})),k.get("/forge-docs",e=>new Response(qo,{headers:{"Content-Type":"text/html; charset=utf-8","Cache-Control":"no-cache"}})),k.get("/",e=>new Response(Le("index.html"),{headers:{"Content-Type":"text/html; charset=utf-8","Cache-Control":"no-cache",Connection:"keep-alive"}})),k.get("/admin",e=>e.redirect("/#lanes",301));for(const[e,t,o]of[["/docs","docs.html","text/html; charset=utf-8"],["/openapi.json","openapi.json","application/json"]])k.get(e,n=>{const s=Le(t);return s===null?n.text(`${t} missing from deployment`,404):new Response(s,{headers:{"Content-Type":o,"Cache-Control":"no-cache"}})});k.get("/health",async e=>e.json(await Sn())),k.get("/v1/endpoints",async e=>{try{const t=await Mn();return e.json({object:"list",policy:"every configured endpoint is attempted before a request can degrade",configured_endpoints:t.configured_endpoints,registry_endpoints:t.registry_endpoints,catalog_tuples:t.catalog_tuples,sweep_candidates:t.sweep_candidates,data:t.endpoints})}catch(t){return e.json({object:"list",data:[],error:A(t)},200)}}),k.get("/v1/models",async e=>e.json(await Rn())),k.get("/v1/tools",async e=>{const t=Date.now();await at().catch(i=>console.error("tool skill hydrate:",i)),await xe().catch(i=>console.error("forged tool hydrate:",i));const o=be(e),n=(e.req.query("flavor")??"openai").toLowerCase(),s=In.includes(n)?n:"openai",r=e.req.query("schemas")!=="0",a=_o(t),c=Ee().filter(i=>o||!i.admin).map(i=>({name:i.name,kind:i.kind,description:i.description,aliases:i.aliases??[],deterministic:i.deterministic??!1,admin:i.admin??!1,dynamic:i.dynamic??!1,...r?{parameters:i.parameters}:{},skill:a[i.name]??null}));return e.json({object:"list",plane:"asck-t-v2",enabled:Ye(),agent:{max_rounds:Pt(),auto_tools:St()},session:{namespace:Qe(e),scope_header:"x-kono-session",storage:"deno-kv"},count:c.length,totals:bo(t),data:c,skills:a,wire:{flavor:s,tools:It({flavor:s,includeAdmin:o})}})}),k.post("/v1/tools/execute",async e=>{const t=Ae("tools.execute",{},e.req.header("traceparent")),o={traceparent:t.traceparent};try{const n=await e.req.json().catch(()=>({}));t.io("request",n);const r=(Array.isArray(n.calls)?n.calls:[n]).filter(b=>b&&typeof b=="object").slice(0,16).map((b,l)=>{const d=b,y=d.function??d,T=y.arguments??d.arguments??d.args??{};return{id:typeof d.id=="string"&&d.id?d.id:`call_${l}`,name:String(y.name??d.name??d.tool??""),arguments:T}});await at().catch(R),await xe().catch(R);const a={tool_skills:Object.fromEntries([...se.entries()])},c=n.timeout_ms===void 0?void 0:Math.round(ce(Number(n.timeout_ms)||4e3,50,1e7));let i=Promise.resolve();const u=await Promise.all(r.map(b=>{const l=async()=>{const y=await Dt(e,t,b,{locals:a,timeoutMs:c});return{id:b.id,name:y.tool??b.name,ok:y.ok,ms:y.ms,...y.ok?{result:y.result,strategy:y.strategy,repairs:y.repairs,truncated:y.truncated,bytes:y.bytes}:{error:y.error,code:y.code,suggestions:y.suggestions??[],issues:y.issues??[]}}};if(!Ho(b.name))return l();const d=i.then(l);return i=d.catch(()=>{}),d})),S=u.every(b=>b.ok);return t.io("response",u),t.end(S?"ok":"error",{calls:u.length,failures:u.filter(b=>!b.ok).length}),e.json({object:"list",count:u.length,ok:S,results:u,totals:bo(),trace_id:t.traceId},200,o)}catch(n){return t.end("error",{error:A(n).slice(0,200)}),e.json({object:"list",count:0,ok:!1,error:A(n),results:[]},200,o)}}),k.post("/v1/tools/forge",ne,async e=>{const t=await e.req.json().catch(()=>({}));try{const o=await _s(t);return e.json({forged:o.name,kind:o.kind,description:o.description,parameters:o.parameters,admin:o.admin??!1,dynamic:!0,updated_at:o.updated_at,tools_total:Ee().length})}catch(o){return e.json({error:{message:A(o)}},400)}}),k.delete("/v1/tools/forge/:name",ne,async e=>await bs(e.req.param("name"))?e.json({retired:Ke(e.req.param("name"))}):e.json({error:{message:"not a forged tool"}},404)),k.post("/v1/agent/compile",async e=>{const t=Ae("agent.compile",{},e.req.header("traceparent")),o={traceparent:t.traceparent},n=await e.req.json().catch(()=>({}));t.io("request",n);const r=[...Lt(n.messages,n.prompt)].reverse().find(M=>M.role==="user"&&typeof M.content=="string"),a=(typeof n.question=="string"?n.question:String(r?.content??"")).trim();if(!a)return t.end("error",{error:"no question"}),e.json({error:{message:"question (or a user message) is required"}},400,o);const c=typeof n.model=="string"&&n.model?n.model:"free:smart",u={"content-type":"application/json","x-forwarded-for":e.req.header("cf-connecting-ip")||e.req.header("x-forwarded-for")?.split(",")[0].trim()||e.env?.remoteAddr?.hostname||"anon",traceparent:t.traceparent};for(const M of["authorization","x-admin-secret","x-kono-session","x-session-id"]){const O=e.req.header(M);O&&(u[M]=O)}const S=c.startsWith("free:")?[c,...["free:smart","free:fast","free:code"].filter(M=>M!==c)]:[c],b=M=>S[M%S.length],l=async(M,O)=>{const F=await k.request("/v1/chat/completions",{method:"POST",headers:u,signal:O.signal,body:JSON.stringify({model:b(O.attempt),messages:M,temperature:O.temperature,max_tokens:O.max_tokens,stream:!1})});if(F.status!==200)throw new Error(`HTTP ${F.status}: ${(await F.text()).slice(0,200)}`);if(F.headers.get("x-kono-degraded"))throw new Error("no upstream answered (degraded)");const J=await F.json(),q=J.choices?.[0]?.message??{};return{content:typeof q.content=="string"?q.content:"",model:typeof J.model=="string"?J.model:void 0}};await at().catch(R),await xe().catch(R);const d=_o(),y={tool_skills:Object.fromEntries([...se.entries()])};let T=0;try{const M=await No({question:a,complete:l,exec:async(O,F,J)=>{const q=await Dt(e,t,{id:`node_${++T}`,name:O,arguments:F},{locals:y,signal:J});return q.ok?{ok:!0,result:q.result,ms:q.ms}:{ok:!1,error:q.error,code:q.code,ms:q.ms}},samples:n.samples,rounds:n.rounds,concurrency:n.concurrency,k:n.k,tools:Array.isArray(n.tools)?n.tools.filter(O=>typeof O=="string"):void 0,admin:be(e),fallbackTools:St(),estimateMs:O=>d[O]?.calls?Math.max(1,d[O].p50_ms):50,budgetMs:n.budget_ms,signal:e.req.raw.signal});return t.io("response",M),t.end("ok",{rounds:M.rounds.length,llm_calls:M.usage.llm_calls,tool_calls:M.usage.tool_calls}),e.json({object:"agent.compile",model:c,...M,trace_id:t.traceId},200,o)}catch(M){return t.end("error",{error:A(M).slice(0,200)}),e.json({error:{message:A(M)},trace_id:t.traceId},502,o)}}),k.post("/v1/probe",ne,async e=>{let t="smart",o=4;try{const r=await e.req.json();["fast","smart","code","reasoning"].includes(r?.mode)&&(t=r.mode),typeof r?.limit=="number"&&(o=Math.min(12,Math.max(1,Math.floor(r.limit))))}catch{}const s=(await An(o,t)).map(r=>{if(r.status==="fulfilled"&&r.value)return{tupleId:r.value.tupleId,ok:!0,passed:r.value.passed,ms:r.value.ttftMs};if(r.status==="rejected"){const a=r.reason;return{tupleId:a?.tupleId??"unknown",ok:!1,error:a?.message??"probe failed"}}return null}).filter(r=>r!==null);return e.json({status:"probe_complete",mode:t,results:s})}),k.post("/v1/sync",ne,async e=>(await En(!0),await Wt(!0),e.json({status:"catalog_synced",total_models:re.size}))),k.post("/v1/resurrect",ne,async e=>{let t=6;try{const n=await e.req.json();typeof n?.limit=="number"&&(t=n.limit)}catch{}const o=await Pn(t);return e.json({status:"resurrection_complete",probed:o.length,promoted:o.filter(n=>n.ok).length,results:o})});const Ms=new Set(jt);k.get("/v1/source",ne,e=>{const t=e.req.query("file")||"";if(!Ms.has(t))return e.json({error:{message:"File is not in the readable allowlist"}},400);const n=Le(t);return n===null?e.json({error:{message:`File not readable in this deployment: ${t}`}},404):e.json({file:t,bytes:n.length,lines:n.split(`
-`).length,content:n})}),k.get("/v1/source/search",ne,e=>{const t=(e.req.query("q")||"").trim();if(t.length<2)return e.json({error:{message:"Query must be at least 2 characters"}},400);const o=t.toLowerCase(),n=200,s=[];for(const r of jt){if(s.length>=n)break;const a=Le(r);if(a===null)continue;const c=a.split(`
-`);for(let i=0;i<c.length&&s.length<n;i++)c[i].toLowerCase().includes(o)&&s.push({file:r,line:i+1,text:c[i].trim().slice(0,240)})}return e.json({q:t,count:s.length,truncated:s.length>=n,results:s})});const Rs=new Map,Je=new Map;k.get("/v1/community/messages",e=>{const t=e.req.query("room")||"general",o=Math.min(200,Math.max(1,parseInt(e.req.query("limit")||"50",10))),n=e.req.query("since");let s=qt(t);return n&&(s=s.filter(r=>r.createdAt>n)),e.json({ok:!0,room:t,messages:s.slice(-o)})}),k.post("/v1/community/messages",async e=>{const t=await e.req.json().catch(()=>null);if(!t||typeof t.content!="string"||!t.content.trim())return e.json({error:{message:"Message content is required"}},400);const o=typeof t.user=="string"&&t.user.trim()?t.user.trim().slice(0,32):"Anonymous",n=typeof t.room=="string"&&t.room.trim()?t.room.trim().toLowerCase().slice(0,32):"general",s=typeof t.avatar=="string"?t.avatar.slice(0,32):void 0,r=t.replyTo&&typeof t.replyTo=="object"?t.replyTo:void 0,a={id:"msg-"+Date.now().toString(36)+"-"+Math.random().toString(36).slice(2,7),room:n,user:o,avatar:s,content:t.content.slice(0,2e4),createdAt:new Date().toISOString(),reactions:{},replyTo:r},c=qt(n);c.push(a),c.length>300&&c.shift();try{v.set(["community_messages",n,a.id],a).catch(()=>{})}catch{}return Dn(a),e.json({ok:!0,message:a})}),k.get("/v1/community/posts",async e=>{const t=e.req.query("sort")??"hot",o=Math.min(200,Math.max(1,Number(e.req.query("limit")??50)||50)),n=e.req.query("voter")??"",s=Date.now(),r=await Ot();r.sort(t==="new"?(i,u)=>u.createdAt.localeCompare(i.createdAt):t==="top"?(i,u)=>u.score-i.score||u.createdAt.localeCompare(i.createdAt):(i,u)=>Nt(u,s)-Nt(i,s));const a=r.slice(0,o),c=[];if(n)for(let i=0;i<a.length;i+=10)c.push(...await v.getMany(a.slice(i,i+10).map(u=>["cvotes",u.id,n])));return e.json({ok:!0,sort:t,posts:a.map((i,u)=>({...i,myVote:c[u]?.value??0}))})}),k.post("/v1/community/posts",async e=>{const t=await e.req.json().catch(()=>null),o=typeof t?.title=="string"?t.title.trim().slice(0,200):"";if(!o)return e.json({error:{message:"title is required"}},400);const n={id:Ft("post"),user:$t(t.user),title:o,body:typeof t.body=="string"?t.body.slice(0,2e4):"",createdAt:new Date().toISOString(),up:0,down:0,score:0,comments:0};return await v.set(["cposts",n.id],n),e.json({ok:!0,post:n})}),k.get("/v1/community/posts/:id",async e=>{const t=e.req.param("id"),o=(await v.get(["cposts",t])).value;if(!o)return e.json({error:{message:"no such post"}},404);const n=[];for await(const a of v.list({prefix:["ccomments",t]},{limit:1e3}))a.value&&n.push(a.value);n.sort((a,c)=>a.createdAt.localeCompare(c.createdAt));const s=e.req.query("voter"),r=s?(await v.get(["cvotes",t,s])).value??0:0;return e.json({ok:!0,post:{...o,myVote:r},comments:n})}),k.post("/v1/community/posts/:id/vote",async e=>{const t=e.req.param("id"),o=await e.req.json().catch(()=>null),n=typeof o?.voter=="string"?o.voter.slice(0,64):"",s=Number(o?.value);if(!n||![1,0,-1].includes(s))return e.json({error:{message:"voter and value (1, 0 or -1) are required"}},400);for(let r=0;r<8;r++){const[a,c]=await v.getMany([["cposts",t],["cvotes",t,n]]);if(!a.value)return e.json({error:{message:"no such post"}},404);const i=c.value??0;if(i===s)return e.json({ok:!0,post:{...a.value,myVote:s}});const u={...a.value};u.up+=(s===1?1:0)-(i===1?1:0),u.down+=(s===-1?1:0)-(i===-1?1:0),u.score=u.up-u.down;const S=v.atomic().check(a).check(c).set(["cposts",t],u);if((await(s===0?S.delete(["cvotes",t,n]):S.set(["cvotes",t,n],s)).commit()).ok)return e.json({ok:!0,post:{...u,myVote:s}})}return e.json({error:{message:"vote contended, retry"}},409)}),k.post("/v1/community/posts/:id/comments",async e=>{const t=e.req.param("id"),o=await e.req.json().catch(()=>null),n=typeof o?.body=="string"?o.body.trim().slice(0,5e3):"";if(!n)return e.json({error:{message:"comment body is required"}},400);const s={id:Ft("cmt"),postId:t,user:$t(o.user),body:n,createdAt:new Date().toISOString()};for(let r=0;r<8;r++){const a=await v.get(["cposts",t]);if(!a.value)return e.json({error:{message:"no such post"}},404);if((await v.atomic().check(a).set(["cposts",t],{...a.value,comments:a.value.comments+1}).set(["ccomments",t,s.id],s).commit()).ok)return e.json({ok:!0,comment:s})}return e.json({error:{message:"comment contended, retry"}},409)}),k.get("/v1/community/stats",async e=>{const t=await Ot(),o=Date.now()-864e5,n=new Map,s=(i,u,S=0)=>{const b=n.get(i)??{posts:0,comments:0,messages:0,score:0};b[u]++,b.score+=S,n.set(i,b)},r=new Set;let a=0;for(const i of t){s(i.user,"posts",i.score),Date.parse(i.createdAt)>o&&r.add(i.user);for await(const u of v.list({prefix:["ccomments",i.id]},{limit:1e3}))u.value&&(a++,s(u.value.user,"comments"),Date.parse(u.value.createdAt)>o&&r.add(u.value.user))}const c={};for(const[i,u]of Rs){const S=u.filter(b=>b.user!=="System");c[i]=S.length;for(const b of S)s(b.user,"messages"),Date.parse(b.createdAt)>o&&r.add(b.user)}return e.json({ok:!0,posts:t.length,comments:a,votes:t.reduce((i,u)=>i+u.up+u.down,0),messages:Object.values(c).reduce((i,u)=>i+u,0),rooms:c,members:n.size,active_24h:r.size,top_posts:[...t].sort((i,u)=>u.score-i.score).slice(0,5).map(i=>({id:i.id,title:i.title,user:i.user,score:i.score,comments:i.comments})),top_people:[...n].map(([i,u])=>({user:i,...u})).sort((i,u)=>u.posts+u.comments+u.messages-(i.posts+i.comments+i.messages)).slice(0,10)})}),k.get("/v1/community/stream",e=>{const t=e.req.query("room")||"general";let o=null,n;const s=new ReadableStream({start(r){const a=new TextEncoder;r.enqueue(a.encode(`: connected
 
-`)),o=i=>{try{r.enqueue(a.encode(`data: ${JSON.stringify({type:"message",message:i})}
+import { type Attrs, currentSpan, getTrace, listTraces, type Span, startTrace, subscribe } from "./trace.ts";
 
-`))}catch{}};let c=Je.get(t);c||(c=new Set,Je.set(t,c)),c.add(o),n=setInterval(()=>{try{r.enqueue(a.encode(`: keepalive
 
-`))}catch{clearInterval(n)}},2e4)},cancel(){if(o){const r=Je.get(t);r&&(r.delete(o),r.size===0&&Je.delete(t))}n&&clearInterval(n)}});return new Response(s,{headers:{"Content-Type":"text/event-stream; charset=utf-8","Cache-Control":"no-cache, no-transform",Connection:"keep-alive"}})}),k.post("/v1/chat/completions",async e=>{const t=`chatcmpl-${crypto.randomUUID()}`,o=Math.floor(Date.now()/1e3),n=new Set,s=Ae("chat.completions",{},e.req.header("traceparent")),r={traceparent:s.traceparent};let a="free:auto",c=!1,i=0,u=null,S;const b=d=>({id:t,created:o,requestedModel:a,attempts:n.size,endpoints:i,lastErr:A(d),stream:c,traceId:s.traceId}),l=d=>{console.error(`[chat] exhausted all tiers (${n.size} attempts across ${i} endpoints):`,A(d)),s.end("error",{degraded:!0,attempts:n.size,error:A(d).slice(0,300)})};try{const d=await e.req.json().catch(()=>({}));s.io("request",d);const y=Lt(d.messages,d.prompt);a=String(d.model||"free:auto");const T=a.toLowerCase();c=!!d.stream;const M=Array.isArray(d.tools)?d.tools:[],O=d.tools==="auto"||d.tools===!0?"auto":d.kono_tools??e.req.header("x-kono-tools")??void 0;Ye()&&await xe().catch(R);const F=Ye()?Yo(O)?.filter(h=>h!=="agent_team"||!(Number(e.req.header("x-kono-depth")??0)>=1))??null:null,J=F?Ko(M,{names:F}):M;F&&be(e)&&(F.includes("retire_tool")||F.push("retire_tool"),J.push(...It({names:["retire_tool"],includeAdmin:!0})));const q=J.length>0,H=M.map(h=>{const m=h??{},_=m.function&&typeof m.function=="object"?m.function:m;return typeof _.name=="string"?_.name:""}).filter(Boolean);let z=F?Pt(d.kono_rounds):0;const ae=Qe(e),$=nn({messages:y,hasTools:q,toolChoice:d.tool_choice,responseFormat:d.response_format,reasoningEffort:typeof d.reasoning_effort=="string"?d.reasoning_effort:void 0}),I=(()=>{const h=[...y].reverse().find(m=>m.role==="user");return typeof h?.content=="string"?h.content:""})(),ee=Array.isArray(d.kono_tests)&&d.kono_tests.length>0,Q=$.taskClass==="math"||$.taskClass==="json"||$.taskClass==="tool"||$.taskClass==="code"&&ee;await ut().catch(R);const V=await ss().catch(()=>Pe),fe=en(V,$.taskClass,Q).map(h=>{const m=me.get(dt(h.id,$.taskClass))??ge(),_=Ge(m,as(h.id),mt());return{id:h.id,alpha:_.alpha,beta:_.beta,pulls:m.pulls}}),ie=on(fe,Math.random,{epsilon:.05,resamples:120}),xo=V.find(h=>h.id===ie?.id)??Pe[0],ye=!!(F&&z>0),ht=ye?xo:V.find(h=>h.id==="baseline")??Pe[0],yt=ye?un[ht.promptVariant]:null;yt&&y.unshift({role:"system",content:yt});const Me=ye?pn([...pe.values()],$.taskClass,2,Math.random):[];Me.length>0&&y.unshift({role:"system",content:`Lessons learned from verified failures on similar tasks:
-`+Me.map(h=>`- ${h.correction}`).join(`
-`)});const te={traceId:s.traceId,taskCtx:$,arm:ht,armPropensity:ye?ie?.propensity??1:1,tenant:ae,lessons:Me,hasVerifier:Q,planeActive:ye,compute:{mode:"single",n:1,variance:0,reason:"not yet decided"}},_t=q||a.toLowerCase().includes("tools");if(F&&z>0&&d.kono_preamble!==!1){let h;const m=F.includes("fs_read")?await Promise.race([bn({kv:v,namespace:Qe(e)}).catch(()=>null),new Promise(_=>{h=setTimeout(()=>_(null),1200)})]).finally(()=>clearTimeout(h)):null;m&&y.unshift({role:"system",content:m}),y.unshift({role:"system",content:Zo(F)})}const{hasVisionPayload:ze}=vo(y);try{i=(await Ln()).length}catch{i=jn.filter(h=>h.isConfigured()).length}const oe={temperature:typeof d.temperature=="number"?d.temperature:void 0,max_tokens:typeof d.max_tokens=="number"?d.max_tokens:typeof d.max_completion_tokens=="number"?d.max_completion_tokens:void 0,top_p:typeof d.top_p=="number"?d.top_p:void 0,reasoning_effort:typeof d.reasoning_effort=="string"?d.reasoning_effort:void 0,tools:q?J:void 0,tool_choice:d.tool_choice,parallel_tool_calls:typeof d.parallel_tool_calls=="boolean"?d.parallel_tool_calls:void 0,reasoning:d.reasoning,response_format:d.response_format};te.arm.temperatureDelta!==0&&(oe.temperature=Number(ce((oe.temperature??.7)+te.arm.temperatureDelta,0,2).toFixed(2)));const K=T.includes("auto")?Ss(y,q,oe.reasoning_effort):T.includes("fast")?"fast":T.includes("code")?"code":T.includes("reason")||T.includes("think")?"reasoning":"smart";s.set({"model.requested":a,mode:K,stream:c,messages:y.length,tools:J.length,auto_tools:F?.length??0,agent_rounds:z,parallel_tool_calls:oe.parallel_tool_calls,vision:ze,endpoints:i,task_class:$.taskClass,strategy_arm:te.arm.id,arm_propensity:te.armPropensity,lessons_injected:Me.length});const Re=async(h,m={})=>{try{return await Jt(h,!1,!1,{...m,toolAware:_t})}catch(_){return console.error(`[rank] ${h} ranking failed:`,_),[]}},So=s.child("rank",{mode:K});let G=await Re(K,{taskClass:$.taskClass,tenant:ae});G.length===0&&ze&&(G=await Jt(K,!1,ze,{toolAware:_t}).catch(()=>[])),G.length===0&&(G=await Re(K,{unrestricted:!0})),G.length===0&&(G=await zt(K).catch(()=>[]));const Mo=T.startsWith("free:")||T.startsWith("kono-image");let bt=0;if(!Mo&&G.length>1){const h=p=>p.toLowerCase().split("/").filter(Boolean).at(-1)??p.toLowerCase(),m=h(T),_=G.map((p,N)=>({cand:p,i:N,exactName:h(p.modelId)===m,sim:Math.max(He(T,p.modelId.toLowerCase()),He(T,p.tupleId.toLowerCase()),He(m,h(p.modelId)))})),D=_.filter(p=>p.exactName).map(p=>p.cand),B=_.filter(p=>!p.exactName&&p.sim>=.3).sort((p,N)=>N.sim-p.sim||p.i-N.i).map(p=>p.cand),U=_.filter(p=>!p.exactName&&p.sim<.3).map(p=>p.cand);bt=D.length+B.length,G=[...D,...B,...U]}So.end("ok",{candidates:G.length,near_matches:bt,head:G[0]?.tupleId});{const h=G[0]?re.get(G[0].tupleId):void 0,m=h?co(h,$.taskClass,ae,Date.now()):{alpha:2,beta:1};te.compute=rn({taskClass:$.taskClass,alpha:m.alpha,beta:m.beta,hasVerifier:Q,armCompute:te.arm.compute,stream:c}),s.set({compute_mode:te.compute.mode,compute_reason:te.compute.reason})}const wt=K==="reasoning"?18e5:K==="fast"?45e4:12e5,X=new AbortController;S=setTimeout(()=>X.abort(new Error(`TIMEOUT_GLOBAL: ${wt}ms`)),wt),e.req.raw.signal.addEventListener("abort",()=>X.abort(new Error("CLIENT_DISCONNECTED")),{once:!0});const Ro=h=>h.filter(m=>!n.has(m.tupleId)),Io=h=>{const m=new Set,_=[];for(const D of h)m.has(D.tupleId)||n.has(D.tupleId)||(m.add(D.tupleId),_.push(D));return _},Ao=[{label:"mode-ranked",cap:Math.round(ce(Number(Deno.env.get("MESH_RACE_TIER1_ATTEMPTS"))||12,1,500)),pool:()=>Promise.resolve(G),budgetMs:K==="fast"?15e3:K==="reasoning"?6e4:3e4},{label:"cross-lane-proven",cap:32,policy:qn,budgetMs:25e3,pool:async()=>{const h={includeCoolingDown:!0,verifiedOnly:!0},_=[K,...["fast","smart","code","reasoning"].filter(B=>B!==K)],D=[];for(const B of _)D.push(...await Re(B,h));return Io(D)}},{label:"full-catalog",cap:256,policy:On,budgetMs:25e3,pool:async()=>Ro(await Re(K,{unrestricted:!0}))},{label:"exhaustive-endpoint-sweep",cap:1e4,allowRetried:!0,policy:Nn,budgetMs:25e3,pool:async()=>{try{return await zt(K)}catch(h){return console.error("[sweep] candidate build failed:",h),[]}}}],kt=async()=>{let h=null;for(const[m,_]of Ao.entries()){let D=[];try{D=(await _.pool()).slice(0,_.cap)}catch(g){console.error(`[race] tier ${m+1} pool failed:`,g);continue}if(D.length===0)continue;const B=_.allowRetried?new Set:n,U=new AbortController,p=Fn(X.signal,U.signal),N=setTimeout(()=>U.abort(new Error(`TIER_BUDGET: ${_.label} exceeded ${_.budgetMs}ms`)),_.budgetMs),x=s.child("tier",{tier:m+1,label:_.label,candidates:D.length,budget_ms:_.budgetMs});try{const g=await $n(D,K,y,oe,p,B,_.cap,x,_.policy);if(clearTimeout(N),_.allowRetried)for(const _e of B)n.add(_e);return x.end("ok",{winner:g.cand.tupleId,attempted:B.size}),g}catch(g){if(clearTimeout(N),_.allowRetried)for(const _e of B)n.add(_e);if(h=g,u=g,x.end("error",{attempted:B.size,error:A(g).slice(0,200)}),console.warn(`[race] tier ${m+1} (${_.label}) exhausted: ${A(g)}`),X.signal.aborted)break}}throw h??new Error("All configured endpoints exhausted")},Ve=h=>({degraded:!1,requested_model:a,endpoints_available:i,attempts:n.size,routing_kernel:"asck-v1",tuple_id:h.tupleId,trace_id:s.traceId}),Be=ye&&d.kono_gate!==!1&&F?.includes("fs_write")?Math.round(ce(Number(d.kono_gate_rounds)||6,1,12)):0;let ve=0;const vt=je(e,a,d.kono_runner===!0),Eo=oe.tool_choice,Po=Be?await wn(vt).catch(()=>""):"",Ct=async(h,m)=>{if(!Be||ve>=Be||X.signal.aborted)return null;const _=await kn(vt,{startSig:Po,force:d.kono_gate==="always",tests:!(Number(e.req.header("x-kono-depth")??0)>=1),waitRuntimeMs:m,signal:X.signal}).catch(D=>(s.event("build_gate_error",{error:A(D).slice(0,200)}),null));return!_||_.done?(_&&_.summary.reason!=="unchanged"&&_.summary.reason!=="empty"&&s.event("build_gate",{pass:!0,rounds:ve}),null):(ve+=1,z=Math.max(z,Math.min(64,h+10)),H.length===0&&(oe.tool_choice=Eo),s.event("build_gate",{pass:!1,gate_round:ve,static_errors:Number(_.summary.static_errors??0),runtime_errors:Number(_.summary.runtime_errors??0)}),_)};if(!c)return await Jn((async()=>{try{let m=0,_=0,D=0,B=!1,U=null;const p=[];for(;;){let N=null;for(let E=0;E<2;E++){const{cand:P,up:C}=await kt();try{const W=await Vt(C);Ze(P.tupleId,W.ttftMs,W.totalMs,W.estTokens).catch(R),N={cand:P,res:W};break}catch(W){if(X.signal.aborted)break;u=W,s.event("generation_failed",{tuple:P.tupleId,error:A(W).slice(0,200)}),et(P.tupleId,A(W)).catch(R)}}if(!N)throw u??new Error("No endpoint completed a full generation");const{cand:x,res:g}=N;if(J.length>0){const E=tt(g.toolCalls??[],J,oe.tool_choice);U=E,E.neutral||(ot(x.tupleId,E).catch(R),s.event("tool_verdict",{tuple:x.tupleId,valid:E.valid,repaired:E.repaired,calls:E.calls,problems:E.problems.slice(0,2).join(" | ").slice(0,200)}))}if(z>0&&m<z&&(g.toolCalls?.length??0)>0&&!X.signal.aborted){const E=s.child("tool_round",{round:m+1,calls:g.toolCalls.length,tuple:x.tupleId}),P=await nt(g.toolCalls,{span:E,signal:X.signal,admin:be(e),clientNames:H,caps:je(e,a,d.kono_runner===!0)});if(P.loop){for(const C of P.executed)p.push({round:m+1,tool:C.name,ok:C.ok,ms:C.ms,repaired:C.repaired,...C.code?{code:C.code,error:C.error}:{}});E.end("ok",{executed:P.executed.length,failures:P.executed.filter(C=>!C.ok).length,tools:P.executed.map(C=>C.name).join(",").slice(0,200)}),P.messages.some(C=>C.name==="task"&&/"status"\s*:\s*"done"/.test(String(C.content)))&&(B=!0),y.push({role:"assistant",content:g.content?g.content:null,tool_calls:g.toolCalls});for(const C of P.messages)y.push(C);m+=1,m>=z&&H.length===0&&(oe.tool_choice="none"),n.delete(x.tupleId),s.event("tool_round_done",{round:m,messages:y.length});continue}E.end("ok",{executed:0,reason:"tool calls belong to the client"})}if(!g.toolCalls?.length){const E=await Ct(m,8e3);if(E){y.push({role:"assistant",content:g.content||"(continuing)"}),y.push({role:"user",content:E.message}),p.push({round:m,tool:"build_gate",ok:!1,ms:0,repaired:!1}),n.delete(x.tupleId);continue}}{const E=[{kind:"completion",value:g.content||g.toolCalls?1:.4,source:"router",weight:1}];U&&!U.neutral&&E.push({kind:"verifier_tool",value:U.valid?1:0,source:"verifier:tool_schema",weight:1.2}),B&&E.push({kind:"verifier_a2a",value:1,source:"verifier:a2a_task",weight:.8});let P=null;if($.taskClass==="math"){const C=ms(I,g.content??"");C&&(E.push({kind:"verifier_math",value:C.pass?1:0,source:"verifier:calculate",weight:1.5}),C.pass||(P={signature:Xe("verifier_math","mismatch")}))}if($.taskClass==="json"||d.response_format){const C=ps(g.content??"",d.response_format);C&&(E.push({kind:"verifier_json",value:C.pass?1:0,source:"verifier:json_schema",weight:1.5}),C.pass||(P={signature:Xe("verifier_json",C.signature||"invalid")}))}if(P&&te.planeActive&&(te.compute.mode==="verify_retry"||te.compute.mode==="best_of_n")&&_<1&&!g.toolCalls?.length){_++,D+=g.estTokens,pt($.taskClass,P.signature).catch(R),y.push({role:"assistant",content:g.content}),y.push({role:"user",content:`Independent verification failed (${P.signature}). Recompute carefully, verify the result, and answer again.`}),n.delete(x.tupleId),s.event("verify_retry",{tuple:x.tupleId,signature:P.signature});continue}P&&pt($.taskClass,P.signature).catch(R),fo({ctx:te,cand:x,ranked:G,signals:E,tokens:g.estTokens,extraTokens:D,now:Date.now()}).catch(R)}return s.io("response",{model:x.modelId,provider:x.providerId,finish:g.finish??(g.toolCalls?"tool_calls":"stop"),content:g.content,...g.reasoningContent?{reasoning_content:g.reasoningContent}:{},...g.toolCalls?{tool_calls:g.toolCalls}:{},...m>0?{tools_executed:p}:{}}),s.end("ok",{tuple:x.tupleId,provider:x.providerId,ttft_ms:g.ttftMs,total_ms:g.totalMs,attempts:n.size,finish:g.finish??(g.toolCalls?"tool_calls":"stop"),tool_calls:g.toolCalls?.length??0,tool_rounds:m,content_chars:g.content.length,reasoning_chars:g.reasoningContent?.length??0}),e.json({id:t,object:"chat.completion",created:o,model:x.modelId,provider:x.providerId,kono:{...Ve(x),...m>0?{tool_rounds:m,tools_executed:p}:{}},telemetry:{mode_selected:K,iq_effective:x.iqEffective,supports_reasoning:x.supportsReasoning,is_coding_specialist:x.isCodingSpecialist,reliability_draw:x.reliabilityDraw,tool_competence:x.toolCompetence,tool_pulls:x.toolPulls,tool_rounds:m,observed_ttft_ms:g.ttftMs,observed_total_ms:g.totalMs,ewma_tps:x.ewmaTps,attempts:n.size},choices:[{index:0,message:{role:"assistant",content:g.toolCalls&&!g.content?null:g.content,...g.reasoningContent?{reasoning_content:g.reasoningContent}:{},...g.toolCalls?{tool_calls:g.toolCalls}:{}},finish_reason:g.finish??(g.toolCalls?"tool_calls":"stop")}]},200,{...r,"Server-Timing":`ttft;dur=${g.ttftMs}, total;dur=${Math.round(s.ms)}`,"X-Kono-Attempts":String(n.size),"X-Kono-Endpoints":String(i),...m>0?{"X-Kono-Tool-Rounds":String(m)}:{}})}}finally{clearTimeout(S)}})(),async m=>(l(m),st()?e.json({error:{message:A(m)}},502):Bt(e,b(m),{})),{...r,"X-Kono-Endpoints":String(i)});const Do=async function*(){let h=!1,m=0,_=0,D=null;try{for(yield`: trace ${s.traceId}
+import { cors } from "hono/cors";
 
-`;;){const B=kt().then(f=>({v:f}),f=>({e:f}));let U;for(;;){let f;if(U=await Promise.race([B,new Promise(Y=>f=setTimeout(()=>Y(void 0),zn))]),clearTimeout(f),U)break;yield`: routing attempts=${n.size} round=${m}
 
-`}if("e"in U){l(U.e),h=!0,st()?yield`data: ${JSON.stringify({error:{message:A(U.e)}})}
+import { bodyLimit } from "hono/body-limit";
 
-data: [DONE]
 
-`:yield Vn(b(U.e));return}const{cand:p,up:N}=U.v;s.event("first_token",{tuple:p.tupleId,ttft_ms:N.ttftMs,round:m});const x=(f,Y,L={})=>`data: ${JSON.stringify({id:t,object:"chat.completion.chunk",created:o,model:p.modelId,provider:p.providerId,...L,choices:[{index:0,delta:f,finish_reason:Y}]})}
+import {
+  clamp as clampNum,
+  decorrelatedJitter,
+  discountedPosterior,
+  gumbelNoise,
+  hedgePlan,
+  kalmanObserve,
+  modelSimilarity,
+  predictiveSigma,
+  sampleBeta,
+  ucbBonus,
+  wilsonLowerBound,
+} from "./math.ts";
 
-`,g=f=>`data: ${JSON.stringify({id:t,object:"chat.completion.chunk",created:o,model:p.modelId,provider:"kono-router",kono:f,choices:[]})}
 
-`,_e=N.head.some(f=>f.toolCalls);if(z>0&&_e&&m<z&&!X.signal.aborted){let f;try{f=await Vt(N)}catch(w){if(X.signal.aborted||et(p.tupleId,A(w)).catch(R),s.event("tool_round_failed",{tuple:p.tupleId,error:A(w).slice(0,200)}),++_>=2){s.end("error",{tuple:p.tupleId,error:A(w).slice(0,300)}),yield`data: ${JSON.stringify({error:{message:A(w)}})}
+import {
+  DEFAULT_AUTO_TOOLS,
+  defaultAutoToolNames,
+  emptyToolSkill,
+  executeTool,
+  executeToolCalls,
+  isStatefulTool,
+  listTools,
+  mergeToolDeclarations,
+  normalizeToolCalls,
+  normalizeToolName,
+  observeToolSkill,
+  parseTextToolCalls,
+  resolveTool,
+  TEXT_CALL_OPENERS,
+  observeTupleToolStats,
+  parseToolArguments,
+  partitionToolCalls,
+  registerTool,
+  resolveAutoToolNames,
+  unregisterTool,
+  skillSummary,
+  toolPreamble,
+  toolResultContent,
+  toolRoutingBonus,
+  toToolSpecs,
+  tupleToolCompetence,
+  type ToolCaps,
+  type ToolContext,
+  type ToolSpec,
+  type ToolExecution,
+  type ToolFlavor,
+  type ToolSkillRecord,
+  type ToolSkillSummary,
+} from "./tools.ts";
 
-`,yield`data: [DONE]
 
-`,h=!0;return}continue}const Y=Math.max(f.ttftMs+1,Math.round(performance.now()-N.t0));if(Ze(p.tupleId,f.ttftMs,Y,f.estTokens).catch(R),J.length>0){const w=tt(f.toolCalls??[],J,oe.tool_choice);D=w,w.neutral||(ot(p.tupleId,w).catch(R),s.event("tool_verdict",{tuple:p.tupleId,valid:w.valid,repaired:w.repaired,calls:w.calls,problems:w.problems.slice(0,2).join(" | ").slice(0,200)}))}const L=s.child("tool_round",{round:m+1,calls:f.toolCalls?.length??0,tuple:p.tupleId}),j=await nt(f.toolCalls??[],{span:L,signal:X.signal,admin:be(e),clientNames:H,caps:je(e,a,d.kono_runner===!0)});if(j.loop){L.end("ok",{executed:j.executed.length,failures:j.executed.filter(w=>!w.ok).length,tools:j.executed.map(w=>w.name).join(",").slice(0,200)}),y.push({role:"assistant",content:f.content?f.content:null,tool_calls:f.toolCalls});for(const w of j.messages)y.push(w);m+=1,m>=z&&H.length===0&&(oe.tool_choice="none"),n.delete(p.tupleId),yield g({type:"tool_round",round:m,tuple:p.tupleId,trace_id:s.traceId,...f.content?{interim_content:f.content.slice(0,500)}:{},tools:j.executed.map(w=>({name:w.name,ok:w.ok,ms:w.ms,repaired:w.repaired,...w.error?{error:w.error}:{}}))});continue}L.end("ok",{executed:0,reason:"tool calls belong to the client"});const le={role:"assistant",tool_calls:f.toolCalls};f.content&&(le.content=f.content),f.reasoningContent&&(le.reasoning_content=f.reasoningContent),yield x(le,null),h=!0;const ue=f.finish??"tool_calls";s.io("response",{model:p.modelId,provider:p.providerId,finish:ue,content:f.content,tool_calls:f.toolCalls}),yield x({},ue,{kono:{...Ve(p),...m>0?{tool_rounds:m}:{}}}),s.end("ok",{tuple:p.tupleId,provider:p.providerId,ttft_ms:f.ttftMs,total_ms:Y,attempts:n.size,finish:ue,tool_calls:f.toolCalls?.length??0,tool_rounds:m,content_chars:f.content.length,reasoning_chars:f.reasoningContent?.length??0});break}let E=!0;const P=new Set,C=new Map;let W=0,Ie="",de="",Ue;const Tt=z>0&&m<z,xt=f=>{const Y={};if(f.reasoning&&(Y.reasoning_content=f.reasoning),f.content&&(Y.content=f.content),f.toolCalls){Tt||(Y.tool_calls=f.toolCalls),Bn(C,f.toolCalls);for(const L of f.toolCalls)P.add(L.index)}return W+=f.content?.trim()?f.content.length:0,Ie+=f.content??"",de+=f.reasoning??"",Ue=f.finish??Ue,Object.keys(Y).length===0?null:(E&&(Y.role="assistant"),E=!1,x(Y,null))};try{for(const L of N.head){const j=xt(L);j&&(yield j)}for await(const L of N.tail){const j=xt(L);j&&(yield j)}if(Tt&&C.size>0){const L=[...C.values()].sort((w,Lo)=>w.index-Lo.index).map(w=>({id:w.id??`call_${w.index}`,type:"function",function:{name:w.function?.name??"",arguments:w.function?.arguments??""}})),j=s.child("tool_round",{round:m+1,calls:L.length,tuple:p.tupleId,late:!0}),le=await nt(L,{span:j,signal:X.signal,admin:be(e),clientNames:H,caps:je(e,a,d.kono_runner===!0)});if(le.loop){j.end("ok",{executed:le.executed.length,failures:le.executed.filter(w=>!w.ok).length}),y.push({role:"assistant",content:Ie||null,tool_calls:L});for(const w of le.messages)y.push(w);m+=1,m>=z&&H.length===0&&(oe.tool_choice="none"),n.delete(p.tupleId),yield g({type:"tool_round",round:m,tuple:p.tupleId,trace_id:s.traceId,tools:le.executed.map(w=>({name:w.name,ok:w.ok,ms:w.ms,repaired:w.repaired,...w.error?{error:w.error}:{}}))});continue}j.end("ok",{executed:0,reason:"tool calls belong to the client"});const ue={tool_calls:L};E&&(ue.role="assistant"),E=!1,yield x(ue,null)}if(!P.size&&!X.signal.aborted){const L=await Ct(m,8e3);if(L){y.push({role:"assistant",content:Ie||de.trim()||"(continuing)"}),y.push({role:"user",content:L.message}),n.delete(p.tupleId),yield x({content:`
+import {
+  armsForClass,
+  type BanditCandidate,
+  betaMean,
+  type BetaCell,
+  calibrationBuckets,
+  chooseThompson,
+  classifyTask,
+  type ComputeDecision,
+  type ComputeMode,
+  type DecisionRecord,
+  correctionFor,
+  decideCompute,
+  DEFAULT_STRATEGY_ARMS,
+  effectivePosterior,
+  emptyCell,
+  estimateShrinkageKappa,
+  evaluateArmPolicies,
+  failureSignature,
+  fitRegretExponent,
+  gradeReward,
+  type GradedReward,
+  type Lesson,
+  observeCell,
+  posteriorLowerBound,
+  PROMPT_VARIANTS,
+  pruneCells,
+  rankLessons,
+  type RewardSignal,
+  regretCurve,
+  rewardPerExtraToken,
+  shouldPruneLesson,
+  type StrategyArm,
+  type TaskClass,
+  type TaskContext,
+  thompsonPropensity,
+} from "./learning.ts";
 
-`},null),yield g({type:"build_gate",gate_round:ve,trace_id:s.traceId,...L.summary,message:L.message.slice(0,2e3)});continue}}!W&&!P.size&&de.trim()&&(yield x({content:de.trim()},null)),h=!0;const f=Ue??(P.size?"tool_calls":"stop");s.io("response",{model:p.modelId,provider:p.providerId,finish:f,content:Ie,...de?{reasoning_content:de}:{},...C.size?{tool_calls:[...C.values()]}:{}}),yield x({},f,{kono:{...Ve(p),...m>0?{tool_rounds:m}:{}}});const Y=Math.max(N.ttftMs+1,Math.round(performance.now()-N.t0));if(Ze(p.tupleId,N.ttftMs,Y,Math.max(1,Math.ceil((W+de.length)/4))).catch(R),J.length>0&&C.size>0){const L=[...C.values()].sort((le,ue)=>le.index-ue.index),j=tt(L,J,oe.tool_choice);D=j,j.neutral||(ot(p.tupleId,j).catch(R),s.event("tool_verdict",{tuple:p.tupleId,valid:j.valid,repaired:j.repaired,calls:j.calls,problems:j.problems.slice(0,2).join(" | ").slice(0,200)}))}{const L=[{kind:"completion",value:W>0||P.size>0?1:.4,source:"router",weight:1}];D&&!D.neutral&&L.push({kind:"verifier_tool",value:D.valid?1:0,source:"verifier:tool_schema",weight:1.2}),fo({ctx:te,cand:p,ranked:G,signals:L,tokens:Math.max(1,Math.ceil((W+de.length)/4)),extraTokens:0,now:Date.now()}).catch(R)}s.end("ok",{tuple:p.tupleId,provider:p.providerId,ttft_ms:N.ttftMs,total_ms:Y,attempts:n.size,finish:f,tool_calls:P.size,tool_rounds:m,content_chars:W,reasoning_chars:de.length})}catch(f){X.signal.aborted||et(p.tupleId,A(f)).catch(R),s.end("error",{tuple:p.tupleId,error:A(f).slice(0,300),content_chars:W}),yield`data: ${JSON.stringify({error:{message:A(f)}})}
 
-`}break}yield`data: [DONE]
+import { evaluate as evaluateCalc } from "./toolbox/calc.ts";
 
-`}finally{clearTimeout(S),h||(X.abort(new Error("STREAM_CLOSED")),s.end("error",{error:"stream closed before completion"}))}};return new Response(ReadableStream.from(Un(Do(),Hn())).pipeThrough(new TextEncoderStream),{headers:{...Et,...r,"X-Kono-Endpoints":String(i)}})}catch(d){return clearTimeout(S),l(d),st()?e.json({error:{message:A(d)}},502,r):Bt(e,b(d),r)}});const Rr=new Map,Ir=new Map,Is=new Set;k.post("/v1/images/probe",ne,async e=>{const t=await Ut(),o=[];for(let n=0;n<t.length;n+=16)await Promise.all(t.slice(n,n+16).map(async s=>{try{await Ht(s.url,s.headers,s.model,"a small red circle","256x256"),await qe(s.id),o.push({id:s.id,ok:!0,blocked:!1})}catch(r){await qe(s.id,r),o.push({id:s.id,ok:!1,blocked:Is.has(s.id),error:A(r).slice(0,160)})}}));return e.json({probed:o.length,working:o.filter(n=>n.ok).map(n=>n.id),blocked:o.filter(n=>n.blocked).length,failing:o.filter(n=>!n.ok&&!n.blocked).map(n=>({id:n.id,error:n.error}))})}),k.post("/v1/images/generations",async e=>{const t=await e.req.json().catch(()=>({})),o=String(t.prompt||"").trim()||"abstract geometric composition",n=String(t.model||"kono-image"),s=Oe.find(I=>I.id===n)||Oe[0],r=`${rt(t.size).width}x${rt(t.size).height}`,a=await Ut().catch(()=>[]),c=a.find(I=>I.id===n),{width:i,height:u}=rt(t.size),S=Math.round(ce(Number(t.n||1)||1,1,4)),b=String(t.response_format||"url")==="b64_json",l=Ae("images.generations",{"model.requested":n,n:S,width:i,height:u,b64:b},e.req.header("traceparent"));l.io("request",t);const d=I=>({id:I.id,provider:"openai-images",upstreamModel:I.model,url:I.url,headers:I.headers}),y=c?d(c):Oe.find(I=>I.id===n&&I.id!=="kono-image"),T=[s,...Oe.filter(I=>I.id!==s.id)],M=y&&t.fallback!==!0?[y]:[...T.filter(I=>I.provider!=="horde"),...a.map(d),...T.filter(I=>I.provider==="horde")],O=3,J=Date.now()+15e4,q=[],H=[],z=[];let ae=0;for(let I=0;I<S;I++){let ee=null;for(let Q=0;Q<O&&!ee;Q++){for(const V of M){if(ee||Date.now()>=J)break;const fe=l.child("attempt",{backend:V.id,provider:V.provider,image:I,round:Q+1});try{if(V.provider==="horde")ee=await fe.run(()=>Kn(o,i,u));else if(V.provider==="openai-images")try{ee=await fe.run(()=>Ht(V.url,V.headers??{},V.upstreamModel,o,r)),await qe(V.id)}catch(ie){throw await qe(V.id,ie),ie}else{const ie=Math.floor(Math.random()*1e6)+I;ee=await fe.run(()=>Gn(o,i,u,V.upstreamModel,ie))}fe.end("ok",{outcome:"won"}),z.push(V.id)}catch(ie){fe.end("error",{outcome:"failed",error:A(ie).slice(0,200)}),q.push(`${V.id}: ${A(ie)}`),console.warn(`[image] ${V.id} failed (round ${Q+1}): ${A(ie)}`)}}!ee&&Q<O-1&&Date.now()<J&&await new Promise(V=>setTimeout(V,1500))}if(!ee){ae++;continue}if(b)try{if(ee.startsWith("data:"))H.push({b64_json:ee.split(",")[1]??""});else{const Q=await fetch(ee,{signal:AbortSignal.timeout(3e4)});if(!Q.ok)throw new Error(`Image fetch HTTP ${Q.status}`);H.push({b64_json:Xn(await Q.arrayBuffer())})}}catch(Q){q.push(`image-fetch: ${A(Q)}`),ae++}else H.push({url:ee})}const $=ae>0;return l.io("response",{backends:z,pending:ae,still_processing:$,errors:q,data:H.map(I=>I.url?{url:I.url.length>300?I.url.slice(0,300)+"\u2026":I.url}:{b64_json:`(${I.b64_json?.length??0} base64 chars)`})}),l.end(ae?"error":"ok",{pending:ae,images:H.length,backend_errors:q.length,providers_reviewed:M.length*O}),H.length===0?e.json({error:{message:`All ${M.length} image provider(s) were reviewed across ${O} sweep(s) and none returned an image yet; generation is still processing \u2014 retry shortly. ${q[0]??""}`,type:"server_error",code:"image_providers_busy"},kono:{still_processing:!0,requested_model:n,backends:z,providers_reviewed:M.length,sweeps:O,errors:q.slice(0,8),trace_id:l.traceId}},503,{traceparent:l.traceparent,"Server-Timing":`total;dur=${Math.round(l.ms)}`,"X-Kono-Still-Processing":"1"}):e.json({created:Math.floor(Date.now()/1e3),data:H,kono:{degraded:$,still_processing:$,pending:ae,requested_model:n,backends:z,backends_tried:q.length+H.length,errors:q.slice(0,8),trace_id:l.traceId}},200,{traceparent:l.traceparent,"Server-Timing":`total;dur=${Math.round(l.ms)}`,...$?{"X-Kono-Still-Processing":"1"}:{}})});const As=Object.assign(k,{config:{root:Deno.cwd(),basePath:"",mode:"production"},handler:()=>k.fetch,listen:e=>Deno.serve(e??{},k.fetch)});Wn();export{Is as IMAGE_BLOCKED,Rr as IMAGE_CATALOG,Ir as IMAGE_STATS,Kt as KV_PREFIX,re as L1_CACHE,Sr as NATIVE_MODEL_HINTS,xr as PROVIDER_BREAKER,vr as THINK_CLOSE,kr as THINK_OPEN,se as TOOL_SKILLS,Mr as VALID_ROLES,yr as analyzeModelCapabilities,As as app,pr as atomicUpdateModel,gr as buildRotatedHeaders,Ss as classifyPromptIntent,Rs as communityRooms,Je as communitySubscribers,co as contextualPosterior,To as extractJsonDelta,vo as extractMessageText,_s as forgeTool,k as honoApp,Wt as hydrateL1Cache,ut as hydrateLearning,at as hydrateToolSkills,v as kv,Cr as partialTagSuffix,Tr as perEndpointSyncGate,hr as pickOpenRouterKey,fr as recordToolExecution,bs as retireForgedTool,br as serviceJsonProviderList,wr as sseLineDelta,ks as timingSafeCompare,bo as toolPlaneTotals,_r as verifyCleanText};
 
-k.listen();
+import { workspaceBrief, workspaceSigFor } from "./toolbox/project.ts";
+
+
+import { buildGate, type GateVerdict } from "./toolbox/testing.ts";
+
+
+import { TEAM_ROLES } from "./toolbox/team.ts";
+
+
+import type { SubagentResult, SubagentTask } from "./toolbox/types.ts";
+
+import { L1_CACHE, kv, TOOL_SKILLS, LEARN_ARM_DEF_PREFIX, LEARNING_CELLS, ARM_CELLS, ARM_DEFS, LESSONS, FORGED_TOOLS, UNIVERSAL_MODEL_ALIAS, honoApp, FREE_TIER_DAILY, IMAGE_BLOCKED } from "./state.ts";
+
+import { L1_TTL_MS, KV_PREFIX, TOOL_SKILL_TTL_MS, SERVICE_JSON_FILE, isServiceJsonFile, NATIVE_MODEL_HINTS, checkRateLimit, timingSafeCompare, freeTierConsume, IMAGE_BLOCK_KV } from "./engine/core.ts";
+import { TOOL_SKILL_PREFIX } from "./engine/dispatch.ts";
+import { LEARN_CELL_PREFIX, LEARN_ARM_CELL_PREFIX, LESSON_PREFIX, LEARN_TTL_MS } from "./engine/learning.ts";
+import { FORGED_TOOL_PREFIX, registerForgedTool, FORGED_TTL_MS, registerMeshTools } from "./engine/mesh.ts";
+import { loadTextFile, discoverServiceJsonPath, parseServiceJsonRegistry, validateServiceJsonProvider, makeServiceJsonProvider, runCatalogSyncBody, buildProviderIdFromEndpointName, analyzeModelCapabilities, runCanaryProbeOnTopCandidates, runResurrectionProbe } from "./engine/providers.ts";
+
+import { learnCellKey, armCellKey, isEndpointConfigured } from "./util.ts";
+
+import { registerLearning } from "./routes/learning.ts";
+
+import { registerChat } from "./routes/chat.ts";
+
+import { registerTraces } from "./routes/traces.ts";
+
+import { registerPages } from "./routes/pages.ts";
+
+import { registerCatalog } from "./routes/catalog.ts";
+
+import { registerToolsRoutes } from "./routes/tools.ts";
+
+import { registerOps } from "./routes/ops.ts";
+
+import { registerCommunity } from "./routes/community.ts";
+
+import { registerImages } from "./routes/images.ts";
+
+import { registerAgentProtocols } from "./routes/agent-protocols.ts";
+
+import { registerAgentRun } from "./routes/agent-run.ts";
+
+export type { ToolRoundOutcome, ToolCallVerdict } from "./routes/chat.ts";
+
+
+
+export interface MeshModelRecord {
+  tuple_id: string;
+  provider_id: string;
+  model_id: string;
+  iq_prior: number;
+  iq_verified: number;
+  supports_reasoning: boolean;
+  supports_vision: boolean;
+  is_coding_specialist: boolean;
+  context_window: number;
+  ewma_ttft_ms: number;
+  ewma_tps: number;
+  // EW mean/variance of ln(TTFT); absent on older records (derived from ewma_ttft_ms).
+  ewma_log_ttft?: number;
+  ewmv_log_ttft?: number;
+  // Kalman posterior timestamp (epoch ms) and last real success, used for
+  // staleness inflation and discounted Thompson sampling respectively.
+  log_ttft_updated_at?: number;
+  last_success_at?: number;
+  alpha_success: number;
+  beta_failure: number;
+  success_count: number;
+  failure_streak: number;
+  cooldown_until: number;
+  last_probed: number;
+  last_error: string | null;
+  // --- Tool Plane competence (ASCK-T) -------------------------------------
+  // Beta-Bernoulli posterior over "this tuple emitted a well-formed,
+  // schema-valid tool call". Optional so pre-tool-plane KV records keep
+  // loading unchanged: absent simply means "no evidence yet", which scores 0
+  // and leaves exploration to the existing UCB term.
+  tool_alpha?: number;
+  tool_beta?: number;
+  tool_pulls?: number;
+  tool_repairs?: number;
+  tool_last_at?: number;
+}
+
+
+let l1LastHydrated = 0;
+
+
+
+let l1Refresh: Promise<Map<string, MeshModelRecord>> | null = null;
+
+
+
+// Stale-while-revalidate: a warm isolate never blocks a request on kv.list.
+export function hydrateL1Cache(force = false): Promise<Map<string, MeshModelRecord>> {
+  const refresh = () => (l1Refresh ??= refreshL1Cache(force).finally(() => (l1Refresh = null)));
+  if (force || L1_CACHE.size === 0) return refresh();
+  if (Date.now() - l1LastHydrated >= L1_TTL_MS) refresh().catch((e) => console.error("L1 refresh:", e));
+  return Promise.resolve(L1_CACHE);
+}
+
+
+
+async function refreshL1Cache(force: boolean): Promise<Map<string, MeshModelRecord>> {
+  const now = Date.now();
+  const iter = kv.list<MeshModelRecord>({ prefix: [KV_PREFIX] });
+  const fresh = new Map<string, MeshModelRecord>();
+  for await (const entry of iter) {
+    if (entry.value) {
+      fresh.set(entry.value.tuple_id, entry.value);
+    }
+  }
+  if (fresh.size > 0 || force) {
+    L1_CACHE.clear();
+    for (const [k, v] of fresh) L1_CACHE.set(k, v);
+    l1LastHydrated = now;
+  }
+  return L1_CACHE;
+}
+
+
+let toolSkillsHydratedAt = 0;
+
+
+let toolSkillRefresh: Promise<Map<string, ToolSkillRecord>> | null = null;
+
+
+
+async function refreshToolSkills(force: boolean): Promise<Map<string, ToolSkillRecord>> {
+  const now = Date.now();
+  const fresh = new Map<string, ToolSkillRecord>();
+  for await (const entry of kv.list<ToolSkillRecord>({ prefix: [TOOL_SKILL_PREFIX] })) {
+    if (entry.value?.tool) fresh.set(entry.value.tool, entry.value);
+  }
+  if (fresh.size > 0 || force) {
+    TOOL_SKILLS.clear();
+    for (const [k, v] of fresh) TOOL_SKILLS.set(k, v);
+    toolSkillsHydratedAt = now;
+  }
+  return TOOL_SKILLS;
+}
+
+
+
+/** Warm isolate never blocks a request on kv.list; a cold one hydrates once. */
+export function hydrateToolSkills(force = false): Promise<Map<string, ToolSkillRecord>> {
+  const refresh = () => (toolSkillRefresh ??= refreshToolSkills(force).finally(() => (toolSkillRefresh = null)));
+  if (force || TOOL_SKILLS.size === 0) return refresh();
+  if (Date.now() - toolSkillsHydratedAt >= TOOL_SKILL_TTL_MS) refresh().catch((e) => console.error("tool skill refresh:", e));
+  return Promise.resolve(TOOL_SKILLS);
+}
+
+
+
+export interface LearningCellRecord extends BetaCell {
+  scope: string;
+  tuple_id: string;
+  task_class: TaskClass;
+}
+
+
+export interface ArmCellRecord extends BetaCell {
+  arm_id: string;
+  task_class: TaskClass;
+}
+
+
+export interface StoredDecision extends Omit<DecisionRecord, "reward"> {
+  reward: number | null;
+  armPropensity: number;
+  tuplePropensity: number;
+  tenant: string;
+  feedbackApplied?: boolean;
+}
+
+
+let learnHydratedAt = 0;
+
+
+let learnHydratedOnce = false;
+
+
+let learnRefresh: Promise<void> | null = null;
+
+
+
+async function refreshLearning(force: boolean): Promise<void> {
+  const cells = new Map<string, LearningCellRecord>();
+  for await (const e of kv.list<LearningCellRecord>({ prefix: [LEARN_CELL_PREFIX] })) {
+    if (e.value?.tuple_id) cells.set(learnCellKey(e.value.scope, e.value.tuple_id, e.value.task_class), e.value);
+  }
+  const armCells = new Map<string, ArmCellRecord>();
+  for await (const e of kv.list<ArmCellRecord>({ prefix: [LEARN_ARM_CELL_PREFIX] })) {
+    if (e.value?.arm_id) armCells.set(armCellKey(e.value.arm_id, e.value.task_class), e.value);
+  }
+  const defs = new Map<string, StrategyArm>(DEFAULT_STRATEGY_ARMS.map((a) => [a.id, a]));
+  for await (const e of kv.list<StrategyArm>({ prefix: [LEARN_ARM_DEF_PREFIX] })) {
+    if (e.value?.id) defs.set(e.value.id, e.value);
+  }
+  const lessons = new Map<string, Lesson>();
+  for await (const e of kv.list<Lesson>({ prefix: [LESSON_PREFIX] })) {
+    if (e.value?.id) lessons.set(e.value.id, e.value);
+  }
+  if (cells.size > 0 || force) {
+    LEARNING_CELLS.clear();
+    for (const [k, v] of cells) LEARNING_CELLS.set(k, v);
+  }
+  if (armCells.size > 0 || force) {
+    ARM_CELLS.clear();
+    for (const [k, v] of armCells) ARM_CELLS.set(k, v);
+  }
+  ARM_DEFS.clear();
+  for (const [k, v] of defs) ARM_DEFS.set(k, v);
+  if (lessons.size > 0 || force) {
+    LESSONS.clear();
+    for (const [k, v] of lessons) LESSONS.set(k, v);
+  }
+  learnHydratedAt = Date.now();
+  learnHydratedOnce = true;
+}
+
+
+
+export function hydrateLearning(force = false): Promise<void> {
+  const refresh = () => (learnRefresh ??= refreshLearning(force).finally(() => (learnRefresh = null)));
+  if (force || !learnHydratedOnce) return refresh();
+  if (Date.now() - learnHydratedAt >= LEARN_TTL_MS) refresh().catch((e) => console.error("learning refresh:", e));
+  return Promise.resolve();
+}
+
+
+
+/** Empirical-Bayes strength, estimated from the pooled cells themselves. */
+let kappaCache = { at: 0, value: 8 };
+
+
+export function learningKappa(): number {
+  const now = Date.now();
+  if (now - kappaCache.at < LEARN_TTL_MS) return kappaCache.value;
+  const samples = [...LEARNING_CELLS.values()]
+    .filter((c) => c.scope === "global")
+    .map((c) => ({ successes: c.rewardSum, trials: c.pulls }));
+  kappaCache = { at: now, value: estimateShrinkageKappa(samples, 8) };
+  return kappaCache.value;
+}
+
+
+
+export interface PendingDecision {
+  traceId: string;
+  ts: number;
+  taskClass: TaskClass;
+  tupleId: string;
+  armId: string;
+  tenant: string;
+  armPropensity: number;
+  tuplePropensity: number;
+  tokens: number;
+  extraTokens: number;
+  expectedReward: number;
+  computeMode: ComputeMode;
+  lessonIds: string[];
+}
+
+
+let forgedHydratedAt = 0;
+
+
+let forgedRefresh: Promise<void> | null = null;
+
+
+export const FORGED_KINDS = new Set(["web", "files", "memory", "rag", "vector", "clipboard", "task", "compute", "data", "text", "time", "crypto", "mesh"]);
+
+
+
+export interface ForgedToolDef {
+  name: string;
+  description: string;
+  parameters: Json;
+  kind: string;
+  code: string;
+  deterministic?: boolean;
+  admin?: boolean;
+  timeout_ms?: number;
+  created_at: number;
+  updated_at: number;
+}
+
+
+
+export const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor as new (...params: string[]) => (...args: unknown[]) => Promise<unknown>;
+
+
+
+async function refreshForgedTools(): Promise<void> {
+  const fresh = new Map<string, ForgedToolDef>();
+  for await (const entry of kv.list<ForgedToolDef>({ prefix: [FORGED_TOOL_PREFIX] })) {
+    const def = entry.value;
+    if (def && typeof def.name === "string" && typeof def.code === "string") fresh.set(def.name, def);
+  }
+  for (const name of [...FORGED_TOOLS.keys()]) {
+    if (!fresh.has(name)) { FORGED_TOOLS.delete(name); unregisterTool(name); }
+  }
+  for (const def of fresh.values()) {
+    const prev = FORGED_TOOLS.get(def.name);
+    if (!prev || prev.updated_at !== def.updated_at) {
+      try { registerForgedTool(def); } catch (e) { console.error("forged tool register:", e); }
+    }
+  }
+  forgedHydratedAt = Date.now();
+}
+
+
+
+export function hydrateForgedTools(force = false): Promise<void> {
+  if (!force && forgedHydratedAt > 0 && Date.now() - forgedHydratedAt < FORGED_TTL_MS) return Promise.resolve();
+  if (!forgedRefresh) {
+    forgedRefresh = refreshForgedTools()
+      .catch((e) => console.error("forged tool refresh:", e))
+      .finally(() => { forgedRefresh = null; });
+  }
+  return forgedRefresh;
+}
+
+
+
+// ============================================================================
+// 2. SECURITY: CONSTANT-TIME AUTH, RATE LIMITER & HEADER ROTATOR
+// ============================================================================
+
+export const encoder = new TextEncoder();
+
+
+
+export const IP_BUCKETS = new Map<string, { tokens: number; lastRefill: number }>();
+
+
+// Generous but bounded: a normal client must never see a 429 from the router,
+// while a pathological flood is still contained. Tunable per deployment.
+export const MAX_BURST = clampNum(Number(Deno.env.get("NOKEY_RATE_BURST")) || 120, 5, 10_000);
+
+
+export const REFILL_PER_SEC = clampNum(Number(Deno.env.get("NOKEY_RATE_REFILL")) || 8, 0.1, 1_000);
+
+
+
+// ============================================================================
+// 4. EPISTEMIC THOMPSON SAMPLING + MULTIMODAL INTENT AUTO-CLASSIFIER
+// ============================================================================
+
+export type RoutingMode = "fast" | "smart" | "code" | "reasoning";
+
+
+
+
+export interface CompletionResult {
+  content: string;
+  reasoningContent: string | null;
+  toolCalls?: unknown[];
+  ttftMs: number;
+  totalMs: number;
+  estTokens: number;
+}
+
+
+
+export interface CompletionOptions {
+  temperature?: number;
+  max_tokens?: number;
+  top_p?: number;
+  reasoning_effort?: string;
+  tools?: unknown[];
+  tool_choice?: unknown;
+  parallel_tool_calls?: boolean;
+  reasoning?: unknown;
+  response_format?: unknown;
+}
+
+
+
+export interface ToolCallDelta {
+  index: number;
+  id?: string;
+  type?: string;
+  function?: { name?: string; arguments?: string };
+}
+
+
+
+export interface Delta {
+  content?: string;
+  reasoning?: string;
+  toolCalls?: ToolCallDelta[];
+  finish?: string;
+}
+
+
+
+// An upstream generation whose first tokens already passed the poison guard.
+export interface UpstreamStream {
+  t0: number;
+  ttftMs: number;
+  head: Delta[];
+  tail: AsyncGenerator<Delta>;
+}
+
+
+
+export interface ProviderSpec {
+  id: string;
+  name: string;
+  /** Chat completions URL, exposed for coverage reporting. */
+  chatUrl?: string;
+  /** OpenAI-standard images URL and headers, when the endpoint follows the /v1 layout. */
+  imagesUrl?: string;
+  imageHeaders?: Record<string, string>;
+  isConfigured: () => boolean;
+  discoverModels: (signal: AbortSignal) => Promise<Array<{ id: string, context?: number; }>>;
+  executeCompletion: (
+    modelId: string,
+    messages: Array<{ role: string; content: unknown }>,
+    signal: AbortSignal,
+    options?: CompletionOptions,
+  ) => Promise<UpstreamStream>;
+}
+
+
+
+export type Json = Record<string, unknown>;
+
+
+
+// ============================================================================
+// 5b. SERVICES.JSON REGISTRY DRIVEN PROVIDERS
+// ============================================================================
+
+export interface ServiceJsonEndpoint {
+  id: number;
+  name: string;
+  category: string;
+  baseUrl: string;
+  url: string;
+  modelsUrl: string | null;
+  defaultModel: string;
+  authRequired: boolean;
+  authMode: string | null;
+  authHeader: string | null;
+  notes: string | null;
+  telemetry: unknown;
+}
+
+
+
+export interface ServiceJsonRegistry {
+  registryName: string;
+  asOfDate: string;
+  totalEndpoints: number;
+  endpoints: ServiceJsonEndpoint[];
+}
+
+
+
+let SERVICE_JSON_REGISTRY: ServiceJsonRegistry | null = null;
+
+
+export let serviceJsonLoadError: string | null = null;
+
+
+
+export async function loadServiceJsonRegistry(): Promise<ServiceJsonRegistry | null> {
+  if (SERVICE_JSON_REGISTRY) return SERVICE_JSON_REGISTRY;
+
+  const body = await loadTextFile(SERVICE_JSON_FILE);
+  if (!body) {
+    const discovered = await discoverServiceJsonPath();
+    if (!discovered) {
+      serviceJsonLoadError = "services.json-not-found";
+      return null;
+    }
+    const raw = loadTextFile(discovered);
+    if (!raw) {
+      serviceJsonLoadError = "services.json-not-readable";
+      return null;
+    }
+    const parsed = parseServiceJsonRegistry(raw);
+    if (!parsed) {
+      serviceJsonLoadError = "services.json-schema-invalid";
+      return null;
+    }
+    SERVICE_JSON_REGISTRY = parsed;
+    return SERVICE_JSON_REGISTRY;
+  }
+
+  if (!isServiceJsonFile(SERVICE_JSON_FILE)) {
+    serviceJsonLoadError = "services.json-path-not-allowed";
+    return null;
+  }
+
+  const parsed = parseServiceJsonRegistry(body);
+  if (!parsed) {
+    serviceJsonLoadError = "services.json-schema-invalid";
+    return null;
+  }
+  SERVICE_JSON_REGISTRY = parsed;
+  return SERVICE_JSON_REGISTRY;
+}
+
+
+
+// ============================================================================
+// 5c. MERGE SERVICES.JSON BACKED PROVIDERS INTO THE ACTIVE PROVIDER LIST
+// ============================================================================
+
+let serviceJsonProvidersPromise: Promise<ProviderSpec[]> | null = null;
+
+
+
+export function serviceJsonProviders(): Promise<ProviderSpec[]> {
+  if (!serviceJsonProvidersPromise) {
+    serviceJsonProvidersPromise = (async () => {
+      const registry = await loadServiceJsonRegistry();
+      if (!registry) return [];
+      const specs: ProviderSpec[] = [];
+      for (const endpoint of registry.endpoints) {
+        if (!isEndpointConfigured(endpoint)) continue;
+        const validationError = validateServiceJsonProvider(endpoint);
+        if (validationError) {
+          console.warn(`service-json endpoint skipped (${endpoint.name}): ${validationError}`);
+          continue;
+        }
+        specs.push(makeServiceJsonProvider(endpoint, validationError));
+      }
+      return specs;
+    })();
+  }
+  return serviceJsonProvidersPromise;
+}
+
+
+
+// ============================================================================
+// 6. AUTO-DISCOVERY SYNC & PARETO + THOMPSON OBJECTIVE SCORER
+// ============================================================================
+
+let lastSyncCheckMemory = 0;
+
+
+
+export const perEndpointSyncGate = new Map<string, Promise<void>>();
+
+
+
+let catalogSyncInFlight = false;
+
+
+
+// Hot-path guard: a chat request must never wait out a full provider sweep
+// before its first upstream call. With a warm cache, a due sync refreshes
+// in the background and the request is served from the current catalog.
+// Only a cold start (empty cache) or an explicit admin force awaits it.
+export async function ensureCatalogSynced(force: boolean = false): Promise<void> {
+  const now = Date.now();
+  if (!force && now - lastSyncCheckMemory < 60_000 && L1_CACHE.size > 0) {
+    return;
+  }
+  lastSyncCheckMemory = now;
+  if (!force && L1_CACHE.size > 0) {
+    if (!catalogSyncInFlight) {
+      catalogSyncInFlight = true;
+      void (async () => {
+        try {
+          await runCatalogSyncBody(force);
+        } catch (err) {
+          console.error("background catalog sync failed:", err);
+        } finally {
+          catalogSyncInFlight = false;
+        }
+      })();
+    }
+    return;
+  }
+  await runCatalogSyncBody(force);
+}
+
+
+
+
+export interface ScoredCandidate {
+  tupleId: string;
+  providerId: string;
+  modelId: string;
+  iqEffective: number;
+  supportsReasoning: boolean;
+  supportsVision: boolean;
+  isCodingSpecialist: boolean;
+  contextWindow: number;
+  reliabilityDraw: number;
+  ewmaTtftMs: number;
+  ewmaTps: number;
+  logTtftMu: number;
+  logTtftSigma: number;
+  expectedFastMs: number;
+  smartScore: number;
+  /** Wilson floor on this tuple's learned ability to emit valid tool calls.
+   *  0 while unproven — no evidence is not evidence of incompetence. */
+  toolCompetence: number;
+  toolPulls: number;
+  /** ASCK-L contextual posterior mean for this request's task class. */
+  learningMean?: number;
+  learningPulls?: number;
+}
+
+
+
+export const PROVIDER_BREAKER = new Map<string, { fails: number; openUntil: number }>();
+
+
+
+export interface RankOptions {
+  includeCoolingDown?: boolean;
+  verifiedOnly?: boolean;
+  /** ASCK-L: rank with the contextual (tuple, task class) posterior. */
+  taskClass?: TaskClass;
+  tenant?: string;
+  /** Exhaustive mode: ignore breaker, tuple cooldown, vision and IQ gates. */
+  unrestricted?: boolean;
+  /** Tool-bearing request: fold each tuple's learned tool competence into the
+   *  score and rank on it even in the latency-ordered `fast` lane, because a
+   *  malformed tool call costs a whole extra round-trip. */
+  toolAware?: boolean;
+}
+
+
+
+let modelHintsCache: Map<string, string[]> | null = null;
+
+
+
+export async function providerModelHints(): Promise<Map<string, string[]>> {
+  if (modelHintsCache) return modelHintsCache;
+  const map = new Map<string, string[]>(Object.entries(NATIVE_MODEL_HINTS).map(([k, v]) => [k, [...v]]));
+  try {
+    const registry = await loadServiceJsonRegistry();
+    if (registry) {
+      for (const e of registry.endpoints) {
+        if (!isEndpointConfigured(e)) continue;
+        const id = buildProviderIdFromEndpointName(e.name);
+        const telemetry = (e.telemetry ?? {}) as Json;
+        const discovered = Array.isArray(telemetry.discoveredModels)
+          ? (telemetry.discoveredModels as unknown[]).filter((x): x is string => typeof x === "string")
+          : [];
+        // Keep the strongest-looking models first (capability parser weed-out),
+        // then fall back to the alias accepted by the widest set of relays.
+        const ranked = discovered
+          .filter((m) => analyzeModelCapabilities(m).iqPrior > 0.5)
+          .sort((a, b) => analyzeModelCapabilities(b).iqPrior - analyzeModelCapabilities(a).iqPrior)
+          .slice(0, 6);
+        const hints = [e.defaultModel?.trim(), ...ranked, UNIVERSAL_MODEL_ALIAS]
+          .filter((m): m is string => Boolean(m && m.length < 200))
+          .filter((m, i, arr) => arr.findIndex((x) => x.toLowerCase() === m.toLowerCase()) === i);
+        map.set(id, hints.length > 0 ? hints : [UNIVERSAL_MODEL_ALIAS]);
+      }
+    }
+  } catch (err) {
+    console.error("model hints build failed:", err);
+  }
+  modelHintsCache = map;
+  return map;
+}
+
+
+
+
+registerMeshTools();
+
+
+hydrateForgedTools(true).catch((e) => console.error("forged tool boot hydrate:", e));
+
+
+
+// ============================================================================
+// 8. HONO HTTP APPLICATION & FRESH 2.0 COMPATIBILITY SHIM
+// ============================================================================
+
+// ---------------------------------------------------------------------------
+// REQUEST NORMALISATION & GRACEFUL DEGRADATION
+// "Requests always work": malformed/empty payloads are normalised rather than
+// 400'd, and after the exhaustive sweep a valid OpenAI-shaped completion is
+// always returned (never 502/503). The degraded body is explicitly labelled —
+// no model output is ever fabricated.
+// ---------------------------------------------------------------------------
+
+export const VALID_ROLES = new Set(["system", "user", "assistant", "tool", "developer", "function"]);
+
+
+honoApp.use("*", cors({ origin: "*", exposeHeaders: ["traceparent", "Server-Timing", "X-Nokey-Attempts", "X-Nokey-Endpoints", "X-Nokey-Degraded", "X-Nokey-Free-Tier"] }));
+
+
+honoApp.use("*", bodyLimit({ maxSize: 512 * 1024 }));
+
+
+
+honoApp.use("/v1/*", async (c, next) => {
+  const ip = c.req.header("cf-connecting-ip") || c.req.header("x-forwarded-for")?.split(",")[0].trim() ||
+    (c.env as Deno.ServeHandlerInfo<Deno.NetAddr> | undefined)?.remoteAddr?.hostname || "anon";
+  if (!checkRateLimit(ip)) {
+    return c.json({ error: { message: "Rate limit exceeded on edge isolate" } }, 429);
+  }
+
+  const requiredKey = Deno.env.get("ROUTER_API_KEY");
+  if (requiredKey) {
+    const authHeader = c.req.header("authorization") || "";
+    const token = authHeader.startsWith("Bearer ") ? authHeader.slice(7).trim() : "";
+    if (token && timingSafeCompare(token, requiredKey)) {
+      await next();
+      return;
+    }
+    if (token) {
+      return c.json({ error: { message: "Unauthorized: Invalid ROUTER_API_KEY" } }, 401);
+    }
+    // No key at all → free tier: 50 requests/day per IP, then a 429 that
+    // explains how to go unlimited.
+    const used = await freeTierConsume(ip).catch(() => 0);
+    if (used > FREE_TIER_DAILY) {
+      return c.json({
+        error: {
+          message: "Free tier exhausted: 50 requests per day without an API key. Unlimited requests are $5/month — see /pricing or contact Michael Morton at ziggyware@gmail.com or +1-979-661-2553.",
+          type: "free_tier_exhausted",
+          limit: FREE_TIER_DAILY,
+          pricing: "/pricing",
+        },
+      }, 429);
+    }
+    c.header("X-Nokey-Free-Tier", `${FREE_TIER_DAILY - used} requests left today`);
+  }
+  await next();
+});
+
+registerTraces();
+
+registerLearning();
+
+registerPages();
+
+
+
+// Operator surfaces: static pages; every datum they show stays behind the /v1 guards.
+for (const [route, file, type] of [
+  ["/docs", "docs.html", "text/html; charset=utf-8"],
+  ["/openapi.json", "openapi.json", "application/json"],
+] as const) {
+  honoApp.get(route, (c) => {
+    const body = loadTextFile(file);
+    if (body === null) return c.text(`${file} missing from deployment`, 404);
+    return new Response(body, { headers: { "Content-Type": type, "Cache-Control": "no-cache" } });
+  });
+}
+
+registerCatalog();
+
+registerToolsRoutes();
+
+registerOps();
+
+registerAgentProtocols();
+
+registerAgentRun();
+
+
+
+// =====================================================================
+// COMMUNITY / PEOPLE CHAT — real-time peer messaging
+// =====================================================================
+export interface CommunityMessage {
+  id: string;
+  room: string;
+  user: string;
+  avatar?: string;
+  content: string;
+  createdAt: string;
+  reactions?: Record<string, number>;
+  replyTo?: { id: string; user: string; text: string };
+}
+
+registerCommunity();
+
+registerChat();
+
+
+export const IMAGE_CATALOG = new Map<string, string[]>();
+
+
+export const IMAGE_STATS = new Map<string, { ok: number; fail: number }>();
+
+
+let imageBlockHydrated = 0;
+
+
+export async function hydrateImageBlocks(): Promise<void> {
+  if (Date.now() - imageBlockHydrated < 60_000) return;
+  imageBlockHydrated = Date.now();
+  IMAGE_BLOCKED.clear();
+  for await (const e of kv.list({ prefix: [IMAGE_BLOCK_KV] })) IMAGE_BLOCKED.add(String(e.key[1]));
+}
+
+registerImages();
+
+
+
+// Fresh 2.0 (@fresh/core) compatibility shim in case Deno Deploy executes `/app/src/_fresh/server.js`
+const app = Object.assign(honoApp, {
+  config: {
+    root: Deno.cwd(),
+    basePath: "",
+    mode: "production",
+  },
+  handler: () => honoApp.fetch,
+  listen: (options?: Deno.ServeTcpOptions) => Deno.serve(options ?? {}, honoApp.fetch),
+});
+
+
+
+if (typeof Deno.cron === "function") {
+  Deno.cron("canary-probe", "*/30 * * * *", async () => {
+    await runCanaryProbeOnTopCandidates(4);
+  });
+  Deno.cron("tail-resurrection", "*/10 * * * *", async () => {
+    await runResurrectionProbe(6);
+  });
+}
+
+
+
+if (import.meta.main) {
+  Deno.serve(app.fetch);
+}
+
+
+
+export { app };
+
+
+export default {
+  fetch: app.fetch,
+};

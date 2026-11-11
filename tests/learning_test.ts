@@ -514,7 +514,7 @@ itest("a chat decision is logged with its class, and delayed feedback joins it e
     }));
     assert(res.status === 200, `chat -> ${res.status}`);
     const data = await res.json() as any;
-    assert(data.kono?.degraded !== true, "chat must complete against the mock, not degrade");
+    assert(data.nokey?.degraded !== true, "chat must complete against the mock, not degrade");
     assert(data.choices?.[0]?.message?.content === "Seventeen times three is 51.", "mock answer comes back");
 
     const decision = await waitForDecision("math", seenTraces);

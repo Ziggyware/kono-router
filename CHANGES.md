@@ -1,3 +1,46 @@
+# Agent protocols: MCP, A2A, Responses API, AG-UI multi-agent runs — 2026-11-10
+
+KONO now speaks the modern agent protocols natively, as an adapter
+layer over the existing chat and tool plane — no engine surgery. All
+execution flows through in-process dispatch (`honoApp.request`, the
+`routes/ops.ts` precedent) with the caller's identity headers
+forwarded, so auth, free-tier accounting (attributed to the real
+caller IP), session scoping, tracing, and the `x-nokey-depth`
+anti-nesting guard all apply exactly as they do on `/v1/*`. No
+self-URL, no ambient server credentials.
+
+- `POST /mcp` — MCP Streamable HTTP (protocolVersion 2025-03-26):
+  initialize, ping, tools/list (the tool plane's own admin-filtered
+  registry), tools/call. Tool failures return as `isError` content,
+  never transport errors; JSON-RPC batches are rejected (-32600);
+  notifications never execute.
+- `POST /a2a` + `GET /.well-known/agent-card.json` — A2A agent card
+  (public discovery; push notifications honestly declared off) and
+  JSON-RPC tasks: message/send, message/stream, tasks/get,
+  tasks/cancel, tasks/resubscribe. Tasks persist in KV for 24h,
+  owner-hashed — a foreign task id returns TaskNotFound (-32001),
+  no existence leak. Terminal states are sticky; cancel aborts the
+  in-flight call. Degraded upstreams produce a *failed* task, never
+  a degradation notice dressed as an answer.
+- `POST /v1/responses` — OpenAI Responses adapter: string or item
+  input, instructions, streaming (response.created /
+  output_text.delta / completed / failed), and a
+  `previous_response_id` chain persisted in KV for 24h.
+- `POST /v1/agent/run` — bounded multi-agent orchestration: plan
+  (≤4 subtasks) → parallel workers → verify (one retry) →
+  synthesize, ≤11 internal chat calls worst case. With
+  `stream: true` it speaks AG-UI: RUN_STARTED, STEP_STARTED,
+  TOOL_CALL_START/RESULT, TEXT_MESSAGE_CONTENT, exactly one
+  terminal RUN_FINISHED or RUN_ERROR.
+- `openapi.json` documents all six new operations (lockstep test
+  enforced) under a new `agents` tag.
+
+Suite: 156 passed, 0 failed. Live boot probes verified in the
+sandbox with real completions: agent card, MCP initialize /
+tools/list / tools/call (get_time), A2A message/send completing via
+cohere/north-mini-code:free, Responses completing, and a full
+streamed agent run ending in RUN_FINISHED.
+
 # Fix: chat leaked raw `<Function ...>` markup instead of calling tools — 2026-11-06
 
 The text-format tool-call lifter only recognized the Hermes/Qwen
@@ -54,19 +97,19 @@ apply and persist, zero errors.
   3. Failing tests.
   4. With a browser test runner present, whether any test run has passed against the current files.
 
-  The first unmet condition goes back to the agent as a `[build gate]` user turn with located findings, and the round budget is extended. This happens up to `kono_gate_rounds` times (default 6). Streams emit a `build_gate` status frame, which the chat shows as "build gate N: … — continuing". Sub-agents are held to static and runtime cleanliness only. `kono_gate: false` opts out; `"always"` (used by **fix errors →**) checks even when nothing changed.
+  The first unmet condition goes back to the agent as a `[build gate]` user turn with located findings, and the round budget is extended. This happens up to `nokey_gate_rounds` times (default 6). Streams emit a `build_gate` status frame, which the chat shows as "build gate N: … — continuing". Sub-agents are held to static and runtime cleanliness only. `nokey_gate: false` opts out; `"always"` (used by **fix errors →**) checks even when nothing changed.
 - **`app_test`: open the app and test it.** Tests run in the user's browser, in a fresh hidden sandboxed copy of the preview per case, so the visible preview is untouched. The router queues a job; the dashboard takes it while a reply streams (or every ~4 s with the workspace open) and posts the results back.
   - **UI cases** live in `*.test.json` files. Their steps are `click`, `dblclick`, `type` (works with React-controlled inputs), `press` (Enter submits forms), `select`, `check`, `wait`, `wait_for` and `expect` (text, equals, count, visible, value, exists; retried for up to 2 s), plus `eval`.
   - **Unit tests** live in `*.test.js|ts|jsx|tsx` files and use `test`/`it`/`describe`, `expect` (toBe, toEqual, toContain, toThrow, …) and `assert`.
   - **Failure reports** give the step, the message and the page text and HTML at that moment. Any uncaught error fails the case.
 
-  The last result is part of the workspace brief. Requests declare a runner with `kono_runner`; without one, `app_test` answers `no_runner` within seconds rather than hanging.
+  The last result is part of the workspace brief. Requests declare a runner with `nokey_runner`; without one, `app_test` answers `no_runner` within seconds rather than hanging.
 - **`agent_team`: multi-agent work.** Up to 4 sub-agents run concurrently, each a full tool-using agent loop through the router, in the caller's session (shared workspace, sha-guarded edits) and with the caller's credentials. Roles are builder, tester, reviewer, debugger and researcher, and each comes with its own instructions. Each agent's report returns with its tool log. Teams are one level deep: sub-agents never see `agent_team`.
 - **Everywhere.** `app_test` and `agent_team` are in the default tool set. The tool preamble asks for tests of the requested behaviour and for parallel work through teams. App Builder workspace modes plan builders, a tester and a reviewer and end in debug → test → fix. The editing discipline ends with "a build is finished only when it is clean and its tests pass".
 
 # Keepalives: no response goes silent — 2026-11-05
 
-- **Streams.** Streams send `: keepalive` comments whenever nothing has been sent for `KONO_IDLE_MS` (default 15 s). That covers quiet upstreams and long server-side tool rounds.
+- **Streams.** Streams send `: keepalive` comments whenever nothing has been sent for `NOKEY_IDLE_MS` (default 15 s). That covers quiet upstreams and long server-side tool rounds.
 - **Buffered completions.** A buffered completion still running after that window commits its 200 and sends whitespace (valid before JSON) until the body is ready.
 - **Fix.** `GET /v1/community/posts?voter=…` failed once there were more than 10 posts, because Deno KV's `getMany` reads at most 10 keys. It now batches.
 
@@ -117,7 +160,7 @@ The server-side loop runs ReAct: one sequential LLM round trip per tool step. Th
 A named backend fell through silently to Pollinations on any failure, and
 picking AI Horde still put Pollinations ahead of it. A specifically chosen
 backend now runs alone. If it fails, the response is the honest placeholder
-with the backend's error, and the Media view shows that error. `kono-image`
+with the backend's error, and the Media view shows that error. `nokey-image`
 (the default), an unknown id, or `fallback: true` still walk the whole chain.
 Discovered backends that answer 401/402/403 are marked as needing a key for
 24 h (shared through KV) and drop out of the list and the chain. The new
@@ -550,7 +593,7 @@ a **capability toolbox** — and gives the plane state.
   so nothing below it touches a global, and every module is unit-testable with a
   memory store and a stub fetcher. `registerToolbox(register, api)` is the only
   join point; `main.ts` passes Deno KV and the guard-wrapped fetch.
-- Stateful tools are namespaced per tenant: `x-kono-session` / `x-session-id`,
+- Stateful tools are namespaced per tenant: `x-nokey-session` / `x-session-id`,
   falling back to `shared`. `/v1/tools` now publishes that contract under
   `session`.
 
@@ -565,7 +608,7 @@ a **capability toolbox** — and gives the plane state.
 - **RAG** (`rag_index`/`search`/`collections`): content-addressed chunks with
   duplicate skipping, BM25 + dense fusion, char budget, citations.
 - **Embeddings** (`embed`): deterministic 384-d feature hash, int8 compression,
-  optional neural upgrade via `KONO_EMBED_URL` (no key required by default).
+  optional neural upgrade via `NOKEY_EMBED_URL` (no key required by default).
 - **Web** (`web_search`/`web_fetch`/`http_request`): keyless multi-engine search
   fused with RRF, readability extraction to Markdown, SSRF guard, response cache.
 - **Clipboard** (versioned slots with undo/TTL), **task** (durable plan board),
@@ -595,7 +638,7 @@ a **capability toolbox** — and gives the plane state.
 ## Tests
 `tests/tools_test.ts` (23 suites) covers the kernel and every capability with a
 stubbed transport; `tests/tool_plane_test.ts` (25 tests) now pins ASCK-T v2:
-plane string, engine `kono-sovereign-v6-asck2-toolbox`, the 24-tool roster, the
+plane string, engine `nokey-sovereign-v6-asck2-toolbox`, the 24-tool roster, the
 new verbs in the agent-loop scripts, and `session.namespace`.
 
 # Tool Plane (ASCK-T v1) — 2026-11-04
@@ -664,23 +707,23 @@ compounds across requests instead of being rebuilt per call.
   state to any model, so "which lane should I use?" is answered with evidence
   instead of a guess.
 - `/health` gains a `tool_plane` block and `current_best_tools`; `/v1/models`
-  gains the `free:tools` lane. Engine id → `kono-sovereign-v6-asck1-toolplane`.
+  gains the `free:tools` lane. Engine id → `nokey-sovereign-v6-asck1-toolplane`.
 
 ## Chat integration: an opt-in agent loop
-- `"tools": "auto"` (or `kono_tools`, or `x-kono-tools`) attaches the plane's
-  built-ins; `kono_tools: "all"` attaches every non-admin tool, and an explicit
+- `"tools": "auto"` (or `nokey_tools`, or `x-nokey-tools`) attaches the plane's
+  built-ins; `nokey_tools: "all"` attaches every non-admin tool, and an explicit
   list attaches exactly those. Client declarations are merged first and **shadow
   same-named built-ins** — the plane never hijacks a caller's own API.
 - When the router supplied the tools it also runs the loop: execute the calls,
   append the protocol-correct `assistant` + `tool` turns, keep the winning tuple
-  selectable, and re-dispatch — up to `KONO_TOOL_ROUNDS` (default 3, clamped
+  selectable, and re-dispatch — up to `NOKEY_TOOL_ROUNDS` (default 3, clamped
   0–8; 0 is pure passthrough). A round is executed only when *every* call in it
   is a built-in, so a mixed parallel batch is handed back whole.
 - Streaming drains a tool round quietly (`collectUpstream`), emits a status
-  frame with `choices: []` and `kono.type: "tool_round"`, then streams the real
+  frame with `choices: []` and `nokey.type: "tool_round"`, then streams the real
   answer. Assistant content is never fabricated, and with the loop off the byte
   stream is exactly what it was before.
-- A one-line preamble (`toolPreamble`, opt out with `kono_preamble: false`)
+- A one-line preamble (`toolPreamble`, opt out with `nokey_preamble: false`)
   tells small free models the router will execute their calls — measurably the
   difference between a tool call and a guess.
 
@@ -707,7 +750,7 @@ compounds across requests instead of being rebuilt per call.
   the repair ladder can be watched working), and a copy button for the wire
   declarations in any of the four vendor formats.
 - Chat gains a **router tools** toggle (sends `"tools": "auto"`, or
-  `kono_tools: true` alongside client tools) and shows tool rounds: live
+  `nokey_tools: true` alongside client tools) and shows tool rounds: live
   "tool round N · name" while streaming, and "N tool rounds · tools" in the
   message footer. Status frames with empty `choices` are handled explicitly.
 
@@ -775,7 +818,7 @@ and keyboard shortcut still works.
 - hono 4.6.14 -> 4.13.16, @opentelemetry/api 1.9.0 -> 1.10.0 (`deno.json`).
 - Scalar reference restyled to the new palette (still 1.76.4, unchanged API).
 
-# Kono Router update — 2026-10-27
+# Nokey Router update — 2026-10-27
 
 Base: GitHub main @ 9aa0877 (the services.json build). Deploy = redeploy the
 Deno project with this main.ts; a push alone does not deploy.
@@ -810,9 +853,9 @@ and Pollinations both answered direct test calls), but every lane returned
 POST /v1/images/generations  { model, prompt, size, n, response_format }
 -> { created, data: [{ url }] } or [{ b64_json }] with response_format=b64_json.
 Models (also listed by GET /v1/models):
-- kono-image       Pollinations turbo (fast) — primary
-- kono-image-flux  Pollinations flux (quality, slower)
-- kono-image-horde AI Horde stable_diffusion (anonymous key)
+- nokey-image       Pollinations turbo (fast) — primary
+- nokey-image-flux  Pollinations flux (quality, slower)
+- nokey-image-horde AI Horde stable_diffusion (anonymous key)
 Pollinations failures fall back to the Horde automatically.
 NOTE: the image endpoint calls the Pollinations image API directly; it does
 not depend on the removed native text spec.
@@ -824,7 +867,7 @@ to the Inspector tab. Video option marked unavailable (no keyless provider).
 
 ## Verified locally against this exact build (with services.json present)
 - deno check clean
-- GET /v1/models lists kono-image, kono-image-flux, kono-image-horde
+- GET /v1/models lists nokey-image, nokey-image-flux, nokey-image-horde
 - POST /v1/chat/completions with a realistic request -> 200 in ~3s (Kilo);
   canary probe passes; registry loads (334 catalog entries) and registry
   tuples appear in rankings again
@@ -900,7 +943,7 @@ inside a fixed-height app shell (h-screen flex column) -- the bar never
 scrolls, and the chat composer is pinned: only the message list scrolls.
 Self-hiding panels: the connection bar and the chat Routing Parameters
 panel collapse via toggles (state persists; params auto-hide on small
-screens). New Plugins tab: a real registry (KonoPlugins.register) with
+screens). New Plugins tab: a real registry (NokeyPlugins.register) with
 four working built-ins (Lane Probe, Catalog Sync, Model Ping, Image
 QuickGen) plus an Install panel that mounts Architect-generated plugin
 code live. New Admin tab: locked until the existing Admin Secret is
@@ -1099,15 +1142,15 @@ HTML/error-page bodies; tool-call delta indexing is preserved for SSE.
 - Malformed/empty bodies are normalised (including `prompt`-only payloads)
   instead of 400ing; no more 502/503 from `/v1/chat/completions`.
 - After the full sweep, a **valid 200 OpenAI-shaped completion is returned**
-  (JSON or SSE) with `kono.degraded: true`, `X-Kono-Degraded: 1` and an
+  (JSON or SSE) with `nokey.degraded: true`, `X-Nokey-Degraded: 1` and an
   honest explanation that no model output was fabricated. Set
-  `KONO_STRICT_ERRORS=1` to restore legacy 502 while debugging.
+  `NOKEY_STRICT_ERRORS=1` to restore legacy 502 while debugging.
 - `/v1/images/generations` tries all three image backends for ANY model id,
   validates that the returned body is really an image, and falls back to a
   locally generated labelled SVG placeholder (also for `b64_json`) instead
   of 502. Missing prompt uses a benign default.
-- Rate limiter is now generous and tunable (`KONO_RATE_BURST`=120,
-  `KONO_RATE_REFILL`=8/s), so normal clients never get a 429.
+- Rate limiter is now generous and tunable (`NOKEY_RATE_BURST`=120,
+  `NOKEY_RATE_REFILL`=8/s), so normal clients never get a 429.
 
 ### New: observability
 - `GET /v1/endpoints` — every configured endpoint, its URL, catalog tuple
@@ -1115,8 +1158,8 @@ HTML/error-page bodies; tool-call delta indexing is preserved for SSE.
 - `GET /health` — coverage, the active control kernel, guaranteed-response
   policy, and the registry load diagnostic.
 - `GET /v1/models` — `accepts_any_model: true`.
-- Successful responses carry `kono` metadata and `X-Kono-Attempts` /
-  `X-Kono-Endpoints` headers.
+- Successful responses carry `nokey` metadata and `X-Nokey-Attempts` /
+  `X-Nokey-Endpoints` headers.
 - Dashboard: connection toast shows endpoint coverage; degraded chat replies
   get an explicit amber banner; Architect prompt/tool docs updated (and
   `math.ts` added to the `/v1/source` allowlist).
@@ -1143,7 +1186,7 @@ Removed dead resolver/admissibility helpers, `toDelta` (superseded by
 ### Deployment note
 As before, a push alone does not deploy — redeploy the Deno project with this
 `main.ts` + the new `math.ts` + `services.json` present. New optional env:
-`KONO_STRICT_ERRORS`, `KONO_RATE_BURST`, `KONO_RATE_REFILL`,
+`NOKEY_STRICT_ERRORS`, `NOKEY_RATE_BURST`, `NOKEY_RATE_REFILL`,
 `MESH_SWEEP_MODELS_PER_ENDPOINT` (existing `MESH_RACE_TIER1_ATTEMPTS` kept).
 
 ## Addendum 10 — 2026-11-04 (model picker grouped by provider)
