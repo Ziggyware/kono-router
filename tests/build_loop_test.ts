@@ -100,3 +100,22 @@ Deno.test("agent_team: runs sub-agents concurrently, reports each, and never nes
   const nested = await executeTool("agent_team", { agents: [{ role: "builder", task: "build something here" }] }, { caps });
   assert(!nested.ok && /cannot start their own teams/.test(nested.error), nested.ok ? "ok" : nested.error);
 });
+
+Deno.test("app_runner take long-polls: a job queued mid-wait is handed out, an empty wait returns null", async () => {
+  const caps = ns("bt_longpoll");
+  await run("fs_write", { path: "index.html", content: "<p>hi</p>" }, caps);
+  // Start a long-polling take, then queue a job while it is held.
+  const takePromise = run("app_runner", { op: "take", wait_ms: 8000 }, caps, true);
+  await new Promise((r) => setTimeout(r, 600));
+  const pending = run("app_test", { steps: [{ expect: "p", text: "hi" }], timeout_ms: 8000 }, caps);
+  const taken = await takePromise;
+  assert(taken.job && taken.job.cases.length === 1, `long-poll should receive the queued job: ${JSON.stringify(taken).slice(0, 200)}`);
+  await run("app_runner", { op: "done", id: taken.job.id, result: { results: [{ name: "inline", kind: "ui", ok: true }] } }, caps, true);
+  const r = await pending;
+  assert(r.status === "ran" && r.ok, JSON.stringify(r).slice(0, 200));
+  // An empty long-poll waits roughly wait_ms, then returns null (not instantly).
+  const t0 = performance.now();
+  const empty = await run("app_runner", { op: "take", wait_ms: 1200 }, caps, true);
+  const elapsed = performance.now() - t0;
+  assert(empty.job === null && elapsed >= 1000 && elapsed < 5000, `empty long-poll elapsed ${Math.round(elapsed)}ms`);
+});

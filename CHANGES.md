@@ -1,5 +1,14 @@
 # Speed: forged-tool hydration no longer blocks requests — 2026-11-12
 
+## 2026-11-12 — Dashboard polling fix: long-poll runner, quiet watch, clean telemetry
+
+Live-log report: the dashboard was POSTing /v1/tools/execute every ~1.7 s forever (app_runner takes + fs_list refreshes), flooding the request log and tool telemetry. Three fixes:
+- app_runner take now long-polls: new wait_ms parameter (≤25 s) holds server-side, re-checking the job queue every 750 ms, and returns the moment a job appears (tool timeout raised 6 s → 30 s to fit). The dashboard takes with wait_ms 20000 and re-takes ~4 s after an empty hold — idle polling drops from ~40 calls/min to ~2/min, and a queued job still wakes the held call within a second.
+- The workspace watch (fs_list) keeps its 2.5 s cadence only while a reply streams; idle it refreshes every 12 s and never while the tab is hidden.
+- app_runner executions no longer record skill telemetry in runTracedTool — it is internal housekeeping, not a model-chosen tool, and its polls were drowning the signal the router learns from.
+- Tests: build_loop suite 6/0 incl. a long-poll round-trip (job queued mid-wait is handed out; empty wait returns null after ~wait_ms).
+
+
 ## 2026-11-12 — Functionality pass: smarter tool use + bench-reset retry
 
 - Per-request call guard (routes/chat-dispatch.ts): an exact repeat of a call that already failed — with no successful stateful call since — is no longer re-executed; the model gets an escalated REPEATED_CALL error. Successful calls to `deterministic` tools replay their first result until a stateful call changes the world; identical calls in one round execute once. The third failure of a tool in a request appends a router note with its measured top failure mode. Replays/blocked repeats never double-count skill telemetry.
