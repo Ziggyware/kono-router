@@ -171,3 +171,24 @@ Deno.test("kill switch + champion floor: pickVariant honors both", async () => {
   Deno.env.delete("KONO_SPECIATION_CHAMPION_FLOOR");
   await retireForgedTool(name);
 });
+
+Deno.test("specialize shape: eligibility follows the sampled arg patterns", async () => {
+  const { specializeShape, specializeVariant } = await import("../engine/speciation.ts");
+  const lin = (arg_patterns: Record<string, number>) => ({
+    name: "spec_probe", champion: "spec_probe@0-x", variants: [], pinned: false, arg_patterns, updated_at: 0,
+  });
+  assert(specializeShape(lin({})) === null, "no samples → ineligible");
+  assert(specializeShape(lin({ "a": 30 })) === null, "one shape only → nothing to specialize against");
+  assert(specializeShape(lin({ "a": 10, "a,b": 9 })) === null, "under 20 samples → ineligible");
+  assert(specializeShape(lin({ "a": 12, "a,b": 11, "a,b,c": 2 })) === null, "no dominant shape → ineligible");
+  const dom = specializeShape(lin({ "a,b": 30, "a": 10, "a,b,c": 5 }));
+  assert(dom !== null && dom.shape === "a,b" && dom.keys.join(",") === "a,b" && dom.share > 0.6, `dominant shape ${JSON.stringify(dom)}`);
+  // Ineligible lineage → the operator itself is a no-op (no model call).
+  const parent = {
+    name: "spec_probe", variant_id: "spec_probe@0-x", parent_id: null, generation: 0,
+    operator: "original", origin: "forge", status: "champion", description: "d",
+    parameters: { type: "object", properties: {} }, code: "return 1;", kind: "compute",
+    deterministic: true, admin: false, probes: [], created_at: 0, updated_at: 0,
+  } as unknown as ToolVariantDef;
+  assert(await specializeVariant(parent, lin({ "a": 3 })) === null, "specialize no-ops without a dominant shape");
+});

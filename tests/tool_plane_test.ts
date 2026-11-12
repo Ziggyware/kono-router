@@ -1281,3 +1281,73 @@ test("agent_team runs sub-agents through the router in the caller's session, one
     restoreMock();
   }
 });
+
+// ---------------------------------------------------------------------------
+// Per-request call guard: identical-call memory in executeOwnedToolCalls.
+// ---------------------------------------------------------------------------
+
+test("call guard: identical failures blocked, deterministic results replayed, world changes invalidate", async () => {
+  const { executeOwnedToolCalls } = await import("../routes/chat-dispatch.ts");
+  let detRuns = 0;
+  let failRuns = 0;
+  registerTool({
+    name: "guard_det",
+    kind: "compute",
+    deterministic: true,
+    description: "test-only deterministic tool",
+    parameters: { type: "object", properties: { x: { type: "number" } }, additionalProperties: false },
+    run: (args: any) => { detRuns++; return { n: detRuns, x: args.x }; },
+  });
+  registerTool({
+    name: "guard_fail",
+    kind: "compute",
+    description: "test-only always-failing tool",
+    parameters: { type: "object", properties: { x: { type: "number" } }, additionalProperties: false },
+    run: () => { failRuns++; throw new Error("guard boom"); },
+  });
+  registerTool({
+    name: "fs_guard_touch",
+    kind: "compute",
+    description: "test-only stateful tool (fs_ prefix makes it stateful)",
+    parameters: { type: "object", properties: {}, additionalProperties: false },
+    run: () => ({ touched: true }),
+  });
+  try {
+    const ac = new AbortController();
+    const call = (id: string, name: string, args: unknown) => ({ id, name, arguments: args });
+
+    // Identical failure: executed once, then blocked without re-executing.
+    const r1 = await executeOwnedToolCalls([call("a1", "guard_fail", { x: 1 })], { signal: ac.signal });
+    if (r1.executed[0]?.ok !== false || (failRuns as number) !== 1) throw new Error(`first failure ${JSON.stringify(r1.executed)} runs=${failRuns}`);
+    const r2 = await executeOwnedToolCalls([call("a2", "guard_fail", { x: 1 })], { signal: ac.signal });
+    if ((failRuns as number) !== 1) throw new Error(`identical failure re-executed (runs=${failRuns})`);
+    if (!String(r2.messages[0]?.content).includes("REPEATED_CALL")) throw new Error(`repeat not escalated: ${String(r2.messages[0]?.content).slice(0, 160)}`);
+    // Different arguments execute again.
+    await executeOwnedToolCalls([call("a3", "guard_fail", { x: 2 })], { signal: ac.signal });
+    if ((failRuns as number) !== 2) throw new Error(`changed args should execute (runs=${failRuns})`);
+    // A successful stateful call changes the world: the blocked call may retry.
+    await executeOwnedToolCalls([call("a4", "fs_guard_touch", {})], { signal: ac.signal });
+    await executeOwnedToolCalls([call("a5", "guard_fail", { x: 1 })], { signal: ac.signal });
+    if ((failRuns as number) !== 3) throw new Error(`world change should unblock the retry (runs=${failRuns})`);
+
+    // Deterministic twins in one round execute once; a later round replays.
+    const ac2 = new AbortController();
+    const d1 = await executeOwnedToolCalls([call("b1", "guard_det", { x: 7 }), call("b2", "guard_det", { x: 7 })], { signal: ac2.signal });
+    if ((detRuns as number) !== 1) throw new Error(`twins executed ${detRuns} times`);
+    if (d1.messages[0]?.content !== d1.messages[1]?.content) throw new Error("twin results differ");
+    const d2 = await executeOwnedToolCalls([call("b3", "guard_det", { x: 7 })], { signal: ac2.signal });
+    if ((detRuns as number) !== 1) throw new Error(`deterministic repeat re-executed (runs=${detRuns})`);
+    if (d2.messages[0]?.content !== d1.messages[0]?.content) throw new Error("replay content differs");
+
+    // Third distinct failure of one tool in a request earns the router note.
+    const ac3 = new AbortController();
+    await executeOwnedToolCalls([call("c1", "guard_fail", { x: 11 })], { signal: ac3.signal });
+    await executeOwnedToolCalls([call("c2", "guard_fail", { x: 12 })], { signal: ac3.signal });
+    const third = await executeOwnedToolCalls([call("c3", "guard_fail", { x: 13 })], { signal: ac3.signal });
+    if (!String(third.messages[0]?.content).includes("[router]")) throw new Error(`no escalation note on third failure: ${String(third.messages[0]?.content).slice(0, 200)}`);
+  } finally {
+    unregisterTool("guard_det");
+    unregisterTool("guard_fail");
+    unregisterTool("fs_guard_touch");
+  }
+});

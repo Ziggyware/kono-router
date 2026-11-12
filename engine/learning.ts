@@ -4,7 +4,7 @@ import { emptyCell, effectivePosterior, betaMean, observeCell, shouldPruneLesson
 import type { TaskClass, Lesson, GradedReward } from "../learning.ts";
 import { LEARNING_CELLS, TENANT_EVIDENCE_MIN, kv, ARM_CELLS, LESSONS, MAX_LEARN_CELLS } from "../state.ts";
 import { learnCellKey, tupleGlobalPosterior, armCellKey, logErr } from "../util.ts";
-import { learningKappa, PROVIDER_BREAKER } from "../main.ts";
+import { learningKappa, PROVIDER_BREAKER, hydrateL1Cache } from "../main.ts";
 import type { MeshModelRecord, LearningCellRecord, ArmCellRecord, PendingDecision } from "../main.ts";
 import { executeTool } from "../tools.ts";
 import { kalmanObserve, clamp as clampNum, decorrelatedJitter } from "../math.ts";
@@ -276,6 +276,30 @@ export async function recordTupleSuccess(
 
 
 
+
+/** Un-bench everything: clear every tuple cooldown that is still in the
+ *  future (plus its failure streak) and drop every open provider breaker.
+ *  Returns how many benches were actually lifted, so callers can tell a
+ *  rate-limit wall (benches existed) from a genuinely empty catalog
+ *  (nothing to reset — retrying would be pointless). */
+export async function resetBenchedEndpoints(now = Date.now()): Promise<number> {
+  let lifted = 0;
+  const records = await hydrateL1Cache().catch(() => null);
+  if (records) {
+    const jobs: Array<Promise<void>> = [];
+    for (const rec of records.values()) {
+      if (rec.cooldown_until > now) {
+        lifted++;
+        jobs.push(atomicUpdateModel(rec.tuple_id, (r) => ({ ...r, cooldown_until: 0, failure_streak: 0 })).catch(() => undefined));
+      }
+    }
+    await Promise.all(jobs);
+  }
+  for (const [pid, st] of [...PROVIDER_BREAKER]) {
+    if (st.openUntil > now || st.fails > 0) { PROVIDER_BREAKER.delete(pid); lifted++; }
+  }
+  return lifted;
+}
 
 export async function recordTupleFailure(tupleId: string, errMsg: string): Promise<void> {
   const now = Date.now();

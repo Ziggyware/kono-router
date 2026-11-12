@@ -874,6 +874,11 @@ export function toolResultContent(execution: ToolExecution): string {
     code: execution.code,
     ...(execution.suggestions?.length ? { did_you_mean: execution.suggestions.map((s) => s.name) } : {}),
     ...(execution.issues?.length ? { issues: execution.issues.slice(0, 8).map((i) => `${i.path || "/"} ${i.message}`) } : {}),
+    // Tell the model what the repair ladder already fixed, so its next attempt
+    // targets what is actually still wrong instead of re-breaking the rest.
+    ...(execution.code === "INVALID_ARGUMENTS" && execution.repairs?.length
+      ? { already_auto_fixed: execution.repairs.slice(0, 8) }
+      : {}),
   });
 }
 
@@ -1289,6 +1294,54 @@ export const DEFAULT_AUTO_TOOLS = [
 export function defaultAutoToolNames(): string[] {
   const forged = listTools().filter((t) => t.dynamic && !t.admin).map((t) => t.name);
   return [...new Set([...DEFAULT_AUTO_TOOLS, ...forged])];
+}
+
+
+
+/** Per-class focus sets for intent-shaped exposure. A bare `tools:"auto"`
+ *  request historically shipped all ~30 schemas (~7.5K tokens) on every
+ *  attempt of every round, whatever the ask — pure choice overload for a
+ *  chat or qa request. Classes whose work is genuinely tool-centric (code,
+ *  tool) keep the full set; the rest get the subset their class can use.
+ *  Forged (dynamic) tools always ride along: a tool the user created is
+ *  intentional, and the speciation population must stay reachable.
+ *
+ *  Every subset keeps the plane's defining core — workspace files, build
+ *  checks, delegation. The class is a one-prompt guess ("build a sum app"
+ *  classifies as creative, "plan it with a team" as chat), and stripping
+ *  the fs tools or agent_team on a misjudged guess breaks the flows the system exists
+ *  for; the savings that matter come from dropping the long tail
+ *  (clipboard, embed, rag admin, crypto, http) where it cannot apply. */
+const TOOL_PLANE_CORE = [
+  "fs_read", "fs_write", "fs_patch", "fs_list", "fs_grep", "ws_check",
+  "app_debug", "app_test", "agent_team", "task",
+];
+const CLASS_TOOL_FOCUS: Record<string, string[]> = {
+  chat: [...TOOL_PLANE_CORE, "calculate", "time", "text", "data", "web_search", "web_fetch", "memory_search", "memory_recall"],
+  qa: [...TOOL_PLANE_CORE, "calculate", "time", "text", "data", "web_search", "web_fetch", "http_request", "rag_search", "memory_search", "memory_recall"],
+  math: [...TOOL_PLANE_CORE, "calculate", "data", "text", "time", "crypto"],
+  json: [...TOOL_PLANE_CORE, "data", "text", "calculate", "http_request", "web_fetch", "time"],
+  reasoning: [...TOOL_PLANE_CORE, "calculate", "text", "data", "web_search", "web_fetch", "memory_recall", "time"],
+  summarize: [...TOOL_PLANE_CORE, "text", "web_fetch", "web_search", "memory_recall", "memory_search", "calculate", "time"],
+  longform: [...TOOL_PLANE_CORE, "text", "memory_recall", "memory_search", "web_search", "calculate", "time"],
+  creative: [...TOOL_PLANE_CORE, "text", "memory_recall", "memory_search", "web_search", "calculate", "time"],
+  multilingual: [...TOOL_PLANE_CORE, "text", "web_search", "web_fetch", "calculate", "time"],
+  vision: [...TOOL_PLANE_CORE, "text", "data", "calculate", "time"],
+};
+
+/** Shape a resolved auto set for a task class. `code` keeps the full set;
+ *  `tool` keeps it and gains the mesh introspection tools, which the
+ *  default set never exposed despite their model-facing descriptions. */
+export function autoToolsForClass(taskClass: string, all: string[]): string[] {
+  if (taskClass === "tool") {
+    const extra = ["router_catalog", "router_capabilities"].filter((n) => getTool(n) && !all.includes(n));
+    return [...all, ...extra];
+  }
+  const focus = CLASS_TOOL_FOCUS[taskClass];
+  if (!focus) return all;
+  const keep = new Set(focus);
+  const dynamic = new Set(listTools().filter((t) => t.dynamic && !t.admin).map((t) => t.name));
+  return all.filter((n) => keep.has(n) || dynamic.has(n));
 }
 
 

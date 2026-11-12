@@ -27,6 +27,7 @@ import {
   partitionToolCalls,
   registerTool,
   repairJsonText,
+  autoToolsForClass,
   resolveAutoToolNames,
   resolveTool,
   skillSummary,
@@ -781,4 +782,33 @@ Deno.test("fs_move: renames files and directories, honours aliases and overwrite
   await run("fs_write", { path: "b.txt", content: "b" }, { namespace: ns });
   fail(await executeTool("fs_move", { from: "lib/x.ts", to: "b.txt" }, { caps: { namespace: ns } }));
   assert((await run("fs_move", { from: "lib/x.ts", to: "b.txt", overwrite: true }, { namespace: ns })).moved === 1, "overwrite");
+});
+
+Deno.test("autoToolsForClass: intent-shaped exposure keeps focus + forged tools", () => {
+  const full = [...DEFAULT_AUTO_TOOLS];
+  const chat = autoToolsForClass("chat", full);
+  assert(chat.includes("calculate") && chat.includes("web_search"), `chat keeps its focus ${chat.join(",")}`);
+  assert(chat.includes("fs_patch") && chat.includes("agent_team") && chat.includes("app_debug"), `the plane core always rides ${chat.join(",")}`);
+  assert(!chat.includes("embed") && !chat.includes("clipboard") && !chat.includes("rag_index") && !chat.includes("crypto"), `chat sheds the long tail ${chat.join(",")}`);
+  assert(chat.length < full.length, `chat subset is smaller (${chat.length}/${full.length})`);
+  const math = autoToolsForClass("math", full);
+  assert(math.includes("calculate") && math.includes("crypto") && math.includes("fs_read"), `math focus ${math.join(",")}`);
+  assert(autoToolsForClass("code", full).length === full.length, "code keeps the full set");
+  assert(autoToolsForClass("nonsense-class", full).length === full.length, "unknown class keeps the full set");
+  // Forged (dynamic) tools ride along in every subset.
+  registerTool({
+    name: "shape_probe_dynamic",
+    kind: "compute",
+    dynamic: true,
+    deterministic: true,
+    description: "test-only dynamic tool",
+    parameters: { type: "object", properties: {}, additionalProperties: false },
+    run: () => ({ ok: true }),
+  });
+  try {
+    const withDyn = autoToolsForClass("chat", [...full, "shape_probe_dynamic"]);
+    assert(withDyn.includes("shape_probe_dynamic"), "dynamic tools ride along in subsets");
+  } finally {
+    unregisterTool("shape_probe_dynamic");
+  }
 });
