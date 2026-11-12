@@ -1,5 +1,16 @@
 # Speed: forged-tool hydration no longer blocks requests — 2026-11-12
 
+## 2026-11-12 — Functionality pass: smarter tool use + bench-reset retry
+
+- Per-request call guard (routes/chat-dispatch.ts): an exact repeat of a call that already failed — with no successful stateful call since — is no longer re-executed; the model gets an escalated REPEATED_CALL error. Successful calls to `deterministic` tools replay their first result until a stateful call changes the world; identical calls in one round execute once. The third failure of a tool in a request appends a router note with its measured top failure mode. Replays/blocked repeats never double-count skill telemetry.
+- INVALID_ARGUMENTS feedback now includes `already_auto_fixed` — the repairs the ladder already applied — so the model's next attempt targets what is actually still wrong.
+- Tool-verdict lessons wired: invalid verdicts (undeclared tool / schema damage) now write the learning-loop lessons whose correction texts existed but could never be written; the lesson injector can finally surface tool discipline per task class.
+- Intent-shaped tool exposure: a bare `tools:"auto"` request now ships the subset its task class can use (chat/qa/math/json/etc.) instead of all ~30 schemas (~7.5K tokens) on every attempt; forged tools always ride along; explicit lists, "all", and builder requests are untouched; the `tool` class also gains router_catalog/router_capabilities.
+- Speciation `specialize` operator implemented: when sampled arg-key patterns (≥20 samples, ≥2 shapes) show a dominant shape (≥50%), the mutator builds a fast-path variant for that shape under the same probe gauntlet; one specialize variant per lineage at a time.
+- Bench-reset retry (routes/chat.ts + engine/learning.ts): when dispatch dies on a rate-limit wall (every endpoint 429'd onto the bench), the router now lifts every bench (tuple cooldowns + provider breakers via resetBenchedEndpoints), waits, and re-runs the full tier race — up to 10 retries at 1s, 5s, then doubling to a 60s cap. Non-429 failures with nothing benched still throw immediately; the client abort cancels the wait.
+- Tests: 177 passed / 0 failed (call guard, specialize eligibility, autoToolsForClass, resetBenchedEndpoints).
+
+
 `hydrateForgedTools` was the last hydrator still returning its refresh
 promise to callers when the TTL expired — and the chat route awaits it on
 every request. Every ~30 s, one chat request therefore waited out a full

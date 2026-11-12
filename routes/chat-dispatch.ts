@@ -3,7 +3,7 @@
 // tool-call execution and grading, and the degraded-answer path.
 // (Verbatim code motion from chat.ts — no behavior change.)
 
-import { parseToolArguments, partitionToolCalls, executeToolCalls, toolResultContent, normalizeToolCalls, listTools, observeTupleToolStats } from "../tools.ts";
+import { parseToolArguments, partitionToolCalls, executeToolCalls, toolResultContent, normalizeToolCalls, listTools, observeTupleToolStats, isStatefulTool, skillSummary } from "../tools.ts";
 import type { ToolCaps, ToolExecution } from "../tools.ts";
 import type { Span } from "../trace.ts";
 import { hedgePlan } from "../math.ts";
@@ -12,7 +12,8 @@ import { hydrateToolSkills } from "../main.ts";
 import type { ScoredCandidate, Json, RoutingMode, UpstreamStream, CompletionOptions } from "../main.ts";
 import { TOOL_SKILLS, SSE_HEADERS } from "../state.ts";
 import { logErr, errText, traceAttrs } from "../util.ts";
-import { recordTupleFailure } from "../engine/learning.ts";
+import { recordTupleFailure, writeLesson } from "../engine/learning.ts";
+import { failureSignature } from "../learning.ts";
 import { resolveProviderById } from "../engine/providers.ts";
 import { recordToolExecution } from "../engine/dispatch.ts";
 import { atomicUpdateModel } from "../engine/core.ts";
@@ -265,6 +266,49 @@ export interface ToolRoundOutcome {
 
 /** Execute a completion's tool calls when — and only when — the plane owns all
  *  of them. Client-declared tools are handed straight back to the caller. */
+// ---------------------------------------------------------------------------
+// Per-request call guard: identical-call memory for one agent request, keyed
+// by the request's AbortSignal (WeakMap — the state dies with the request).
+// Three rules make the loop smarter without changing any tool's contract:
+//  1. An exact repeat of a call that already FAILED, with no successful
+//     stateful call since (the world has not changed), is not executed again
+//     — the model gets an escalated REPEATED_CALL error instead of burning a
+//     round on a guaranteed-identical failure.
+//  2. An exact repeat of a SUCCESSFUL call to a tool declared `deterministic`
+//     replays the first result, until a stateful call succeeds and may have
+//     changed the world. Replays never double-count skill telemetry.
+//  3. Identical calls inside one round execute once; the twins share the
+//     outcome. And the third failure of the same tool in one request appends
+//     a router note carrying that tool's measured historical failure mode.
+// ---------------------------------------------------------------------------
+
+interface GuardEntry { ok: boolean; world: number; content?: string; error?: string; code?: string }
+interface CallGuard { world: number; seen: Map<string, GuardEntry>; toolFailures: Map<string, number> }
+const CALL_GUARDS = new WeakMap<object, CallGuard>();
+
+function guardFor(signal?: AbortSignal): CallGuard {
+  if (!signal) return { world: 0, seen: new Map(), toolFailures: new Map() };
+  let g = CALL_GUARDS.get(signal);
+  if (!g) { g = { world: 0, seen: new Map(), toolFailures: new Map() }; CALL_GUARDS.set(signal, g); }
+  return g;
+}
+
+function stableArgsKey(value: unknown): string {
+  if (typeof value === "string") return value;
+  if (value === null || typeof value !== "object") return JSON.stringify(value) ?? "null";
+  if (Array.isArray(value)) return `[${value.map(stableArgsKey).join(",")}]`;
+  const obj = value as Record<string, unknown>;
+  return `{${Object.keys(obj).sort().map((k) => `${JSON.stringify(k)}:${stableArgsKey(obj[k])}`).join(",")}}`;
+}
+
+/** Canonical per-call key: JSON argument strings are parsed first, so the
+ *  same call emitted with different key order still keys identically. */
+function callKeyFor(name: string, args: unknown): string {
+  let a = args;
+  if (typeof args === "string") { try { a = JSON.parse(args); } catch { /* keep the raw string */ } }
+  return `${name}\n${stableArgsKey(a)}`;
+}
+
 export async function executeOwnedToolCalls(
   calls: unknown[],
   opts: { span?: Span; admin?: boolean; signal?: AbortSignal; now?: number; clientNames?: string[]; caps?: ToolCaps } = {},
@@ -272,29 +316,98 @@ export async function executeOwnedToolCalls(
   const { mine } = partitionToolCalls(calls, { clientNames: opts.clientNames });
   if (mine.length === 0) return { loop: false, messages: [], executed: [] };
 
+  const guard = guardFor(opts.signal);
   const skills = await hydrateToolSkills().catch(() => TOOL_SKILLS);
   const locals: Json = { tool_skills: Object.fromEntries([...skills.entries()]) as Json };
-  const results = await executeToolCalls(
-    mine.map((call) => ({ id: call.id, name: call.resolved ?? call.name, arguments: call.arguments })),
-    {
-      admin: opts.admin ?? false,
-      caps: opts.caps,
-      locals,
-      signal: opts.signal,
-      now: opts.now,
-      event: (name, attrs) => opts.span?.event(name, traceAttrs(attrs ?? {})),
-    },
-  );
+  const specs = new Map(listTools().map((t) => [t.name, t]));
 
+  type NormCall = (typeof mine)[number];
+  type Plan =
+    | { kind: "run"; call: NormCall }
+    | { kind: "replay"; call: NormCall; content: string }
+    | { kind: "blocked"; call: NormCall; entry: GuardEntry }
+    | { kind: "twin"; call: NormCall; of: string };
+  const plans: Plan[] = [];
+  const toRun: NormCall[] = [];
+  const roundKeys = new Map<string, string>();
+  for (const call of mine) {
+    const name = call.resolved ?? call.name;
+    const key = callKeyFor(name, call.arguments);
+    const twinOf = roundKeys.get(key);
+    if (twinOf !== undefined) { plans.push({ kind: "twin", call, of: twinOf }); continue; }
+    const prev = guard.seen.get(key);
+    if (prev && prev.world === guard.world) {
+      if (!prev.ok) { plans.push({ kind: "blocked", call, entry: prev }); continue; }
+      if (specs.get(name)?.deterministic && prev.content !== undefined) { plans.push({ kind: "replay", call, content: prev.content }); continue; }
+    }
+    roundKeys.set(key, call.id);
+    plans.push({ kind: "run", call });
+    toRun.push(call);
+  }
+
+  const results = toRun.length > 0
+    ? await executeToolCalls(
+      toRun.map((call) => ({ id: call.id, name: call.resolved ?? call.name, arguments: call.arguments })),
+      {
+        admin: opts.admin ?? false,
+        caps: opts.caps,
+        locals,
+        signal: opts.signal,
+        now: opts.now,
+        event: (name, attrs) => opts.span?.event(name, traceAttrs(attrs ?? {})),
+      },
+    )
+    : [];
   const byId = new Map(results.map((r) => [r.id, r]));
+
   const messages: Array<{ role: string; content: unknown } & Json> = [];
   const executed: ToolRoundOutcome["executed"] = [];
-  for (const call of mine) {
+  const contentById = new Map<string, string>();
+  for (const plan of plans) {
+    const call = plan.call;
+    const name = call.resolved ?? call.name;
+    if (plan.kind === "replay") {
+      messages.push({ role: "tool", tool_call_id: call.id, name: call.name, content: plan.content });
+      contentById.set(call.id, plan.content);
+      executed.push({ id: call.id, name, ok: true, ms: 0, repaired: false });
+      continue;
+    }
+    if (plan.kind === "blocked") {
+      const content = JSON.stringify({
+        error: `This exact ${name} call already failed in this request (${plan.entry.code ?? "error"}: ${plan.entry.error ?? "unknown error"}). Nothing has changed since, so running it again would fail identically. Change the arguments, fix the cause first, or use a different approach.`,
+        code: "REPEATED_CALL",
+      });
+      messages.push({ role: "tool", tool_call_id: call.id, name: call.name, content });
+      contentById.set(call.id, content);
+      executed.push({ id: call.id, name, ok: false, ms: 0, repaired: false, error: "identical call already failed in this request", code: "REPEATED_CALL" });
+      continue;
+    }
+    if (plan.kind === "twin") {
+      const content = contentById.get(plan.of) ?? JSON.stringify({ error: "tool execution was skipped" });
+      messages.push({ role: "tool", tool_call_id: call.id, name: call.name, content });
+      const src = executed.find((e) => e.id === plan.of);
+      executed.push({ id: call.id, name, ok: src?.ok ?? false, ms: 0, repaired: src?.repaired ?? false, ...(src && !src.ok ? { error: src.error, code: src.code } : {}) });
+      continue;
+    }
     const result = byId.get(call.id);
     const execution: ToolExecution | undefined = result?.execution;
-    const content = execution ? toolResultContent(execution) : JSON.stringify({ error: "tool execution was skipped" });
-    messages.push({ role: "tool", tool_call_id: call.id, name: call.name, content });
+    let content = execution ? toolResultContent(execution) : JSON.stringify({ error: "tool execution was skipped" });
     if (execution) {
+      const key = callKeyFor(name, call.arguments);
+      if (execution.ok) {
+        guard.seen.set(key, { ok: true, world: guard.world, content });
+        if (isStatefulTool(name)) guard.world++; // the world may have changed: cached entries go stale
+      } else {
+        guard.seen.set(key, { ok: false, world: guard.world, error: execution.error.slice(0, 200), code: execution.code });
+        const fails = (guard.toolFailures.get(name) ?? 0) + 1;
+        guard.toolFailures.set(name, fails);
+        if (fails === 3) {
+          const rec = skills.get(name);
+          const summary = rec ? skillSummary(rec, Date.now()) : null;
+          const top = summary?.top_errors?.[0];
+          content += `\n[router] ${name} has failed 3 times in this request.${top ? ` Its most common measured failure is ${top.code} (×${top.count})${summary?.last_error ? ` — last: ${summary.last_error.slice(0, 120)}` : ""}.` : ""} Stop retrying the same approach: change the arguments materially, pick a different tool, or state the blocker.`;
+        }
+      }
       executed.push({
         id: call.id,
         name: execution.tool ?? call.name,
@@ -306,6 +419,8 @@ export async function executeOwnedToolCalls(
       // Skill memory compounds in the background; a KV hiccup never fails a request.
       recordToolExecution(execution.tool ?? call.name, execution).catch(logErr);
     }
+    messages.push({ role: "tool", tool_call_id: call.id, name: call.name, content });
+    contentById.set(call.id, content);
   }
   return { loop: true, messages, executed };
 }
@@ -377,6 +492,23 @@ export async function learnToolVerdict(tupleId: string, verdict: ToolCallVerdict
   } catch (err) {
     console.error("[tools] tuple competence update failed:", err);
   }
+}
+
+/** Turn an invalid tool verdict into learning-loop lessons. The correction
+ *  texts for these signatures have existed in the lesson table since the
+ *  loop was built, but nothing ever wrote them — so the lesson injector
+ *  could never surface tool discipline. Now a model that invents a tool or
+ *  mangles a schema teaches the class-level lesson the injector already
+ *  knows how to deliver. Fire-and-forget, like every learning write. */
+export function toolVerdictLessons(verdict: ToolCallVerdict, taskClass: Parameters<typeof writeLesson>[0]): void {
+  if (verdict.neutral || verdict.valid) return;
+  const sigs = new Set<string>();
+  for (const p of verdict.problems.slice(0, 3)) {
+    sigs.add(p.includes("not a declared tool")
+      ? failureSignature("tool_not_declared")
+      : failureSignature("tool_invalid_schema"));
+  }
+  for (const sig of sigs) writeLesson(taskClass, sig).catch(logErr);
 }
 
 

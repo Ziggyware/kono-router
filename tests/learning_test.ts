@@ -549,3 +549,29 @@ itest("a chat decision is logged with its class, and delayed feedback joins it e
     globalThis.fetch = realFetch;
   }
 }));
+
+Deno.test("resetBenchedEndpoints lifts cooldowns and reports the count", async () => {
+  const { kv } = await import("../state.ts");
+  const { KV_PREFIX } = await import("../engine/core.ts");
+  const { resetBenchedEndpoints } = await import("../engine/learning.ts");
+  const { hydrateL1Cache } = await import("../main.ts");
+  const id = "bench_reset_probe:provider:model";
+  await kv.set([KV_PREFIX, id], { tuple_id: id, cooldown_until: Date.now() + 600_000, failure_streak: 3 } as any);
+  await hydrateL1Cache(true);
+  try {
+    const lifted = await resetBenchedEndpoints();
+    if (lifted < 1) throw new Error(`expected at least one bench lifted, got ${lifted}`);
+    const after = await kv.get<any>([KV_PREFIX, id]);
+    if (!after.value || after.value.cooldown_until !== 0 || after.value.failure_streak !== 0) {
+      throw new Error(`bench not cleared: ${JSON.stringify(after.value)}`);
+    }
+    // Nothing left benched for this probe: a second reset must not count it again.
+    const again = await resetBenchedEndpoints();
+    const after2 = await kv.get<any>([KV_PREFIX, id]);
+    if (!after2.value || after2.value.cooldown_until !== 0) throw new Error("bench reappeared");
+    void again;
+  } finally {
+    await kv.delete([KV_PREFIX, id]);
+    await hydrateL1Cache(true);
+  }
+});

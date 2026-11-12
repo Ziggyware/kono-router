@@ -566,6 +566,53 @@ export function hardenVariant(parent: ToolVariantDef): ToolVariantDef | null {
   return baseVariant(parent, "harden", { code });
 }
 
+/** The specialize operator's fuel, made legible: the dominant argument shape
+ *  of a lineage, when the sampled patterns prove one shape dominates. Pure —
+ *  eligibility is ≥20 samples, ≥2 distinct shapes, dominant share ≥50%. */
+export function specializeShape(lin: ToolLineage): { shape: string; keys: string[]; share: number; total: number } | null {
+  const patterns = lin.arg_patterns ?? {};
+  const entries = Object.entries(patterns);
+  const total = entries.reduce((a, [, n]) => a + n, 0);
+  if (total < 20 || entries.length < 2) return null;
+  entries.sort((a, b) => b[1] - a[1]);
+  const [shape, count] = entries[0];
+  const share = count / total;
+  if (share < 0.5) return null;
+  return { shape, keys: shape ? shape.split(",") : [], share, total };
+}
+
+/** specialize: a model rewrites the body around the *measured* dominant
+ *  argument shape — a direct fast path for the shape most callers actually
+ *  send, with the original logic preserved for every other shape. The probe
+ *  gauntlet still decides admission, so a "specialization" that changes
+ *  behavior for any probed input never leaves shadow. */
+export async function specializeVariant(parent: ToolVariantDef, lin: ToolLineage): Promise<ToolVariantDef | null> {
+  const dom = specializeShape(lin);
+  if (!dom) return null;
+  const prompt = [
+    `Tool: ${parent.name}`,
+    `Description: ${parent.description}`,
+    `Parameters schema: ${JSON.stringify(parent.parameters).slice(0, 1500)}`,
+    `Measured argument shapes (sorted key names, values never recorded): ${JSON.stringify(lin.arg_patterns ?? {}).slice(0, 800)}`,
+    `Dominant shape: keys [${dom.keys.join(", ")}] account for ${Math.round(dom.share * 100)}% of ${dom.total} sampled calls.`,
+    "Produce a specialized variant: when the incoming args carry exactly the dominant key set, take a direct minimal path (precomputed lookups, no generic branching); for ANY other key set, fall back to logic equivalent to the current body. Behavior and return shape must be identical for every input — only the common path gets faster/simpler.",
+    "Current body:",
+    parent.code,
+  ].join("\n");
+  const raw = await mutateWithModel(prompt);
+  if (!raw) return null;
+  const parsed = extractJsonObject(raw);
+  if (!parsed || typeof parsed.code !== "string" || !parsed.code.trim()) return null;
+  const probes = Array.isArray(parsed.probes)
+    ? (parsed.probes as Json[]).filter((p) => p && typeof p === "object" && "args" in p && "expect" in p).slice(0, 6) as unknown as ProbeCase[]
+    : [];
+  return baseVariant(parent, "specialize", {
+    code: String(parsed.code),
+    description: typeof parsed.description === "string" && parsed.description.trim() ? String(parsed.description).slice(0, 1024) : parent.description,
+    probes: probes.length ? probes : parent.probes,
+  });
+}
+
 /** param: mutate the non-code genome. Timeout follows the measured latency:
  *  a champion whose p95 crowds its deadline gets headroom; one with slack
  *  gets tightened so failures surface faster. Description untouched here —
@@ -885,6 +932,13 @@ export async function runEvolutionCycle(opts: { toolName?: string; budget?: numb
     let candidate: ToolVariantDef | null = null;
     if (transientish) candidate = hardenVariant(champ);
     if (!candidate && champ.probes.length > 0) candidate = paramVariant(champ);
+    // specialize rides the arg-pattern telemetry: when one argument shape
+    // dominates and no specialize variant is already in play, aim the
+    // mutator at that shape before spending it on a generic rewrite.
+    if (!candidate && specializeShape(lin) &&
+      !lin.variants.some((id) => { const v = VARIANTS.get(id); return v && v.operator === "specialize" && v.status !== "retired"; })) {
+      candidate = await specializeVariant(champ, lin);
+    }
     if (!candidate) candidate = await rewriteVariant(champ);
     if (!candidate) { report.actions.push(`${name}: no candidate produced (mutator unavailable or operator no-op)`); continue; }
     const result = await admitVariant(candidate);

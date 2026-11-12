@@ -5,7 +5,7 @@
 
 import { classifyTask, DEFAULT_STRATEGY_ARMS, armsForClass, emptyCell, effectivePosterior, chooseThompson, PROMPT_VARIANTS, rankLessons, decideCompute, failureSignature } from "../learning.ts";
 import type { RewardSignal, BanditCandidate } from "../learning.ts";
-import { resolveAutoToolNames, mergeToolDeclarations, toToolSpecs, toolPreamble } from "../tools.ts";
+import { resolveAutoToolNames, autoToolsForClass, mergeToolDeclarations, toToolSpecs, toolPreamble } from "../tools.ts";
 import { startTrace } from "../trace.ts";
 import { clamp as clampNum, modelSimilarity } from "../math.ts";
 import { workspaceBrief, workspaceSigFor } from "../toolbox/project.ts";
@@ -15,12 +15,12 @@ import { hydrateLearning, hydrateForgedTools, learningKappa } from "../main.ts";
 import type { ScoredCandidate, Json, RoutingMode, CompletionOptions, RankOptions, CompletionResult, ToolCallDelta, Delta } from "../main.ts";
 import { ARM_CELLS, kv, L1_CACHE, SSE_HEADERS, honoApp, LESSONS } from "../state.ts";
 import { logErr, errText, toolPlaneEnabled, maxToolRounds, toolNamespace, armCellKey, extractMessageText, classifyPromptIntent, strictErrors, mergeToolCalls } from "../util.ts";
-import { contextualPosterior, recordTupleFailure, recordTupleSuccess, writeLesson } from "../engine/learning.ts";
+import { contextualPosterior, recordTupleFailure, recordTupleSuccess, writeLesson, resetBenchedEndpoints } from "../engine/learning.ts";
 import { activeProviderList, PROVIDERS, getRankedCandidates, allSweepCandidates } from "../engine/providers.ts";
 import { normalizeMessages, isAdminContext, toolCaps, collectUpstream } from "../engine/dispatch.ts";
 import { loadStrategyArms, armGlobalPosterior, finalizeLearning, verifyMathAnswer, verifyJsonAnswer } from "./chat-learning.ts";
 import type { LearnCtx } from "./chat-learning.ts";
-import { ESCALATION_POLICY, WIDE_POLICY, SWEEP_POLICY, combineSignals, hedgedDispatch, executeOwnedToolCalls, gradeToolCalls, learnToolVerdict, degradedSse, degradedCompletion } from "./chat-dispatch.ts";
+import { ESCALATION_POLICY, WIDE_POLICY, SWEEP_POLICY, combineSignals, hedgedDispatch, executeOwnedToolCalls, gradeToolCalls, learnToolVerdict, toolVerdictLessons, degradedSse, degradedCompletion } from "./chat-dispatch.ts";
 import type { HedgePolicy, Dispatched, ToolCallVerdict, DegradedOpts } from "./chat-dispatch.ts";
 export type { ToolRoundOutcome, ToolCallVerdict } from "./chat-dispatch.ts";
 
@@ -158,7 +158,22 @@ honoApp.post("/v1/chat/completions", async (c) => {
     if (builder && autoRequest === undefined && clientTools.length === 0) autoRequest = "auto";
     if (toolPlaneEnabled()) await hydrateForgedTools().catch(logErr);
     // Sub-agents (x-nokey-depth ≥ 1) get every tool but agent_team: teams do not nest.
-    const autoTools = toolPlaneEnabled() ? resolveAutoToolNames(autoRequest)?.filter((n) => n !== "agent_team" || !(Number(c.req.header("x-nokey-depth") ?? 0) >= 1)) ?? null : null;
+    let autoTools = toolPlaneEnabled() ? resolveAutoToolNames(autoRequest)?.filter((n) => n !== "agent_team" || !(Number(c.req.header("x-nokey-depth") ?? 0) >= 1)) ?? null : null;
+    // Intent-shaped exposure: a bare "auto" request gets the tool subset its
+    // task class can actually use, not all ~30 schemas on every attempt.
+    // Explicit name lists, "all", and builder requests keep exactly what
+    // they asked for. The canonical taskCtx below still governs learning
+    // and ranking; this early classification only shapes the wire set.
+    if (autoTools && !builder && (autoRequest === "auto" || autoRequest === true || autoRequest === "*")) {
+      const earlyCtx = classifyTask({
+        messages,
+        hasTools: true,
+        toolChoice: body.tool_choice,
+        responseFormat: body.response_format,
+        reasoningEffort: typeof body.reasoning_effort === "string" ? body.reasoning_effort : undefined,
+      });
+      autoTools = autoToolsForClass(earlyCtx.taskClass, autoTools);
+    }
     const declaredTools = autoTools ? mergeToolDeclarations(clientTools, { names: autoTools }) : clientTools;
     // forge_tool rides the normal auto set; retire_tool stays admin-only,
     // so admin sessions get it appended on the wire (the merge drops admin
@@ -470,7 +485,7 @@ honoApp.post("/v1/chat/completions", async (c) => {
     // (tool round, gate round, verify retry) is tried on the winning model
     // first instead of merely keeping it eligible somewhere in the pool.
     let stickyTupleId: string | null = null;
-    const dispatch = async (): Promise<Dispatched> => {
+    const dispatchOnce = async (): Promise<Dispatched> => {
       let err: unknown = null;
       for (const [i, tier] of tiers.entries()) {
         let candidates: ScoredCandidate[] = [];
@@ -519,6 +534,38 @@ honoApp.post("/v1/chat/completions", async (c) => {
         }
       }
       throw err ?? new Error("All configured endpoints exhausted");
+    };
+
+    // Bench-reset retry: when every endpoint has rate-limited (429) its way
+    // onto the bench, erroring out wastes a wall that usually clears in
+    // seconds. Instead: lift every bench, wait, and run the full tier race
+    // again — up to 10 times, waiting 1s, then 5s, then doubling to a 60s
+    // cap. A failure with nothing benched and no 429 in sight is a real
+    // failure and throws immediately; the client's abort cancels the wait.
+    const BENCH_RESET_WAITS_MS = [1_000, 5_000, 10_000, 20_000, 40_000, 60_000, 60_000, 60_000, 60_000, 60_000];
+    const dispatch = async (): Promise<Dispatched> => {
+      for (let attempt = 0; ; attempt++) {
+        try {
+          return await dispatchOnce();
+        } catch (e) {
+          if (master.signal.aborted || attempt >= BENCH_RESET_WAITS_MS.length) throw e;
+          const text = errText(e);
+          const rateLimited = /429|rate.?limit|too many requests/i.test(text);
+          const lifted = rateLimited || /exhausted/i.test(text)
+            ? await resetBenchedEndpoints().catch(() => 0)
+            : 0;
+          if (!rateLimited && lifted === 0) throw e;
+          const waitMs = BENCH_RESET_WAITS_MS[attempt];
+          root.event("bench_reset_retry", { attempt: attempt + 1, lifted, wait_ms: waitMs, error: text.slice(0, 160) });
+          console.warn(`[race] rate-limit wall: lifted ${lifted} bench(es); retry ${attempt + 1}/${BENCH_RESET_WAITS_MS.length} in ${waitMs}ms`);
+          tried.clear();
+          await new Promise<void>((resolve) => {
+            const t = setTimeout(resolve, waitMs);
+            master.signal.addEventListener("abort", () => { clearTimeout(t); resolve(); }, { once: true });
+          });
+          if (master.signal.aborted) throw e;
+        }
+      }
     };
 
     const meta = (cand: ScoredCandidate) => ({
@@ -597,6 +644,7 @@ honoApp.post("/v1/chat/completions", async (c) => {
               lastToolVerdict = verdict;
               if (!verdict.neutral) {
                 learnToolVerdict(cand.tupleId, verdict).catch(logErr);
+                toolVerdictLessons(verdict, taskCtx.taskClass);
                 root.event("tool_verdict", {
                   tuple: cand.tupleId,
                   valid: verdict.valid,
@@ -862,6 +910,7 @@ honoApp.post("/v1/chat/completions", async (c) => {
               streamToolVerdict = verdict;
               if (!verdict.neutral) {
                 learnToolVerdict(cand.tupleId, verdict).catch(logErr);
+                toolVerdictLessons(verdict, taskCtx.taskClass);
                 root.event("tool_verdict", {
                   tuple: cand.tupleId,
                   valid: verdict.valid,
@@ -1015,6 +1064,7 @@ honoApp.post("/v1/chat/completions", async (c) => {
               streamToolVerdict = verdict;
               if (!verdict.neutral) {
                 learnToolVerdict(cand.tupleId, verdict).catch(logErr);
+                toolVerdictLessons(verdict, taskCtx.taskClass);
                 root.event("tool_verdict", {
                   tuple: cand.tupleId,
                   valid: verdict.valid,
