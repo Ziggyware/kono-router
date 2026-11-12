@@ -911,7 +911,7 @@ and keyboard shortcut still works.
 - `prefers-reduced-motion`, `(hover: none)` and DPR-aware canvas drawing.
 
 ## Dependencies
-- hono 4.6.14 -> 4.13.16, @opentelemetry/api 1.9.0 -> 1.10.0 (`deno.json`).
+- hono 4.6.14 -> 4.13.17, @opentelemetry/api 1.9.0 -> 1.10.0 (`deno.json`).
 - Scalar reference restyled to the new palette (still 1.76.4, unchanged API).
 
 # Nokey Router update — 2026-10-27
