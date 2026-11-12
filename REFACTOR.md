@@ -1,4 +1,4 @@
-# Nokey Router — Val Town-ready modular refactor
+# Kono Router — Val Town-ready modular refactor
 
 Generated from the 8415a25 tree (the Deno Deploy v6 build) by restructuring
 `main.ts` (278,755 chars) and `tools.ts` (81,504 chars) into small,

@@ -515,7 +515,7 @@ export function toolVerdictLessons(verdict: ToolCallVerdict, taskClass: Paramete
 
 export function degradationMessage(attempts: number, endpoints: number, lastErr: string): string {
   const tail = lastErr ? ` Last upstream error: ${lastErr.slice(0, 160)}.` : "";
-  return `[nokey-router] No upstream model endpoint returned a valid completion for this request. ` +
+  return `[kono-router] No upstream model endpoint returned a valid completion for this request. ` +
     `All ${endpoints} configured endpoints were attempted (${attempts} dispatch attempts, including ` +
     `cross-lane fallbacks, protocol negotiation and a full endpoint sweep).${tail} ` +
     `No answer was fabricated — please retry shortly. GET /health and GET /v1/endpoints show live coverage.`;
@@ -559,8 +559,8 @@ export function degradedSse(o: DegradedOpts): string {
       object: "chat.completion.chunk",
       created: o.created,
       model: o.requestedModel,
-      provider: "nokey-router",
-      nokey: meta,
+      provider: "kono-router",
+      kono: meta,
       choices: [{ index: 0, delta, finish_reason: finish }],
     })}\n\n`;
   return frame({ role: "assistant" }, null) +
@@ -572,18 +572,18 @@ export function degradedSse(o: DegradedOpts): string {
 
 
 export function degradedCompletion(c: Context, o: DegradedOpts, headers: Record<string, string>): Response {
-  if (o.stream) return new Response(degradedSse(o), { status: 200, headers: { ...SSE_HEADERS, ...headers, "X-Nokey-Degraded": "1" } });
+  if (o.stream) return new Response(degradedSse(o), { status: 200, headers: { ...SSE_HEADERS, ...headers, "X-Kono-Degraded": "1" } });
   return c.json({
     id: o.id,
     object: "chat.completion",
     created: o.created,
     model: o.requestedModel,
-    provider: "nokey-router",
-    nokey: degradedMeta(o),
+    provider: "kono-router",
+    kono: degradedMeta(o),
     choices: [{
       index: 0,
       message: { role: "assistant", content: degradationMessage(o.attempts, o.endpoints, o.lastErr) },
       finish_reason: "stop",
     }],
-  }, 200, { ...headers, "X-Nokey-Degraded": "1" });
+  }, 200, { ...headers, "X-Kono-Degraded": "1" });
 }

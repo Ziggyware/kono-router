@@ -30,10 +30,10 @@ function json(status: number, body: unknown): Response {
   return new Response(JSON.stringify(body), { status, headers: JSON_HEADERS });
 }
 
-// Identity: the dashboard's session id (x-nokey-session, fallback
+// Identity: the dashboard's session id (x-kono-session, fallback
 // x-session-id). Missing/empty → null, which every handler maps to 400.
 async function ownerKey(c: Ctx): Promise<string | null> {
-  const src = c.req.header("x-nokey-session") || c.req.header("x-session-id") || "";
+  const src = c.req.header("x-kono-session") || c.req.header("x-nokey-session") || c.req.header("x-session-id") || "";
   if (!src.trim()) return null;
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(src));
   return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");

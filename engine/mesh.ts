@@ -186,8 +186,8 @@ export async function retireForgedTool(nameRaw: string): Promise<boolean> {
  *  credentials, marked one level deeper so it cannot spawn further agents. */
 export async function runSubagent(c: Context, t: SubagentTask, depth: number, model: string | undefined, runner: boolean, signal: AbortSignal): Promise<SubagentResult> {
   const t0 = performance.now();
-  const headers = new Headers({ "content-type": "application/json", "x-nokey-depth": String(depth) });
-  for (const h of ["x-nokey-session", "x-session-id", "authorization", "x-admin-secret", "x-api-key", "x-forwarded-for"]) {
+  const headers = new Headers({ "content-type": "application/json", "x-kono-depth": String(depth) });
+  for (const h of ["x-kono-session", "x-session-id", "authorization", "x-admin-secret", "x-api-key", "x-forwarded-for"]) {
     const v = c.req.header(h);
     if (v) headers.set(h, v);
   }
@@ -196,16 +196,16 @@ export async function runSubagent(c: Context, t: SubagentTask, depth: number, mo
     model: t.model || model || "free:code",
     messages: [{ role: "system", content: TEAM_ROLES[t.role] ?? TEAM_ROLES.builder }, { role: "user", content: t.task }],
     tools: "auto",
-    nokey_rounds: Math.round(clampNum(Number(t.rounds) || 20, 1, 32)),
-    nokey_gate: builds,
-    ...(runner ? { nokey_runner: true } : {}),
+    kono_rounds: Math.round(clampNum(Number(t.rounds) || 20, 1, 32)),
+    kono_gate: builds,
+    ...(runner ? { kono_runner: true } : {}),
     stream: false,
   };
   try {
     const res = await honoApp.fetch(new Request(new URL("/v1/chat/completions", c.req.url), { method: "POST", headers, body: JSON.stringify(body), signal }));
     const j = JSON.parse(await res.text()) as Json;
     const msg = ((j.choices as Json[] | undefined)?.[0]?.message ?? {}) as Json;
-    const nk = (j.nokey ?? {}) as Json;
+    const nk = (j.kono ?? {}) as Json;
     const err = (j.error as Json | undefined)?.message;
     return {
       role: t.role,
@@ -236,7 +236,7 @@ export function registerMeshTools(): void {
     aliases: ["router.catalog", "catalog", "mesh_catalog"],
     kind: "mesh",
     description:
-      "Rank the nokey-router mesh right now: the live (provider, model) tuples the dispatcher would actually try, with their learned telemetry — effective IQ, reliability draw, EWMA TTFT, expected completion time, and tool-call competence. Use it to answer \"which model should I use?\" with evidence instead of guessing.",
+      "Rank the kono-router mesh right now: the live (provider, model) tuples the dispatcher would actually try, with their learned telemetry — effective IQ, reliability draw, EWMA TTFT, expected completion time, and tool-call competence. Use it to answer \"which model should I use?\" with evidence instead of guessing.",
     parameters: {
       type: "object",
       properties: {
@@ -542,7 +542,7 @@ export async function buildHealthPayload(): Promise<Json> {
     return { configured_endpoints: 0, registry_endpoints: 0, catalog_tuples: L1_CACHE.size, sweep_candidates: 0 };
   });
   return {
-    engine: "nokey-sovereign-v6-asck2-toolbox",
+    engine: "kono-sovereign-v6-asck2-toolbox",
     runtime: "deno-deploy-kv-cas-l1",
     control_kernel: {
       name: "ASCK v1",
@@ -628,8 +628,8 @@ export async function buildModelList(): Promise<Json> {
   }));
 
   const imageModels = [
-    ...IMAGE_MODELS.map((img) => ({ id: img.id, object: "model", created: 1761523200, owned_by: "nokey-image" })),
-    ...(await openAIImageBackends().catch(() => [])).map((b) => ({ id: b.id, object: "model", created: 1761523200, owned_by: "nokey-image:" + b.id.split("::")[0] })),
+    ...IMAGE_MODELS.map((img) => ({ id: img.id, object: "model", created: 1761523200, owned_by: "kono-image" })),
+    ...(await openAIImageBackends().catch(() => [])).map((b) => ({ id: b.id, object: "model", created: 1761523200, owned_by: "kono-image:" + b.id.split("::")[0] })),
   ];
 
   return {

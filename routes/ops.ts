@@ -40,7 +40,7 @@ honoApp.post("/v1/agent/compile", async (c) => {
     (c.env as Deno.ServeHandlerInfo<Deno.NetAddr> | undefined)?.remoteAddr?.hostname || "anon";
   // Forward the caller's identity so sub-calls are billed, scoped and rate-limited as the caller, not as the isolate.
   const forward: Record<string, string> = { "content-type": "application/json", "x-forwarded-for": ip, traceparent: root.traceparent };
-  for (const h of ["authorization", "x-admin-secret", "x-nokey-session", "x-session-id"]) {
+  for (const h of ["authorization", "x-admin-secret", "x-kono-session", "x-session-id"]) {
     const v = c.req.header(h);
     if (v) forward[h] = v;
   }
@@ -55,7 +55,7 @@ honoApp.post("/v1/agent/compile", async (c) => {
       body: JSON.stringify({ model: laneFor(o.attempt), messages: msgs, temperature: o.temperature, max_tokens: o.max_tokens, stream: false }),
     });
     if (res.status !== 200) throw new Error(`HTTP ${res.status}: ${(await res.text()).slice(0, 200)}`);
-    if (res.headers.get("x-nokey-degraded")) throw new Error("no upstream answered (degraded)");
+    if (res.headers.get("x-kono-degraded")) throw new Error("no upstream answered (degraded)");
     const j = await res.json() as Json;
     const msg = ((j.choices as Json[] | undefined)?.[0]?.message ?? {}) as Json;
     return { content: typeof msg.content === "string" ? msg.content : "", model: typeof j.model === "string" ? j.model : undefined };

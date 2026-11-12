@@ -75,7 +75,7 @@ export class DegradedError extends Error {
 // Internal chat call — the canonical sibling-module contract (see ops.ts).
 // Forwards ONLY the caller's identity/billing headers, the request's
 // traceparent when present, a normalized x-forwarded-for, and an incremented
-// x-nokey-depth so nested runs stay visible (and bounded) downstream.
+// x-kono-depth so nested runs stay visible (and bounded) downstream.
 // ---------------------------------------------------------------------------
 
 async function internalChat(
@@ -83,7 +83,7 @@ async function internalChat(
   opts: { model: string; messages: ChatMessage[]; signal?: AbortSignal; tools?: string },
 ): Promise<ChatResult> {
   const headers: Record<string, string> = { "content-type": "application/json" };
-  for (const h of ["authorization", "x-admin-secret", "x-nokey-session", "x-session-id"]) {
+  for (const h of ["authorization", "x-admin-secret", "x-kono-session", "x-session-id"]) {
     const v = c.req.header(h);
     if (v) headers[h] = v;
   }
@@ -91,8 +91,8 @@ async function internalChat(
   if (traceparent) headers["traceparent"] = traceparent;
   headers["x-forwarded-for"] = c.req.header("cf-connecting-ip") ||
     c.req.header("x-forwarded-for")?.split(",")[0].trim() || "127.0.0.1";
-  const depth = Number.parseInt(c.req.header("x-nokey-depth") ?? "0", 10);
-  headers["x-nokey-depth"] = String((Number.isFinite(depth) ? depth : 0) + 1);
+  const depth = Number.parseInt(c.req.header("x-kono-depth") ?? c.req.header("x-nokey-depth") ?? "0", 10);
+  headers["x-kono-depth"] = String((Number.isFinite(depth) ? depth : 0) + 1);
 
   const payload: Record<string, unknown> = {
     model: opts.model,
@@ -110,19 +110,19 @@ async function internalChat(
   if (res.status !== 200) {
     throw new Error(`chat call failed: HTTP ${res.status}: ${(await res.text()).slice(0, 200)}`);
   }
-  if (res.headers.get("x-nokey-degraded")) throw new DegradedError();
+  if (res.headers.get("x-kono-degraded")) throw new DegradedError();
   const j = await res.json() as {
     model?: unknown;
     choices?: Array<{ message?: { content?: unknown } }>;
-    nokey?: { degraded?: unknown; tools_executed?: unknown };
+    kono?: { degraded?: unknown; tools_executed?: unknown };
   };
-  if (j.nokey?.degraded === true) throw new DegradedError();
+  if (j.kono?.degraded === true) throw new DegradedError();
   const content = j.choices?.[0]?.message?.content;
   return {
     content: typeof content === "string" ? content : "",
     model: typeof j.model === "string" ? j.model : opts.model,
     degraded: false,
-    toolsExecuted: Array.isArray(j.nokey?.tools_executed) ? j.nokey.tools_executed as ToolExec[] : [],
+    toolsExecuted: Array.isArray(j.kono?.tools_executed) ? j.kono.tools_executed as ToolExec[] : [],
   };
 }
 
@@ -360,7 +360,7 @@ export function registerAgentRun() {
 
     // ——— Streaming: AG-UI events over SSE (traces.ts stream pattern). ——————
     // Tool events are synthesized AFTER each step's chat call returns, from
-    // that call's nokey.tools_executed, labeled in order — by design, since
+    // that call's kono.tools_executed, labeled in order — by design, since
     // the in-process chat call only reports tools once it completes.
     const enc = new TextEncoder();
     const ac = new AbortController();

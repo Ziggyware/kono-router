@@ -596,7 +596,7 @@ export async function collectUpstream(up: UpstreamStream): Promise<CompletionRes
 /** Tool capabilities for a request: its session's store, and — one level deep
  *  only — the sub-agent runner behind agent_team. */
 export function toolCaps(c: Context, model?: string, runner = false): ToolCaps {
-  const depth = Number(c.req.header("x-nokey-depth") ?? 0) || 0;
+  const depth = Number(c.req.header("x-kono-depth") ?? c.req.header("x-nokey-depth") ?? 0) || 0;
   return {
     kv,
     namespace: toolNamespace(c),

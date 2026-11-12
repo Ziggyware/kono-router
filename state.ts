@@ -172,16 +172,16 @@ export const communitySubscribers = new Map<string, Set<(msg: CommunityMessage) 
 // IMAGE GENERATION -- OpenAI-compatible POST /v1/images/generations
 // Keyless upstreams only: Pollinations image API (primary) and the AI Horde
 // anonymous pool (fallback / explicit). Model ids:
-//   nokey-image       -> Pollinations "turbo" (fast)
-//   nokey-image-flux  -> Pollinations "flux" (higher quality, slower)
-//   nokey-image-horde -> AI Horde stable_diffusion (anonymous key)
+//   kono-image       -> Pollinations "turbo" (fast)
+//   kono-image-flux  -> Pollinations "flux" (higher quality, slower)
+//   kono-image-horde -> AI Horde stable_diffusion (anonymous key)
 // Response follows the OpenAI shape: { created, data: [{ url } | { b64_json }] }
 // ============================================================================
 
 export const IMAGE_MODELS = [
-  { id: "nokey-image", provider: "pollinations", upstreamModel: "turbo" },
-  { id: "nokey-image-flux", provider: "pollinations", upstreamModel: "flux" },
-  { id: "nokey-image-horde", provider: "horde", upstreamModel: "stable_diffusion" },
+  { id: "kono-image", provider: "pollinations", upstreamModel: "turbo" },
+  { id: "kono-image-flux", provider: "pollinations", upstreamModel: "flux" },
+  { id: "kono-image-horde", provider: "horde", upstreamModel: "stable_diffusion" },
 ];
 
 

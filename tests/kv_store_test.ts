@@ -15,7 +15,7 @@
  */
 import { createTursoKv, encodeKey, keyPrefixRange } from "../kv-store.ts";
 
-const TEST_URL = Deno.env.get("KONO_TEST_TURSO_URL");
+const TEST_URL = (Deno.env.get("KONO_TEST_TURSO_URL") ?? Deno.env.get("NOKEY_TEST_TURSO_URL"));
 const skip = !TEST_URL;
 const RUN = `t${Date.now().toString(36)}${Math.floor(Math.random() * 1e6).toString(36)}`;
 

@@ -28,7 +28,7 @@ const pctx = {
     if (calls.length) o.onToolCalls?.(calls);
     return full;
   },
-  image: async (prompt, model = "nokey-image") => { const d = await req("/v1/images/generations", { method: "POST", body: { prompt, model, response_format: "url" } }); const it = d.data?.[0] ?? {}; return it.url || (it.b64_json ? "data:image/png;base64," + it.b64_json : ""); },
+  image: async (prompt, model = "kono-image") => { const d = await req("/v1/images/generations", { method: "POST", body: { prompt, model, response_format: "url" } }); const it = d.data?.[0] ?? {}; return it.url || (it.b64_json ? "data:image/png;base64," + it.b64_json : ""); },
   models: async () => (await req("/v1/models")).data ?? [],
   health: () => req("/health"),
   probe: (mode = "smart") => req("/v1/probe", { method: "POST", admin: true, body: { mode } }),
@@ -40,7 +40,7 @@ const pctx = {
   storeFor: (id) => ({ get: (k, d = null) => store.get(`plugin:${id}:${k}`, d), set: (k, v) => store.set(`plugin:${id}:${k}`, v), del: (k) => store.del(`plugin:${id}:${k}`) }),
 };
 let pluginsShown = false, loadingBuiltins = true;
-const NokeyPlugins = window.NokeyPlugins = {
+const KonoPlugins = window.KonoPlugins = {
   _list: [],
   register(p) {
     if (!p || typeof p.id !== "string" || typeof p.mount !== "function") throw new Error("register({ id, name, mount(el, ctx) }) required");
@@ -51,19 +51,19 @@ const NokeyPlugins = window.NokeyPlugins = {
   },
 };
 function installPlugin(code, persist = true) {
-  if (!code.includes("NokeyPlugins.register")) return { ok: false, error: "code must call NokeyPlugins.register({...})" };
-  const before = new Map(NokeyPlugins._list.map((p) => [p.id, p]));
-  try { new Function("NokeyPlugins", "ctx", code)(NokeyPlugins, pctx); }
+  if (!code.includes("KonoPlugins.register")) return { ok: false, error: "code must call KonoPlugins.register({...})" };
+  const before = new Map(KonoPlugins._list.map((p) => [p.id, p]));
+  try { new Function("KonoPlugins", "ctx", code)(KonoPlugins, pctx); }
   catch (e) { return { ok: false, error: "plugin threw: " + e.message }; }
-  const ids = NokeyPlugins._list.filter((p) => before.get(p.id) !== p).map((p) => p.id);
+  const ids = KonoPlugins._list.filter((p) => before.get(p.id) !== p).map((p) => p.id);
   if (!ids.length) return { ok: false, error: "code ran but registered no plugin" };
   if (persist) { const saved = store.get("plugins", {}); for (const id of ids) saved[id] = code; store.set("plugins", saved); }
   return { ok: true, ids };
 }
 function renderPlugins() {
   pluginsShown = true;
-  $("#plcount").textContent = `${NokeyPlugins._list.length} plugins`;
-  $("#plgrid").replaceChildren(...NokeyPlugins._list.map((p) => {
+  $("#plcount").textContent = `${KonoPlugins._list.length} plugins`;
+  $("#plgrid").replaceChildren(...KonoPlugins._list.map((p) => {
     const card = document.createElement("div");
     card.className = "card";
     card.innerHTML = `<div class="h"><b>${esc(p.name ?? p.id)}</b>${p.admin ? `<span class="badge adm">admin</span>` : ""}<span class="grow"></span>${p.builtin ? "" : `<button class="btn q" data-rm="${esc(p.id)}" aria-label="Uninstall ${esc(p.name ?? p.id)}">×</button>`}</div>
@@ -77,10 +77,10 @@ function renderPlugins() {
 $("#plgrid").onclick = (e) => {
   const b = e.target.closest("[data-rm]"); if (!b) return;
   const saved = store.get("plugins", {}); delete saved[b.dataset.rm]; store.set("plugins", saved);
-  NokeyPlugins._list = NokeyPlugins._list.filter((p) => p.id !== b.dataset.rm);
+  KonoPlugins._list = KonoPlugins._list.filter((p) => p.id !== b.dataset.rm);
   renderPlugins();
 };
-const PLUGIN_EXAMPLE = `NokeyPlugins.register({
+const PLUGIN_EXAMPLE = `KonoPlugins.register({
   id: 'lane-race',
   name: 'Lane Race',
   description: 'Fires the same prompt at every lane in parallel and ranks them by time to answer.',
@@ -92,7 +92,7 @@ const PLUGIN_EXAMPLE = `NokeyPlugins.register({
       const lanes = ['free:fast', 'free:smart', 'free:code', 'free:reasoning'];
       const runs = lanes.map(async (model) => {
         const t0 = performance.now();
-        try { const d = await ctx.chat([{ role: 'user', content: input.value }], { model, max_tokens: 64 }); return { model, ms: performance.now() - t0, by: d.nokey?.tuple_id ?? d.provider }; }
+        try { const d = await ctx.chat([{ role: 'user', content: input.value }], { model, max_tokens: 64 }); return { model, ms: performance.now() - t0, by: d.kono?.tuple_id ?? d.provider }; }
         catch (e) { return { model, ms: Infinity, by: e.message }; }
       });
       for (const r of (await Promise.all(runs)).sort((a, b) => a.ms - b.ms)) tb.insertAdjacentHTML('beforeend', '<tr><td>' + r.model + '</td><td>' + (isFinite(r.ms) ? Math.round(r.ms) + 'ms' : '—') + '</td><td class="t">' + ctx.esc(r.by) + '</td></tr>');
@@ -105,7 +105,7 @@ $("#plgo").onclick = () => { const r = installPlugin($("#plcode").value); r.ok ?
 enter.plugins = renderPlugins;
 
 // built-ins
-NokeyPlugins.register({
+KonoPlugins.register({
   id: "model-ping", name: "Model Ping", description: "Minimal completion to any model id or lane: latency, serving tuple, trace.",
   mount(el, ctx) {
     el.innerHTML = `<div class="row"><input class="grow" list="modellist" value="free:smart" aria-label="Model"><button class="btn">ping</button></div><div style="margin-top:8px"></div>`;
@@ -113,13 +113,13 @@ NokeyPlugins.register({
     btn.onclick = async () => {
       out.innerHTML = `<span class="dim">…</span>`; const t0 = performance.now();
       try { const d = await ctx.chat([{ role: "user", content: "Reply with exactly: pong" }], { model: inp.value.trim(), max_tokens: 32 });
-        out.innerHTML = `<span class="${d.nokey?.degraded ? "warn" : "ok"}">${ms(performance.now() - t0)}</span> <span class="mid">${esc(d.nokey?.tuple_id ?? d.provider ?? "")}</span> <a href="#" data-tr="${esc(d.nokey?.trace_id ?? "")}">trace</a><div class="dim">${esc(String(d.choices?.[0]?.message?.content ?? "").slice(0, 120))}</div>`;
+        out.innerHTML = `<span class="${d.kono?.degraded ? "warn" : "ok"}">${ms(performance.now() - t0)}</span> <span class="mid">${esc(d.kono?.tuple_id ?? d.provider ?? "")}</span> <a href="#" data-tr="${esc(d.kono?.trace_id ?? "")}">trace</a><div class="dim">${esc(String(d.choices?.[0]?.message?.content ?? "").slice(0, 120))}</div>`;
         $("a", out).onclick = (e) => { e.preventDefault(); openTrace(e.target.dataset.tr); };
       } catch (e) { out.innerHTML = `<span class="no">${esc(e.message)}</span>`; }
     };
   },
 });
-NokeyPlugins.register({
+KonoPlugins.register({
   id: "prompt-lab", name: "Prompt Lab", description: "Streaming mini-chat built only on the SDK: models, chatStream with live reasoning, storeFor.",
   mount(el, ctx) {
     const st = ctx.storeFor("prompt-lab"), hist = st.get("history", []);
@@ -140,7 +140,7 @@ NokeyPlugins.register({
     clr.onclick = () => { hist.length = 0; st.set("history", []); render(); };
   },
 });
-NokeyPlugins.register({
+KonoPlugins.register({
   id: "image-quickgen", name: "Image QuickGen", description: "One-shot image through /v1/images/generations.",
   mount(el, ctx) {
     el.innerHTML = `<div class="row"><input class="grow" aria-label="Prompt"><button class="btn">generate</button></div><div style="margin-top:8px"></div>`;
@@ -152,7 +152,7 @@ NokeyPlugins.register({
     };
   },
 });
-NokeyPlugins.register({
+KonoPlugins.register({
   id: "lane-probe", name: "Lane Probe", admin: true, description: "Server canary against a lane's top candidates; verified IQ written back.",
   mount(el, ctx) {
     el.innerHTML = `<div class="row"><select class="grow" aria-label="Lane"><option>fast</option><option selected>smart</option><option>code</option><option>reasoning</option></select><button class="btn">probe</button></div><div style="margin-top:8px"></div>`;
@@ -164,7 +164,7 @@ NokeyPlugins.register({
     };
   },
 });
-NokeyPlugins.register({
+KonoPlugins.register({
   id: "catalog-sync", name: "Catalog Sync", admin: true, description: "Full provider sweep: rediscover models, report totals.",
   mount(el, ctx) {
     el.innerHTML = `<button class="btn">sync</button><div style="margin-top:8px"></div>`;

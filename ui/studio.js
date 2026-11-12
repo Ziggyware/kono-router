@@ -215,7 +215,7 @@ $("#btn-generate-app")?.addEventListener("click", async () => {
 
   $("#pmodel").value = "free:code";
   // Builder request: complete() sends the phased prompt as a fresh wire
-  // context with an explicit budget and nokey_builder set; the thread
+  // context with an explicit budget and kono_builder set; the thread
   // itself records only the goal, in short display form.
   builderReq = { prompt: appPrompt, continuations: 0 };
   $("#cinput").value = `[App Builder · ${mode.name}] ${goal}`;
@@ -355,7 +355,7 @@ $("#btn-export-techpack")?.addEventListener("click", () => {
   const blob = new Blob([JSON.stringify(pack, null, 2)], { type: "application/json" });
   const a = document.createElement("a");
   a.href = URL.createObjectURL(blob);
-  a.download = "nokey-techpack.json";
+  a.download = "kono-techpack.json";
   a.click();
   toast("Exported custom tech pack");
 });

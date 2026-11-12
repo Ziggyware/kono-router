@@ -22,18 +22,18 @@ const JSON_HEADERS = { "Content-Type": "application/json" };
 // Internal dispatch — the canonical way this router calls itself. Forwards
 // ONLY the caller's identity headers (never server-side credentials), pins
 // x-forwarded-for to the real caller IP so free-tier/rate limits bill the
-// caller, and bumps x-nokey-depth so nested dispatch can bound recursion.
+// caller, and bumps x-kono-depth so nested dispatch can bound recursion.
 // ---------------------------------------------------------------------------
 async function internalCall(c: Ctx, path: string, body?: unknown, signal?: AbortSignal): Promise<Response> {
   const headers: Record<string, string> = {};
   if (body !== undefined) headers["content-type"] = "application/json";
-  for (const h of ["authorization", "x-admin-secret", "x-nokey-session", "x-session-id", "traceparent"]) {
+  for (const h of ["authorization", "x-admin-secret", "x-kono-session", "x-session-id", "traceparent"]) {
     const v = c.req.header(h);
     if (v) headers[h] = v;
   }
   headers["x-forwarded-for"] = c.req.header("cf-connecting-ip") ||
     c.req.header("x-forwarded-for")?.split(",")[0].trim() || "127.0.0.1";
-  headers["x-nokey-depth"] = String((parseInt(c.req.header("x-nokey-depth") || "0", 10) || 0) + 1);
+  headers["x-kono-depth"] = String((parseInt(c.req.header("x-kono-depth") || c.req.header("x-nokey-depth") || "0", 10) || 0) + 1);
   return await honoApp.request(path, {
     method: body === undefined ? "GET" : "POST",
     headers,
@@ -43,9 +43,9 @@ async function internalCall(c: Ctx, path: string, body?: unknown, signal?: Abort
 }
 
 // A degraded dispatch produced NO model answer — its body is a status notice,
-// never content. Detected via header or the body's nokey.degraded flag.
+// never content. Detected via header or the body's kono.degraded flag.
 function isDegraded(res: Response, body: Json | null): boolean {
-  return res.headers.get("x-nokey-degraded") !== null || body?.nokey?.degraded === true;
+  return res.headers.get("x-kono-degraded") !== null || body?.kono?.degraded === true;
 }
 
 // Constant-time compare for the shared router key (length folded into the diff).
@@ -75,7 +75,7 @@ function authGate(c: Ctx): Response | null {
 // identity header present. Foreign-owned ids are indistinguishable from
 // unknown ids — no existence leak across callers.
 async function ownerKey(c: Ctx): Promise<string> {
-  const src = c.req.header("authorization") || c.req.header("x-nokey-session") ||
+  const src = c.req.header("authorization") || c.req.header("x-kono-session") || c.req.header("x-nokey-session") ||
     c.req.header("x-session-id") || "anon";
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(src));
   return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
@@ -607,7 +607,7 @@ function responsesStream(c: Ctx, chatBody: Json, messages: Json[], model: string
         let degraded = false;
         try {
           const res = await internalCall(c, "/v1/chat/completions", { ...chatBody, stream: true }, ctrl.signal);
-          if (res.headers.get("x-nokey-degraded")) degraded = true;
+          if (res.headers.get("x-kono-degraded")) degraded = true;
           if (!res.body) {
             degraded = true;
           } else {
@@ -628,7 +628,7 @@ function responsesStream(c: Ctx, chatBody: Json, messages: Json[], model: string
                   const payload = line.slice(5).trim();
                   if (!payload || payload === "[DONE]") continue;
                   const j = JSON.parse(payload) as Json;
-                  if (j?.nokey?.degraded === true) { degraded = true; continue; }
+                  if (j?.kono?.degraded === true) { degraded = true; continue; }
                   if (typeof j?.model === "string") actual = j.model;
                   const choices = j?.choices as Json[] | undefined;
                   if (!choices || choices.length === 0) continue;

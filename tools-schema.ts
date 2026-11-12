@@ -1,6 +1,6 @@
 /**
  * ============================================================================
- * NOKEY TOOL PLANE — JSON SCHEMA SUBSET (validate · coerce · repair)
+ * KONO TOOL PLANE — JSON SCHEMA SUBSET (validate · coerce · repair)
  * ============================================================================
  * The tool plane's schema-validation engine, extracted verbatim from
  * tools.ts so it can evolve independently of the registry and execution

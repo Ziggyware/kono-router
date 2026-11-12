@@ -22,7 +22,7 @@ const store = {
     document.cookie = `enc_${k}=; path=/; max-age=0; SameSite=Strict`; // secrets must not ride on every request
   }
 })();
-const ORIGIN = /^https?:/.test(location.protocol) ? location.origin : "https://nokey-router.ziggyware.deno.net";
+const ORIGIN = /^https?:/.test(location.protocol) ? location.origin : "https://kono-router.onrender.com";
 const creds = () => { const c = store.get("creds", {}); return { url: (c.url || ORIGIN).replace(/\/+$/, ""), key: c.key || "", admin: c.admin || "" }; };
 // A stable per-browser session scopes the tool plane's namespace, so
 // memory, RAG and files compound across chats instead of resetting.
@@ -44,7 +44,7 @@ function headers(admin = false, json = true) {
   if (json) h["Content-Type"] = "application/json";
   if (c.key) h.Authorization = "Bearer " + c.key;
   if (admin && c.admin) h["x-admin-secret"] = c.admin;
-  h["x-nokey-session"] = sessionId();
+  h["x-kono-session"] = sessionId();
   return h;
 }
 

@@ -18,8 +18,8 @@ async function genOnce() {
   try {
     const d = await req("/v1/images/generations", { method: "POST", body: { prompt, model, size, n } });
     const got = d.data ?? [];
-    const items = got.map((it, i) => ({ src: it.url || "data:image/png;base64," + it.b64_json, prompt, model, backend: d.nokey?.backends?.[i] ?? "", ms: performance.now() - card.t0, trace: d.nokey?.trace_id }));
-    const pend = Number(d.nokey?.pending || 0);
+    const items = got.map((it, i) => ({ src: it.url || "data:image/png;base64," + it.b64_json, prompt, model, backend: d.kono?.backends?.[i] ?? "", ms: performance.now() - card.t0, trace: d.kono?.trace_id }));
+    const pend = Number(d.kono?.pending || 0);
     const idx = gallery.indexOf(card);
     const repl = [...items];
     if (pend > 0) { card.note = `still processing — ${pend} image${pend > 1 ? "s" : ""} still under review across all providers`; repl.push(card); }
@@ -64,7 +64,7 @@ function renderGallery() {
     ? `<figure class="pending"><div class="ph"><span class="spin" aria-hidden="true"></span><span>${esc(g.note || "generating…")}</span></div>
       <figcaption><span title="${esc(g.prompt)}">${esc(g.prompt)}</span><b title="model">${esc(g.model)}</b></figcaption></figure>`
     : `<figure><a href="${esc(g.src)}" target="_blank" rel="noopener"><img src="${esc(g.src)}" alt="${esc(g.prompt)}" loading="lazy"></a>
-    <figcaption><span title="${esc(g.prompt)}">${esc(g.prompt)}</span>${g.backend ? `<b title="backend that produced this image">${esc(g.backend.split("::").pop())}</b>` : ""}<b>${ms(g.ms)}</b>${g.trace ? `<a href="#" data-tr="${esc(g.trace)}">trace</a>` : ""}<a href="${esc(g.src)}" download="nokey-${Date.now()}.png">save</a></figcaption></figure>`).join("");
+    <figcaption><span title="${esc(g.prompt)}">${esc(g.prompt)}</span>${g.backend ? `<b title="backend that produced this image">${esc(g.backend.split("::").pop())}</b>` : ""}<b>${ms(g.ms)}</b>${g.trace ? `<a href="#" data-tr="${esc(g.trace)}">trace</a>` : ""}<a href="${esc(g.src)}" download="kono-${Date.now()}.png">save</a></figcaption></figure>`).join("");
 }
 $("#mgo").onclick = genMedia;
 $("#mloop").onclick = () => { mLoop = !mLoop; setMButtons(); if (mLoop && !mBusy) genMedia(); };
@@ -79,7 +79,7 @@ enter.media = async () => {
   if (mediaModelsLoaded) return;
   try {
     const all = (await req("/v1/models")).data ?? [];
-    const img = all.filter((m) => String(m.owned_by).startsWith("nokey-image:"));
+    const img = all.filter((m) => String(m.owned_by).startsWith("kono-image:"));
     if (!img.length) return;
     const by = new Map();
     for (const m of img) { const p = m.id.split("::")[0].replace(/^services_json_/, ""); by.set(p, [...(by.get(p) ?? []), m.id]); }

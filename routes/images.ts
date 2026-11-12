@@ -135,7 +135,7 @@ export function registerImages() {
 
 // NOTE: there is deliberately NO locally generated "providers unavailable"
 // placeholder image. A generation that no backend produced is reported as
-// still processing (HTTP 503, nokey.still_processing) — never as a fake image.
+// still processing (HTTP 503, kono.still_processing) — never as a fake image.
 
 // Classify every discovered OpenAI-standard image backend with one small
 // generation each (16 at a time): keyless-working, needs key/payment
@@ -167,7 +167,7 @@ honoApp.post("/v1/images/probe", requireAdmin, async (c) => {
 honoApp.post("/v1/images/generations", async (c) => {
   const body = await c.req.json().catch(() => ({} as Json)) as Json;
   const prompt = String(body.prompt || "").trim() || "abstract geometric composition";
-  const requestedModel = String(body.model || "nokey-image");
+  const requestedModel = String(body.model || "kono-image");
   const spec = IMAGE_MODELS.find((img) => img.id === requestedModel) || IMAGE_MODELS[0];
   const sizeText = `${parseImageSize(body.size).width}x${parseImageSize(body.size).height}`;
   const standard = await openAIImageBackends().catch(() => []);
@@ -186,9 +186,9 @@ honoApp.post("/v1/images/generations", async (c) => {
   type Variant = { id: string; provider: string; upstreamModel: string; url?: string; headers?: Record<string, string> };
   const asVariant = (b: typeof standard[number]): Variant => ({ id: b.id, provider: "openai-images", upstreamModel: b.model, url: b.url, headers: b.headers });
   // A specific backend chosen by name runs alone: falling back would silently
-  // answer from a different model. Only "nokey-image" (the default), an unknown
+  // answer from a different model. Only "kono-image" (the default), an unknown
   // id, or fallback: true walks the whole chain.
-  const named = pinned ? asVariant(pinned) : IMAGE_MODELS.find((m) => m.id === requestedModel && m.id !== "nokey-image");
+  const named = pinned ? asVariant(pinned) : IMAGE_MODELS.find((m) => m.id === requestedModel && m.id !== "kono-image");
   const builtin: Variant[] = [spec, ...IMAGE_MODELS.filter((m) => m.id !== spec.id)];
   const chain: Variant[] = named && body.fallback !== true ? [named] : [
     ...builtin.filter((v) => v.provider !== "horde"),
@@ -271,7 +271,7 @@ honoApp.post("/v1/images/generations", async (c) => {
         type: "server_error",
         code: "image_providers_busy",
       },
-      nokey: {
+      kono: {
         still_processing: true,
         requested_model: requestedModel,
         backends: winners,
@@ -283,13 +283,13 @@ honoApp.post("/v1/images/generations", async (c) => {
     }, 503, {
       traceparent: root.traceparent,
       "Server-Timing": `total;dur=${Math.round(root.ms)}`,
-      "X-Nokey-Still-Processing": "1",
+      "X-Kono-Still-Processing": "1",
     });
   }
   return c.json({
     created: Math.floor(Date.now() / 1000),
     data,
-    nokey: {
+    kono: {
       degraded: stillProcessing,
       still_processing: stillProcessing,
       pending,
@@ -302,7 +302,7 @@ honoApp.post("/v1/images/generations", async (c) => {
   }, 200, {
     traceparent: root.traceparent,
     "Server-Timing": `total;dur=${Math.round(root.ms)}`,
-    ...(stillProcessing ? { "X-Nokey-Still-Processing": "1" } : {}),
+    ...(stillProcessing ? { "X-Kono-Still-Processing": "1" } : {}),
   });
 });
 }

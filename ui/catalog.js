@@ -27,7 +27,7 @@ const cleanVendor = (v) => String(v ?? "").trim().toLowerCase().replace(/^servic
 const modelVendor = (m) => {
   const id = String(m?.id ?? "");
   if (/^free:/i.test(id)) return LANE_GROUP;
-  if (/^nokey-image/i.test(id)) return IMAGE_GROUP;
+  if (/^kono-image/i.test(id)) return IMAGE_GROUP;
   const slash = id.indexOf("/");
   return cleanVendor(slash > 0 ? id.slice(0, slash) : m?.owned_by);
 };
@@ -110,7 +110,7 @@ function showModelResults(query = modelSearch) {
   const capability = $("#model-cap").value, minimum = Number($("#model-context").value);
   const unique = new Map();
   for (const m of catalog) {
-    if (!m.id || /^nokey-image/i.test(m.id)) continue;
+    if (!m.id || /^kono-image/i.test(m.id)) continue;
     if (capability && !caps(m).split(" ").includes(capability)) continue;
     const context = Number(m.context_window) || 0;
     if (context < minimum) continue;

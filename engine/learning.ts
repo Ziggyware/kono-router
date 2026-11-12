@@ -170,10 +170,10 @@ export async function writeLesson(cls: TaskClass, signature: string): Promise<vo
   try {
     await executeTool("memory_write", {
       text: `Router lesson [${cls}] ${signature}: ${lesson.correction}`,
-      tags: ["nokey-lesson", cls, signature],
+      tags: ["kono-lesson", cls, signature],
       kind: "insight",
       importance: 0.7,
-      source: "nokey-router-learning",
+      source: "kono-router-learning",
     }, { caps: { kv, namespace: "router_lessons" }, admin: true });
   } catch (e) {
     logErr(e);

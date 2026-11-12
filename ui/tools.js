@@ -10,7 +10,7 @@ const TOOL_SEEDS = {
   data: { op: "query", data: { a: { b: [10, 20, 30] } }, path: "$.a.b[1]" },
   text: { op: "similarity", text: "gpt-4o-mini", candidates: ["gpt-4o", "claude-3-5-sonnet", "gpt-4o-mini-2024"] },
   time: { op: "now" },
-  crypto: { op: "digest", algorithm: "sha-256", data: "nokey-router" },
+  crypto: { op: "digest", algorithm: "sha-256", data: "kono-router" },
   web_search: { query: "deno kv", limit: 3 },
   web_fetch: { url: "https://example.com" },
   http_request: { method: "GET", url: "https://api.github.com/zen" },
@@ -70,7 +70,7 @@ const TOOL_EXAMPLES = {
   },
   crypto: {
     title: "Cryptographic hash digest",
-    request: { op: "digest", algorithm: "sha-256", data: "nokey-router-asck" },
+    request: { op: "digest", algorithm: "sha-256", data: "kono-router-asck" },
     response: { ok: true, algorithm: "sha-256", digest: "b5d4045c3f466fa91fe2cc6abe79232a1a57cdf104f7a26e716e0a1e2789df78", bytes: 32 }
   },
   web_search: {
@@ -171,7 +171,7 @@ const TOOL_EXAMPLES = {
   router_capabilities: {
     title: "Inspect router engine capabilities",
     request: {},
-    response: { ok: true, engine: "nokey-router v6", kernel: "asck-t-v2", models: 140, endpoints: 102 }
+    response: { ok: true, engine: "kono-router v6", kernel: "asck-t-v2", models: 140, endpoints: 102 }
   },
   router_catalog: {
     title: "Inspect model catalog by mode",
@@ -224,7 +224,7 @@ const TOOL_EXAMPLE_SETS = {
     { title: "Undo last change", args: { op: "undo", slot: "draft" } },
   ],
   crypto: [
-    { title: "SHA-256 digest", args: { op: "digest", algorithm: "sha-256", data: "nokey-router" } },
+    { title: "SHA-256 digest", args: { op: "digest", algorithm: "sha-256", data: "kono-router" } },
     { title: "HMAC", args: { op: "hmac", algorithm: "sha-256", key: "secret", data: "message" } },
     { title: "UUIDv7 ×3", args: { op: "id", id_kind: "uuid7", count: 3 } },
     { title: "base64url encode", args: { op: "encode", encoding: "base64url", data: "hello world?" } },
