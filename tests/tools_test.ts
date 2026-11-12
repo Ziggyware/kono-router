@@ -742,6 +742,32 @@ Deno.test("text-format tool calls: <Function> element + <function_calls>/<invoke
   assert(parseTextToolCalls("the <function> element is prose") === null, "bare <function> prose is not a call");
 });
 
+Deno.test("text-format tool calls: <|tool_call> dialect with <|\"|> string delimiters", () => {
+  // The exact shape that leaked into chat prose on 2026-11-12: an fs_patch
+  // whose strings are delimited by <|"|> instead of quotes.
+  const leaked = '<|tool_call>call:fs_patch{edits:[{new:<|"|>NEW BODY<|"|>,old:<|"|>OLD BODY<|"|>}],path:<|"|>index.html<|"|>}';
+  const p = parseTextToolCalls(leaked);
+  assert(p?.calls.length === 1 && p.calls[0].name === "fs_patch", "bar dialect lifts: " + JSON.stringify(p));
+  assert(p.calls[0].arguments.path === "index.html", "path lifted");
+  const edits = p.calls[0].arguments.edits as Array<{ new: string; old: string }>;
+  assert(Array.isArray(edits) && edits[0].new === "NEW BODY" && edits[0].old === "OLD BODY", "edits lifted");
+  assert(p.rest === "", "no prose left behind");
+
+  // Multiline string content with braces inside it must not break the match.
+  const multi = 'Patching now.\n<|tool_call>call:fs_patch{edits:[{new:<|"|>\nStar Count: \n2000\nif (x) { y(); }\n<|"|>,old:<|"|>legacy<|"|>}],path:<|"|>index.html<|"|>}';
+  const m = parseTextToolCalls(multi);
+  assert(m?.calls.length === 1 && m.rest === "Patching now.", "multiline dialect lifts, prose kept: " + JSON.stringify(m?.rest));
+  const mEdits = m.calls[0].arguments.edits as Array<{ new: string }>;
+  assert(mEdits[0].new.includes("if (x) { y(); }"), "braces inside string content survive");
+
+  // No call: prefix, a truncated blob (stream cut), and non-call prose.
+  const bare = parseTextToolCalls('<|tool_call>calculate{expression:<|"|>2*3<|"|>}');
+  assert(bare?.calls[0].arguments.expression === "2*3", "no-prefix form lifts");
+  const cut = parseTextToolCalls('<|tool_call>call:fs_patch{edits:[{new:<|"|>partial');
+  assert(cut?.calls.length === 1 && cut.calls[0].name === "fs_patch", "truncated blob still lifts");
+  assert(parseTextToolCalls("the <|tool_call> token is prose") === null, "opener without a call shape is prose");
+});
+
 Deno.test("fs_move: renames files and directories, honours aliases and overwrite", async () => {
   const ns = "move-" + crypto.randomUUID();
   await run("fs_write", { path: "src/main.module.css", content: "a{}" }, { namespace: ns });

@@ -124,6 +124,7 @@ import { L1_TTL_MS, KV_PREFIX, TOOL_SKILL_TTL_MS, SERVICE_JSON_FILE, isServiceJs
 import { TOOL_SKILL_PREFIX } from "./engine/dispatch.ts";
 import { LEARN_CELL_PREFIX, LEARN_ARM_CELL_PREFIX, LESSON_PREFIX, LEARN_TTL_MS } from "./engine/learning.ts";
 import { FORGED_TOOL_PREFIX, registerForgedTool, FORGED_TTL_MS, registerMeshTools } from "./engine/mesh.ts";
+import { runEvolutionCycle } from "./engine/speciation.ts";
 import { loadTextFile, discoverServiceJsonPath, parseServiceJsonRegistry, validateServiceJsonProvider, makeServiceJsonProvider, runCatalogSyncBody, buildProviderIdFromEndpointName, analyzeModelCapabilities, runCanaryProbeOnTopCandidates, runResurrectionProbe } from "./engine/providers.ts";
 
 import { learnCellKey, armCellKey, isEndpointConfigured } from "./util.ts";
@@ -940,6 +941,9 @@ if (typeof Deno.cron === "function") {
   });
   Deno.cron("tail-resurrection", "*/10 * * * *", async () => {
     await runResurrectionProbe(6);
+  });
+  Deno.cron("tool-evolution", "0 * * * *", async () => {
+    await runEvolutionCycle().catch((e) => console.error("tool evolution:", e));
   });
 }
 

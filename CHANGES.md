@@ -1,3 +1,44 @@
+# Tool Speciation P1 + <|tool_call> dialect lift — 2026-11-12
+
+**Tool Speciation (P1)** — forged tools are now populations, not singletons
+(spec: tool-speciation-spec.md). New `engine/speciation.ts`: every forged
+tool gets a lineage (generation-0 snapshot of the champion on first touch;
+re-forges join as manual variants instead of erasing history). Challengers
+enter only through a probe gauntlet whose assertions check effects
+(`result_includes`, `result_path`, `max_ms`), take a canary slice of live
+traffic (champion keeps a configurable floor, default 70%; the rest is
+Thompson-split), and are scored on their own Bayesian skill records
+(`mesh_variant_skills_v1` — a separate store, so canonical tool totals
+never double-count). Promotion requires ≥30 calls, a strictly better
+Wilson floor than the champion, and no >25% p95 regression; the deposed
+champion stays on as a canary. Operators: `rewrite` (a mutator model aimed
+at the parent's measured error codes), `param` (timeout follows measured
+p95), `harden` (retry/clamp shell, pure template). An hourly
+`tool-evolution` cron (plus an on-demand admin route) runs the cycle with
+a bounded budget; admin tools never speciate; kill switches are per-tool
+pin, per-tool disable, and `KONO_SPECIATION=off`. Admin surface:
+`GET /v1/tools/speciation`, `GET /v1/tools/:name/lineage`,
+`POST …/evolve`, `…/variants/:id/promote|retire`, `…/pin` (+ OpenAPI), and
+a non-admin `tool_lineage` meta-tool so models can inspect a population
+before re-forging. First live cycle behaved as designed: the mutator's
+rewrite failed the syntax gate and was held in shadow with the reason
+recorded; the champion never blinked. Deferred to P2: `compose` (needs an
+`api.invoke` capability forged code does not have yet) and `specialize`
+(the dispatch wrapper now samples arg-key shapes into the lineage as its
+fuel). Tests: tests/speciation_test.ts (5).
+
+**Text tool-call lifter: the `<|tool_call>` dialect** — a model's
+`fs_patch` call leaked into chat prose verbatim because the lifter knew
+the XML and JSON dialects but not this one:
+`<|tool_call>call:NAME{…}` with strings delimited by `<|"|>` instead of
+quotes. `tools-text.ts` now extracts that dialect first (brace-matching
+that is string-delimiter-aware, segments re-quoted and passed through the
+existing JSON repair normaliser, so truncated blobs still lift), blanks
+the spans, and runs the existing dialects over the remainder; the opener
+also joins `TEXT_CALL_OPENERS`, so streaming holds the content back
+instead of flashing raw markup. Regression tests carry the leaked
+payload's exact shape, including braces inside string content.
+
 # Dependency resolution hardened: nodeModulesDir auto — 2026-11-12
 
 `deno.json` now sets `"nodeModulesDir": "auto"`, and the Dockerfile

@@ -12,6 +12,7 @@ import { TEAM_ROLES } from "../toolbox/team.ts";
 import { errText, classifyPromptIntent, extractMessageText, strictErrors, toolPlaneTotals, maxToolRounds, logErr } from "../util.ts";
 import { getTrace, listTraces } from "../trace.ts";
 import { getRankedCandidates, endpointCoverage, activeProviderList, hydrateImageCatalog } from "./providers.ts";
+import { speciationEnabled, pickVariant, runVariantExecution, sampleArgPattern, recordManualVariant, cleanupLineage, lineageView } from "./speciation.ts";
 import { normalizeMessages } from "./dispatch.ts";
 import { pickOpenRouterKey } from "./core.ts";
 
@@ -121,6 +122,7 @@ export function validateForgedDef(input: Json): ForgedToolDef {
 
 export function registerForgedTool(def: ForgedToolDef): void {
   FORGED_TOOLS.set(def.name, def);
+  const ownRun = compileForgedRun(def.code);
   registerTool({
     name: def.name,
     description: def.description,
@@ -130,7 +132,18 @@ export function registerForgedTool(def: ForgedToolDef): void {
     admin: def.admin,
     timeoutMs: def.timeout_ms,
     dynamic: true,
-    run: compileForgedRun(def.code),
+    // Speciation wrapper: with no lineage/canaries (or speciation off) this
+    // is exactly the pre-speciation path — the tool's own compiled body.
+    // Otherwise a picked challenger executes instead, scored on its own
+    // skill record; the plane's canonical record still observes the call.
+    run: async (args: Json, ctx: ToolContext) => {
+      sampleArgPattern(def.name, args);
+      if (speciationEnabled() && !def.admin) {
+        const pick = pickVariant(def.name, ctx.locals);
+        if (pick) return runVariantExecution(pick, args, ctx);
+      }
+      return ownRun(args, ctx);
+    },
   });
 }
 
@@ -138,11 +151,13 @@ export function registerForgedTool(def: ForgedToolDef): void {
 
 
 
-/** Validate, persist and register a forged tool (create or replace). */
-export async function forgeTool(input: Json): Promise<ForgedToolDef> {
+/** Validate, persist and register a forged tool (create or replace).
+ *  The edit joins the tool's speciation lineage as its new champion. */
+export async function forgeTool(input: Json, origin: "human" | "model" = "human"): Promise<ForgedToolDef> {
   const def = validateForgedDef(input);
   await kv.set([FORGED_TOOL_PREFIX, def.name], def);
   registerForgedTool(def);
+  await recordManualVariant(def, origin).catch((e) => console.error("speciation lineage:", e));
   return def;
 }
 
@@ -150,13 +165,15 @@ export async function forgeTool(input: Json): Promise<ForgedToolDef> {
 
 
 
-/** Remove a forged tool from the registry and KV. Built-ins are refused. */
+/** Remove a forged tool from the registry and KV. Built-ins are refused.
+ *  Its speciation lineage goes with it — the only deletion path. */
 export async function retireForgedTool(nameRaw: string): Promise<boolean> {
   const name = normalizeToolName(nameRaw);
   if (!FORGED_TOOLS.has(name)) return false;
   FORGED_TOOLS.delete(name);
   unregisterTool(name);
   await kv.delete([FORGED_TOOL_PREFIX, name]);
+  await cleanupLineage(name).catch((e) => console.error("speciation cleanup:", e));
   return true;
 }
 
@@ -446,8 +463,27 @@ export function registerMeshTools(): void {
       additionalProperties: false,
     },
     run: async (args) => {
-      const def = await forgeTool(args);
+      const def = await forgeTool(args, "model");
       return { forged: def.name, kind: def.kind, admin: def.admin ?? false, updated_at: def.updated_at, tools_total: listTools().length, note: "callable from the next tool round onward, and in every later request" };
+    },
+  });
+
+  registerTool({
+    name: "tool_lineage",
+    aliases: ["tool.lineage", "tool_variants", "tool_speciation"],
+    kind: "mesh",
+    dynamic: true,
+    description:
+      "Inspect a forged tool's speciation lineage: its champion and challenger variants, each variant's measured competence (Wilson floor), success rate and latency, and any gauntlet notes. Use this BEFORE re-forging an existing tool — a better variant may already exist, and re-forging resets the champion.",
+    parameters: {
+      type: "object",
+      properties: { name: { type: "string", description: "The forged tool's name." } },
+      required: ["name"],
+      additionalProperties: false,
+    },
+    run: async (args) => {
+      const view = await lineageView(String(args.name ?? ""), false);
+      return view ?? { found: false, error: "that tool has no speciation lineage (never forged, or speciation has not touched it)" };
     },
   });
 
