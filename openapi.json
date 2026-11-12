@@ -1310,6 +1310,120 @@
         }
       }
     },
+    "/v1/tools/speciation": {
+      "get": {
+        "tags": [
+          "tools"
+        ],
+        "summary": "Tool speciation overview: populations, variant statuses, recent evolution cycles (admin)",
+        "security": [
+          {
+            "bearerAuth": [],
+            "adminSecret": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/v1/tools/{name}/lineage": {
+      "get": {
+        "tags": [
+          "tools"
+        ],
+        "summary": "A forged tool's speciation lineage: variants with measured competence (admin)",
+        "security": [
+          {
+            "bearerAuth": [],
+            "adminSecret": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/v1/tools/{name}/evolve": {
+      "post": {
+        "tags": [
+          "tools"
+        ],
+        "summary": "Run one evolution cycle for a forged tool now (admin)",
+        "security": [
+          {
+            "bearerAuth": [],
+            "adminSecret": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/v1/tools/{name}/variants/{variant_id}/promote": {
+      "post": {
+        "tags": [
+          "tools"
+        ],
+        "summary": "Manually promote a variant to champion (gauntlet still applies to shadows) (admin)",
+        "security": [
+          {
+            "bearerAuth": [],
+            "adminSecret": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/v1/tools/{name}/variants/{variant_id}/retire": {
+      "post": {
+        "tags": [
+          "tools"
+        ],
+        "summary": "Retire a non-champion variant (admin)",
+        "security": [
+          {
+            "bearerAuth": [],
+            "adminSecret": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/v1/tools/{name}/pin": {
+      "post": {
+        "tags": [
+          "tools"
+        ],
+        "summary": "Pin or unpin a tool's champion, freezing or resuming its evolution (admin)",
+        "security": [
+          {
+            "bearerAuth": [],
+            "adminSecret": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
     "/v1/feedback": {
       "post": {
         "tags": [

@@ -11,6 +11,7 @@ import type { Json } from "../main.ts";
 import { isAdminContext, runTracedTool } from "../engine/dispatch.ts";
 import { requireAdmin } from "../engine/core.ts";
 import { forgeTool, retireForgedTool } from "../engine/mesh.ts";
+import { lineageView, speciationOverview, runEvolutionCycle, promoteVariantManual, retireVariantById, setPin } from "../engine/speciation.ts";
 import { toolSkillsSnapshot, toolPlaneEnabled, maxToolRounds, toolNamespace, toolPlaneTotals, logErr, errText } from "../util.ts";
 
 
@@ -150,5 +151,47 @@ honoApp.delete("/v1/tools/forge/:name", requireAdmin, async (c) => {
   return gone
     ? c.json({ retired: normalizeToolName(c.req.param("name")) })
     : c.json({ error: { message: "not a forged tool" } }, 404);
+});
+
+
+// ---------------------------------------------------------------------------
+// TOOL SPECIATION — populations of forged-tool variants under one name.
+// All admin: evolution changes what production traffic executes.
+// ---------------------------------------------------------------------------
+
+honoApp.get("/v1/tools/speciation", requireAdmin, async (c) => {
+  return c.json(await speciationOverview());
+});
+
+
+honoApp.get("/v1/tools/:name/lineage", requireAdmin, async (c) => {
+  const view = await lineageView(c.req.param("name"), true);
+  return view ? c.json(view) : c.json({ error: { message: "no lineage for that tool" } }, 404);
+});
+
+
+honoApp.post("/v1/tools/:name/evolve", requireAdmin, async (c) => {
+  const report = await runEvolutionCycle({ toolName: c.req.param("name") });
+  return c.json(report);
+});
+
+
+honoApp.post("/v1/tools/:name/variants/:variant_id/promote", requireAdmin, async (c) => {
+  const result = await promoteVariantManual(c.req.param("name"), c.req.param("variant_id"));
+  return c.json(result, result.ok ? 200 : 400);
+});
+
+
+honoApp.post("/v1/tools/:name/variants/:variant_id/retire", requireAdmin, async (c) => {
+  const gone = await retireVariantById(c.req.param("name"), c.req.param("variant_id"));
+  return gone ? c.json({ retired: c.req.param("variant_id") }) : c.json({ error: { message: "variant not found or is champion" } }, 404);
+});
+
+
+honoApp.post("/v1/tools/:name/pin", requireAdmin, async (c) => {
+  const body = await c.req.json().catch(() => ({} as Json)) as Json;
+  const pinned = body.pinned !== false;
+  const ok = await setPin(c.req.param("name"), pinned);
+  return ok ? c.json({ pinned }) : c.json({ error: { message: "no lineage for that tool" } }, 404);
 });
 }

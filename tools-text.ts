@@ -228,11 +228,73 @@ export function repairJsonText(source: string): { text: string; repairs: string[
 // `<parameter name="KEY">VALUE</parameter>` children), and the Anthropic XML
 // form `<function_calls><invoke name="NAME">…</invoke></function_calls>`.
 // Tag matching is case-insensitive; these are lifted into structured calls.
-export const TEXT_CALL_OPENERS = ["<tool_call>", "<function=", "<function_calls>", "<function ", "<invoke "];
+export const TEXT_CALL_OPENERS = ["<tool_call>", "<function=", "<function_calls>", "<function ", "<invoke ", "<|tool_call>"];
 
 
 
 export interface TextToolCall { name: string; arguments: Record<string, unknown> }
+
+
+
+// ---- the <|tool_call> dialect -------------------------------------------------
+// Another family writes calls with special-token furniture:
+//   <|tool_call>call:fs_patch{edits:[{new:<|"|>…<|"|>,old:<|"|>…<|"|>}],path:<|"|>index.html<|"|>}
+// An optional `call:` prefix, the bare function name, then an object literal
+// whose strings are delimited by <|"|> instead of quotes (string content may
+// contain anything, including newlines and braces). The blob is rebuilt into
+// JSON by re-quoting the delimited segments, then passed through the same
+// repair normaliser as every other dialect.
+
+export const BAR_STRING_DELIM = '<|"|>';
+
+export function parseBarToolCalls(text: string): { calls: TextToolCall[]; spans: Array<[number, number]> } {
+  const calls: TextToolCall[] = [];
+  const spans: Array<[number, number]> = [];
+  const opener = /<\|tool_call\|?>/gi;
+  for (let m; (m = opener.exec(text));) {
+    let i = m.index + m[0].length;
+    const skipWs = () => { while (i < text.length && /\s/.test(text[i])) i++; };
+    skipWs();
+    if (text.slice(i, i + 5).toLowerCase() === "call:") { i += 5; skipWs(); }
+    const nameMatch = /^[A-Za-z][\w.-]*/.exec(text.slice(i, i + 80));
+    if (!nameMatch) continue;
+    const name = nameMatch[0];
+    i += name.length;
+    skipWs();
+    if (text[i] !== "{") continue;
+    // Brace-match from the opening {, aware of <|"|>-delimited strings so
+    // braces inside string content do not move the depth.
+    const start = i;
+    let depth = 0;
+    let inStr = false;
+    let end = -1;
+    for (let j = i; j < text.length; j++) {
+      if (text.startsWith(BAR_STRING_DELIM, j)) { inStr = !inStr; j += BAR_STRING_DELIM.length - 1; continue; }
+      if (inStr) continue;
+      const ch = text[j];
+      if (ch === "{" || ch === "[") depth++;
+      else if (ch === "}" || ch === "]") {
+        depth--;
+        if (depth === 0) { end = j + 1; break; }
+      }
+    }
+    const blobEnd = end < 0 ? text.length : end;
+    const blob = text.slice(start, blobEnd);
+    const parts = blob.split(BAR_STRING_DELIM);
+    let rebuilt = "";
+    for (let k = 0; k < parts.length; k++) rebuilt += k % 2 === 1 ? JSON.stringify(parts[k]) : parts[k];
+    let args: unknown = null;
+    try { args = JSON.parse(repairJsonText(rebuilt).text); } catch { args = null; }
+    if (!isPlainObject(args)) continue; // not a liftable call — leave the text untouched
+    let spanEnd = blobEnd;
+    const tail = /^\s*<\|\/tool_call\|?>/.exec(text.slice(spanEnd, spanEnd + 24));
+    if (tail) spanEnd += tail[0].length;
+    calls.push({ name, arguments: args as Record<string, unknown> });
+    spans.push([m.index, spanEnd]);
+    opener.lastIndex = spanEnd;
+  }
+  return { calls, spans };
+}
 
 
 
@@ -248,11 +310,21 @@ export function textArgValue(raw: string): unknown {
 
 /** Parse every text-format call in `text`; null when none parse. `rest` is the prose outside them. */
 export function parseTextToolCalls(text: string): { calls: TextToolCall[]; rest: string } | null {
-  const calls: TextToolCall[] = [];
+  // The <|tool_call> dialect is extracted first and its spans blanked
+  // (length-preserving, so every index below still lines up); the XML/JSON
+  // forms then run over what remains.
+  const bar = parseBarToolCalls(text);
+  let working = text;
+  if (bar.spans.length) {
+    const chars = text.split("");
+    for (const [s, e] of bar.spans) for (let i = s; i < e; i++) if (chars[i] !== "\n") chars[i] = " ";
+    working = chars.join("");
+  }
+  const positioned: Array<{ at: number; call: TextToolCall }> = bar.calls.map((call, k) => ({ at: bar.spans[k][0], call }));
   const block = /<tool_call>\s*([\s\S]*?)\s*(?:<\/tool_call>|$)|<function=([^>\s]+)>\s*([\s\S]*?)\s*(?:<\/function>|(?=<function=)|$)|<function_calls>\s*([\s\S]*?)\s*(?:<\/function_calls>|$)|<function\s([^>]*?)>\s*([\s\S]*?)\s*(?:<\/function>|$)|<invoke\s([^>]*?)>\s*([\s\S]*?)\s*(?:<\/invoke>|$)/gi;
   let rest = "";
   let last = 0;
-  for (let m; (m = block.exec(text));) {
+  for (let m; (m = block.exec(working));) {
     if (m[0] === "") { block.lastIndex++; continue; }
     const parsed = m[1] !== undefined ? parseCallBody(m[1])
       : m[2] !== undefined ? parseFunctionBody(m[2], m[3])
@@ -260,13 +332,14 @@ export function parseTextToolCalls(text: string): { calls: TextToolCall[]; rest:
       : m[5] !== undefined ? parseElementBody(m[5], m[6])
       : parseInvokeBody(m[7], m[8]);
     if (!parsed.length) continue;
-    calls.push(...parsed);
-    rest += text.slice(last, m.index);
+    for (const call of parsed) positioned.push({ at: m.index, call });
+    rest += working.slice(last, m.index);
     last = m.index + m[0].length;
   }
-  if (!calls.length) return null;
-  rest += text.slice(last);
-  return { calls, rest: rest.trim() };
+  if (!positioned.length) return null;
+  rest += working.slice(last);
+  positioned.sort((a, b) => a.at - b.at);
+  return { calls: positioned.map((p) => p.call), rest: rest.trim() };
 }
 
 
