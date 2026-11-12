@@ -689,6 +689,11 @@ export async function runTracedTool(
     repairs: (execution.repairs ?? []).join(",").slice(0, 160),
     ...(execution.ok ? { bytes: execution.bytes, truncated: execution.truncated } : { code: execution.code }),
   });
-  await recordToolExecution(execution.tool ?? call.name, execution).catch(logErr);
+  // app_runner is internal housekeeping (the dashboard's job pump), not a
+  // model-chosen tool: its executions never enter skill telemetry, where
+  // polling would otherwise drown the real signal.
+  if ((execution.tool ?? call.name) !== "app_runner") {
+    await recordToolExecution(execution.tool ?? call.name, execution).catch(logErr);
+  }
   return execution;
 }

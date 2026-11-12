@@ -169,14 +169,15 @@ export const testingTools: ToolSpec[] = [
     name: "app_runner",
     kind: "files",
     admin: true,
-    timeoutMs: 6_000,
-    description: "Internal: the dashboard takes queued app_test jobs (op=take, also a liveness heartbeat) and returns their results (op=done).",
+    timeoutMs: 30_000,
+    description: "Internal: the dashboard takes queued app_test jobs (op=take, also a liveness heartbeat) and returns their results (op=done). take long-polls: with wait_ms it holds server-side until a job appears instead of making the dashboard hammer the endpoint.",
     parameters: {
       type: "object",
       properties: {
         op: { type: "string", enum: ["take", "done"] },
         id: { type: "string" },
         result: { type: "object" },
+        wait_ms: { type: "integer", minimum: 0, maximum: 25000, description: "take only: hold the call this long waiting for a job to appear." },
       },
       required: ["op"],
       additionalProperties: false,
@@ -185,12 +186,21 @@ export const testingTools: ToolSpec[] = [
       const s = store(ctx.caps);
       if (args.op === "take") {
         await s.put(["app", "runner"], { at: Date.now() }, 60_000);
-        // Oldest untaken first; concurrent agents each queue their own job.
-        const job = (await s.list<TestJob>(["app", "jobs"], { limit: 20 })).map((r) => r.value).filter((j) => j && !j.taken).sort((a, b) => a.at - b.at)[0];
-        if (!job) return { job: null };
-        job.taken = Date.now();
-        await s.put(["app", "jobs", job.id], job, 120_000);
-        return { job };
+        // Long-poll: check the queue, then wait server-side and re-check,
+        // so one held request replaces dozens of empty dashboard polls.
+        const waitMs = Math.max(0, Math.min(25_000, Number(args.wait_ms ?? 0)));
+        const until = performance.now() + waitMs;
+        for (;;) {
+          // Oldest untaken first; concurrent agents each queue their own job.
+          const job = (await s.list<TestJob>(["app", "jobs"], { limit: 20 })).map((r) => r.value).filter((j) => j && !j.taken).sort((a, b) => a.at - b.at)[0];
+          if (job) {
+            job.taken = Date.now();
+            await s.put(["app", "jobs", job.id], job, 120_000);
+            return { job };
+          }
+          if (performance.now() >= until || ctx.signal.aborted) return { job: null };
+          await new Promise((r) => setTimeout(r, 750));
+        }
       }
       const id = String(args.id ?? "");
       if (!id) throw new Error("id is required");

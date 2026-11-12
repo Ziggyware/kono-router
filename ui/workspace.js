@@ -82,7 +82,14 @@ wsp.collapsed = new Set(Array.isArray(wsp.collapsed) ? wsp.collapsed : []);
 wsp.autofix = Boolean(store.get("wsp.autofix"));
 let wsWatchTimer = null;
 function wsWatch(on) {
-  if (on && !wsWatchTimer) wsWatchTimer = setInterval(() => { if (document.querySelector(".sheet.open") || (wsp.open && !document.hidden && current === "chat")) wsRefresh(true); }, 2500);
+  if (on && !wsWatchTimer) wsWatchTimer = setInterval(() => {
+    if (document.hidden) return;
+    if (!(document.querySelector(".sheet.open") || (wsp.open && current === "chat"))) return;
+    // Live during a streaming reply (the agent may be writing files); when
+    // idle, a 12 s cadence is plenty — a 2.5 s fs_list forever is just noise
+    // in the request log.
+    if (chatCtl || Date.now() - (wsp.watchAt || 0) > 12000) { wsp.watchAt = Date.now(); wsRefresh(true); }
+  }, 2500);
   if (!on && wsWatchTimer && !wsp.open) { clearInterval(wsWatchTimer); wsWatchTimer = null; }
 }
 
@@ -707,24 +714,28 @@ async function wspRunJob(job) {
   return { results };
 }
 // Poll while someone could be waiting on a test: a streaming reply or an open workspace.
-let wspTicks = 0;
 // wsp.runnerOk: this page may run test jobs (app_runner is admin-only); it is
 // what lets a chat request promise the router a browser test runner.
+// The take LONG-POLLS server-side (wait_ms): one held request replaces the
+// old 900 ms hammer — idle, this page asks ~once every 24 s, and a queued
+// job still wakes the held call within a second.
 async function wspRunnerTick(force = false) {
-  // Every tick while a reply streams; every ~4 s with only the workspace open (Tools-tab runs).
-  wspTicks++;
-  if (wsp.jobBusy || (!force && (document.hidden || !(chatCtl || (wsp.open && wspTicks % 4 === 0))))) return;
+  if (wsp.jobBusy || document.hidden || !(chatCtl || wsp.open)) return;
+  if (!force && Date.now() < (wsp.nextTakeAt || 0)) return;
   wsp.jobBusy = true;
   let job = null;
   try {
-    try { job = (await wsExec("app_runner", { op: "take" }))?.job; wsp.runnerOk = true; }
+    try { job = (await wsExec("app_runner", { op: "take", wait_ms: 20000 }))?.job; wsp.runnerOk = true; }
     catch (e) { if (/40[13]|admin/i.test(e.message)) wsp.runnerOk = false; throw e; }
     if (job) {
       let result;
       try { result = await wspRunJob(job); } catch (e) { result = { error: e.message }; }
       await wsExec("app_runner", { op: "done", id: job.id, result });
+      wsp.nextTakeAt = 0; // jobs may queue back-to-back: take again right away
+    } else {
+      wsp.nextTakeAt = Date.now() + 4000;
     }
-  } catch { /* router unreachable or not admin: no runner */ }
+  } catch { wsp.nextTakeAt = Date.now() + 5000; /* router unreachable or not admin: back off */ }
   finally { wsp.jobBusy = false; }
 }
 setInterval(wspRunnerTick, 900);
