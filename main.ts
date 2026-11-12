@@ -425,14 +425,17 @@ async function refreshForgedTools(): Promise<void> {
 
 
 
+/** Warm isolate never blocks a request on kv.list; a cold one hydrates once.
+ *  (Same stale-while-revalidate shape as hydrateToolSkills/hydrateLearning —
+ *  this was the last hydrator still making chat requests wait out a full
+ *  forged-tools rescan, code bodies and all, every TTL expiry.) */
 export function hydrateForgedTools(force = false): Promise<void> {
-  if (!force && forgedHydratedAt > 0 && Date.now() - forgedHydratedAt < FORGED_TTL_MS) return Promise.resolve();
-  if (!forgedRefresh) {
-    forgedRefresh = refreshForgedTools()
-      .catch((e) => console.error("forged tool refresh:", e))
-      .finally(() => { forgedRefresh = null; });
-  }
-  return forgedRefresh;
+  const refresh = () => (forgedRefresh ??= refreshForgedTools()
+    .catch((e) => console.error("forged tool refresh:", e))
+    .finally(() => { forgedRefresh = null; }));
+  if (force || FORGED_TOOLS.size === 0) return refresh();
+  if (Date.now() - forgedHydratedAt >= FORGED_TTL_MS) refresh().catch((e) => console.error("forged tool refresh:", e));
+  return Promise.resolve();
 }
 
 

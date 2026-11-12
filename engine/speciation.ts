@@ -167,14 +167,16 @@ async function refreshSpeciation(): Promise<void> {
   speciationHydratedAt = Date.now();
 }
 
+/** Warm isolate never blocks on kv.list; a cold one hydrates once (the
+ *  house stale-while-revalidate shape). pickVariant is synchronous and
+ *  fire-and-forgets this; readers that need fresh state pass force. */
 export function hydrateSpeciation(force = false): Promise<void> {
-  if (!force && speciationHydratedAt > 0 && Date.now() - speciationHydratedAt < SPECIATION_TTL_MS) return Promise.resolve();
-  if (!speciationRefresh) {
-    speciationRefresh = refreshSpeciation()
-      .catch((e) => console.error("speciation refresh:", e))
-      .finally(() => { speciationRefresh = null; });
-  }
-  return speciationRefresh;
+  const refresh = () => (speciationRefresh ??= refreshSpeciation()
+    .catch((e) => console.error("speciation refresh:", e))
+    .finally(() => { speciationRefresh = null; }));
+  if (force || (LINEAGES.size === 0 && VARIANTS.size === 0)) return refresh();
+  if (Date.now() - speciationHydratedAt >= SPECIATION_TTL_MS) refresh().catch((e) => console.error("speciation refresh:", e));
+  return Promise.resolve();
 }
 
 // ---------------------------------------------------------------------------

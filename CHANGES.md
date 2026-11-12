@@ -1,3 +1,20 @@
+# Speed: forged-tool hydration no longer blocks requests — 2026-11-12
+
+`hydrateForgedTools` was the last hydrator still returning its refresh
+promise to callers when the TTL expired — and the chat route awaits it on
+every request. Every ~30 s, one chat request therefore waited out a full
+`kv.list` rescan of every forged tool, code bodies included (measured
+locally: 200 tools × 8 KiB bodies ≈ 1.6 MB scanned, 4–13 ms against a
+local store; against the external Turso store that same scan is a network
+transfer sitting in the request path). It now uses the house
+stale-while-revalidate shape, exactly like `hydrateToolSkills` and
+`hydrateLearning`: a warm isolate serves instantly and refreshes in the
+background; only a cold isolate (or an explicit force, e.g. boot) pays
+the scan. `hydrateSpeciation` follows the same pattern. Benchmarked the
+rest of the hot path before touching it: candidate ranking is ~1 ms per
+call warm (49 ms only on the very first cold call), tool-skill hydration
+~3 ms — neither needed work.
+
 # Tool Speciation P1 + <|tool_call> dialect lift — 2026-11-12
 
 **Tool Speciation (P1)** — forged tools are now populations, not singletons
