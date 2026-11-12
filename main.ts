@@ -946,7 +946,10 @@ if (typeof Deno.cron === "function") {
 
 
 if (import.meta.main) {
-  Deno.serve(app.fetch);
+  // Container hosts (Render, Koyeb, Fly, …) assign the port via $PORT;
+  // everywhere else the router keeps its long-standing default of 8000.
+  const port = Number(Deno.env.get("PORT") ?? 8000);
+  Deno.serve({ port: Number.isFinite(port) && port > 0 ? port : 8000 }, app.fetch);
 }
 
 

@@ -82,6 +82,17 @@ unchanged. Cross-module wiring is explicit imports throughout.
 - `deno.json` is unchanged (import map, tasks). To run locally:
   `deno task start`; to verify: `deno task check` + `deno task test`.
 
+## External store (2026-11-12)
+
+`kv-store.ts` adds a third storage backend behind `state.ts`'s `kv`
+export: a hosted libSQL (Turso) database, used when
+`TURSO_DATABASE_URL` / `TURSO_AUTH_TOKEN` (or the `KONO_TURSO_*`
+aliases) are set. Selection order: external store → Deno KV →
+in-memory fallback. This is the lane for hosts with no durable disk
+(free container tiers): the process stays stateless, state survives
+in the database. See CHANGES.md (2026-11-12) for the storage mapping
+and the free-plan accounting.
+
 ## Tooling (in the packer workspace)
 
 - `refactor.mjs` — the single-shot restructuring of main.ts (routes, state,

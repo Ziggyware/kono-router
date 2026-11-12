@@ -1,3 +1,48 @@
+# External KV store: state survives disk-less hosts — 2026-11-12
+
+The router's state no longer has to live in Deno KV. `kv-store.ts`
+implements the exact store surface `state.ts` exposes
+(get/getMany/set/delete/list/atomic) against a hosted libSQL database
+(Turso), selected when `TURSO_DATABASE_URL` (or `KONO_TURSO_URL`) is
+set, with `TURSO_AUTH_TOKEN` / `KONO_TURSO_TOKEN` for the token. With
+no external URL configured, selection is unchanged: Deno KV where it
+exists, the volatile in-memory fallback elsewhere. A
+configured-but-unreachable external store logs an error at boot and
+falls through to those local stores rather than pretending.
+
+Mapping: one table, `kono_kv(k, kj, v, ver, exp)` — an
+order-preserving key encoding as the primary key (prefix list = an
+indexed range scan), the JSON key and value beside it, a per-row
+version counter standing in for Deno's versionstamp (atomic `check()`
+compares it inside a write transaction; multi-key commits apply all
+or nothing), and an expiry timestamp for TTLs (expired rows read as
+absent, like the memory fallback). All callers are untouched — the
+swap happens behind the single `kv` export.
+
+Why: free container/serverless hosts give the process no durable
+disk, so Deno KV either doesn't exist there or evaporates with the
+container. With state external, the same build runs on any Deno host,
+and conversations, forged tools, workspace files and learning state
+survive restarts and host moves. Turso's free plan (no credit card:
+100 databases, 5 GB, 500M row reads / 10M row writes a month) covers
+this router's durable state at personal scale with orders of
+magnitude to spare; row reads are indexed point/range lookups, never
+table scans.
+
+Verified: `tests/kv_store_test.ts` exercises the contract against a
+real libSQL server (CAS match/stale/absent, multi-key atomicity, TTL
+expiry, prefix order/limit/reverse/isolation, getMany ordering) — it
+self-skips unless `KONO_TEST_TURSO_URL` points at a server
+(`turso dev` locally). Also verified end-to-end against a real Turso
+cloud database (`kono`, aws-us-east-1): boot, conversation write and
+read-back, then a full process restart with the conversation still
+served from the cloud store. All operations retry transient transport
+failures with backoff — safe because reads are reads, set is an
+upsert, and a commit whose response was lost re-checks and reports
+{ ok: false } if its first attempt landed. Setup: create a Turso
+database, set the two env vars on the host, boot. Nothing else
+changes.
+
 # Builder profile + component split — 2026-11-11
 
 App Builder requests (`nokey_builder: true`) now run a deterministic,

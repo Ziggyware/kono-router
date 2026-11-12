@@ -70,6 +70,19 @@ function createMemoryKv(): Deno.Kv {
   return api as unknown as Deno.Kv;
 }
 export const kv: Deno.Kv = await (async () => {
+  // External store first: with TURSO_DATABASE_URL (or KONO_TURSO_URL) set,
+  // state lives in a hosted libSQL database (kv-store.ts) and survives any
+  // app host, including disk-less free tiers. A configured-but-unreachable
+  // external store logs loudly and falls through rather than pretending.
+  const extUrl = Deno.env.get("TURSO_DATABASE_URL") ?? Deno.env.get("KONO_TURSO_URL");
+  if (extUrl) {
+    try {
+      const { createTursoKv } = await import("./kv-store.ts");
+      return await createTursoKv(extUrl, Deno.env.get("TURSO_AUTH_TOKEN") ?? Deno.env.get("KONO_TURSO_TOKEN"));
+    } catch (err) {
+      console.error("[kono] external KV store unreachable, falling back to local stores:", err);
+    }
+  }
   try { return await Deno.openKv(); } catch { return createMemoryKv(); }
 })();
 
