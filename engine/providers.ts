@@ -640,7 +640,7 @@ export async function runResurrectionProbe(
 // gpt-image, seedream…). Each one is a candidate for POST {v1}/images/generations,
 // the de-facto standard across OpenAI-compatible gateways. Ordering is a
 // Laplace-smoothed success rate learned per (provider, model) in this isolate.
-export const IMAGE_KV_PREFIX = "nokey_images";
+export const IMAGE_KV_PREFIX = "kono_images";
 
 
 

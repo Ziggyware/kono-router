@@ -4,7 +4,7 @@
 let commRoom = "general";
 let commMessages = [];
 let commStreamCtl = null;
-const commChannel = typeof BroadcastChannel !== "undefined" ? new BroadcastChannel("nokey-community") : null;
+const commChannel = typeof BroadcastChannel !== "undefined" ? new BroadcastChannel("kono-community") : null;
 
 function getCommUser() {
   let user = store.get("comm_user", "");
@@ -221,7 +221,7 @@ $("#btn-create-channel")?.addEventListener("click", (e) => {
 
 $("#comm-share-app")?.addEventListener("click", () => {
   const input = $("#comm-input");
-  input.value += `Hey everyone, check out this application built with nokey-router App Builder:\n\`\`\`html\n<!DOCTYPE html>\n<html>\n<head><title>Community App</title></head>\n<body><h1>Hello from App Builder!</h1></body>\n</html>\n\`\`\`\n`;
+  input.value += `Hey everyone, check out this application built with kono-router App Builder:\n\`\`\`html\n<!DOCTYPE html>\n<html>\n<head><title>Community App</title></head>\n<body><h1>Hello from App Builder!</h1></body>\n</html>\n\`\`\`\n`;
   input.focus();
 });
 

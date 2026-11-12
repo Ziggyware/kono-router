@@ -56,7 +56,7 @@ honoApp.get("/v1/tools", async (c) => {
     plane: "asck-t-v2",
     enabled: toolPlaneEnabled(),
     agent: { max_rounds: maxToolRounds(), auto_tools: defaultAutoToolNames() },
-    session: { namespace: toolNamespace(c), scope_header: "x-nokey-session", storage: "deno-kv" },
+    session: { namespace: toolNamespace(c), scope_header: "x-kono-session", storage: "deno-kv" },
     count: registry.length,
     totals: toolPlaneTotals(now),
     data: registry,

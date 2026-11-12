@@ -650,7 +650,7 @@ const WSP_TEST_AGENT = "<scr" + "ipt>(" + wspTestAgent.toString() + ")();</scr" 
 async function wspTestDoc(c) {
   if (c.kind === "unit") {
     // A synthetic entry that imports every test module; it lives in the cache only while assembling.
-    const entry = "__nokey_tests__.js";
+    const entry = "__kono_tests__.js";
     wsp.cache.set(entry, { sig: "", content: c.files.map((f) => `import "./${f}";`).join("\n") + "\n", binary: false, mime: "text/javascript" });
     try { return await wspAssemble(entry); } finally { wsp.cache.delete(entry); }
   }

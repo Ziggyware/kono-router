@@ -30,7 +30,7 @@ const session = () => `conv-test-${Date.now()}-${seq++}`;
 
 function req(method: string, path: string, sess?: string, body?: unknown): Request {
   const headers: Record<string, string> = {};
-  if (sess) headers["x-nokey-session"] = sess;
+  if (sess) headers["x-kono-session"] = sess;
   if (body !== undefined) headers["content-type"] = "application/json";
   return new Request(BASE + path, {
     method,

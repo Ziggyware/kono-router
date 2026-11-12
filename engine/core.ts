@@ -169,4 +169,4 @@ export const requireAdmin: MiddlewareHandler = async (c, next) => {
 
 
 
-export const IMAGE_BLOCK_KV = "nokey_images_blocked";
+export const IMAGE_BLOCK_KV = "kono_images_blocked";

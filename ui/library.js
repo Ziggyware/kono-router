@@ -106,7 +106,7 @@ $("#gh-push")?.addEventListener("click", async () => {
       if (read.binary) { skipped++; continue; }
       let sha;
       try { sha = (await ghApi(`/repos/${repo}/contents/${ghPath(file.path)}?ref=${encodeURIComponent(branch)}`)).sha; } catch { /* new file */ }
-      await ghApi(`/repos/${repo}/contents/${ghPath(file.path)}`, { method: "PUT", body: JSON.stringify({ message: "sync from nokey workspace", branch, content: b64encodeText(read.content ?? ""), ...(sha ? { sha } : {}) }) });
+      await ghApi(`/repos/${repo}/contents/${ghPath(file.path)}`, { method: "PUT", body: JSON.stringify({ message: "sync from kono workspace", branch, content: b64encodeText(read.content ?? ""), ...(sha ? { sha } : {}) }) });
       done++;
       stat.textContent = `pushing… ${done}`;
     }
@@ -179,7 +179,7 @@ $("#ws-zip")?.addEventListener("click", async () => {
     if (!files.length) { toast("workspace is empty", true); return; }
     const a = document.createElement("a");
     a.href = URL.createObjectURL(zipStore(files));
-    a.download = "nokey-workspace.zip";
+    a.download = "kono-workspace.zip";
     a.click();
     setTimeout(() => URL.revokeObjectURL(a.href), 4000);
     toast(`downloaded ${files.length} file(s)`);

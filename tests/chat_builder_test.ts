@@ -1,12 +1,12 @@
 // deno-lint-ignore-file no-explicit-any
 /**
- * App Builder profile (nokey_builder) tests.
+ * App Builder profile (kono_builder) tests.
  *
  * Builder traffic must be deterministic and quality-first, unlike ordinary
  * chat: no strategy-arm lottery (no variant prompt, no temperature delta),
  * deterministic candidate scoring, the tool plane implied when the client
  * declares no tools, and the build gate forced on even when the client
- * sends nokey_gate: false.
+ * sends kono_gate: false.
  *
  * Driven through the real Hono app against a fully mocked upstream
  * registry, exactly like tests/tool_plane_test.ts. No external network:
@@ -133,7 +133,7 @@ const ARM_VARIANT_TEXTS = [
   "Answer directly and concisely", // concise arm
   "Before answering, work through the problem carefully", // verify / best_of arms
 ];
-const PREAMBLE_HEAD = "You have server-side tools executed by the nokey-router tool plane.";
+const PREAMBLE_HEAD = "You have server-side tools executed by the kono-router tool plane.";
 
 test("builder profile: deterministic scoring is a pure function of the record", () => {
   const now = 1_763_000_000_000;
@@ -177,10 +177,10 @@ test("builder profile: no strategy arm is applied and tools are implied", async 
         model: "free:code",
         stream: false,
         temperature: 0.3,
-        nokey_builder: true,
+        kono_builder: true,
         messages: [{ role: "user", content: "Build a tiny counter app with one button." }],
-      }, { "x-nokey-session": session })));
-      if (data.nokey?.degraded === true) throw new Error(`request ${i} degraded`);
+      }, { "x-kono-session": session })));
+      if (data.kono?.degraded === true) throw new Error(`request ${i} degraded`);
       if (data.choices?.[0]?.message?.content !== "Built it.") {
         throw new Error(`request ${i} content: ${JSON.stringify(data.choices?.[0]?.message)}`);
       }
@@ -221,15 +221,15 @@ test("builder profile: the agent loop runs on implied tools and continues the co
     const data = await asJson(await app.fetch(chatRequest({
       model: "free:code",
       stream: false,
-      nokey_builder: true,
+      kono_builder: true,
       messages: [{ role: "user", content: "Build a calculator widget; check 23*19+14 with the tool first." }],
-    }, { "x-nokey-session": session })));
+    }, { "x-kono-session": session })));
     if (data.choices?.[0]?.message?.content !== "23*19+14 = 451.") {
       throw new Error(`final ${JSON.stringify(data.choices?.[0]?.message)}`);
     }
     // One tool round happened server-side — only possible because the
     // builder profile implied the tool plane the client never declared.
-    if (data.nokey?.tool_rounds !== 1) throw new Error(`tool_rounds ${JSON.stringify(data.nokey)}`);
+    if (data.kono?.tool_rounds !== 1) throw new Error(`tool_rounds ${JSON.stringify(data.kono)}`);
     if (seen.length !== 2) throw new Error(`upstream calls ${seen.length}`);
     // The continuation carries the executed tool's result back to the model.
     const toolMsg = seen[1].messages.find((m: any) => m.role === "tool");
@@ -241,7 +241,7 @@ test("builder profile: the agent loop runs on implied tools and continues the co
   }
 });
 
-test("builder profile: nokey_gate:false is ignored — the build gate still sends broken work back", async () => {
+test("builder profile: kono_gate:false is ignored — the build gate still sends broken work back", async () => {
   const good = await pickHealthyUrl();
   const seen: any[] = [];
   const session = "builder-gate-" + crypto.randomUUID().slice(0, 8);
@@ -258,10 +258,10 @@ test("builder profile: nokey_gate:false is ignored — the build gate still send
     const data = await asJson(await app.fetch(chatRequest({
       model: "free:code",
       stream: false,
-      nokey_builder: true,
-      nokey_gate: false, // must NOT opt out under the builder profile
+      kono_builder: true,
+      kono_gate: false, // must NOT opt out under the builder profile
       messages: [{ role: "user", content: "build a sum app" }],
-    }, { "x-nokey-session": session })));
+    }, { "x-kono-session": session })));
     if (data.choices?.[0]?.message?.content !== "Fixed the syntax error; the build is clean.") {
       throw new Error(`final ${JSON.stringify(data.choices?.[0]?.message)}`);
     }
@@ -270,8 +270,8 @@ test("builder profile: nokey_gate:false is ignored — the build gate still send
     if (gateTurn.role !== "user" || !/\[build gate\]/.test(gateTurn.content) || !/app\.js:1/.test(gateTurn.content)) {
       throw new Error(`gate turn ${JSON.stringify(gateTurn)}`);
     }
-    if (!data.nokey.tools_executed.some((e: any) => e.tool === "build_gate")) {
-      throw new Error(`no gate in log ${JSON.stringify(data.nokey.tools_executed)}`);
+    if (!data.kono.tools_executed.some((e: any) => e.tool === "build_gate")) {
+      throw new Error(`no gate in log ${JSON.stringify(data.kono.tools_executed)}`);
     }
   } finally {
     restoreMock();

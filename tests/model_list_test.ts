@@ -30,7 +30,7 @@ const catalog = [
   { id: "free:reasoning", owned_by: "vajra-mesh-router" },
   { id: "free:auto", owned_by: "vajra-mesh-router" },
   { id: "free:smart", owned_by: "vajra-mesh-router" },
-  { id: "nokey-image", owned_by: "nokey-image" },
+  { id: "kono-image", owned_by: "kono-image" },
   { id: "claude-opus-5.5", owned_by: "anthropic" },
   { id: "anthropic/claude-opus-5.5", owned_by: "anthropic" },
   { id: "anthropic/claude-opus-5.5", owned_by: "openrouter" },

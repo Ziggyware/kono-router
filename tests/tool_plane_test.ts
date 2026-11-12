@@ -580,15 +580,15 @@ test("chat with tools:\"auto\" attaches built-ins, executes the calls and loops 
     }));
     if (res.status !== 200) throw new Error(`status ${res.status}`);
     const data = await asJson(res);
-    if (data.nokey?.degraded === true) throw new Error("request degraded instead of completing");
+    if (data.kono?.degraded === true) throw new Error("request degraded instead of completing");
     if (data.choices?.[0]?.message?.content !== "Seventeen times three is 51.") {
       throw new Error(`final answer ${JSON.stringify(data.choices?.[0]?.message)}`);
     }
     if (data.choices[0].finish_reason !== "stop") throw new Error(`finish ${data.choices[0].finish_reason}`);
-    if (data.nokey.tool_rounds !== 1) throw new Error(`tool_rounds ${data.nokey.tool_rounds}`);
-    if (res.headers.get("x-nokey-tool-rounds") !== "1") throw new Error("missing X-Nokey-Tool-Rounds");
+    if (data.kono.tool_rounds !== 1) throw new Error(`tool_rounds ${data.kono.tool_rounds}`);
+    if (res.headers.get("x-kono-tool-rounds") !== "1") throw new Error("missing X-Kono-Tool-Rounds");
     if (data.telemetry.tool_rounds !== 1) throw new Error(`telemetry ${JSON.stringify(data.telemetry)}`);
-    const executed = data.nokey.tools_executed;
+    const executed = data.kono.tools_executed;
     if (executed?.length !== 1) throw new Error(`tools_executed ${JSON.stringify(executed)}`);
     if (executed[0].tool !== "calculate" || executed[0].ok !== true || executed[0].round !== 1) {
       throw new Error(JSON.stringify(executed[0]));
@@ -631,16 +631,16 @@ test("the agent loop keeps going for several rounds and stops at the round cap",
   // and the cut-off has to look like an ordinary tool_calls completion.
   installMock(scripted(good, () => toolCallCompletion("crypto", '{"op":"id","id_kind":"ulid"}'), seen));
   try {
-    await withEnv("NOKEY_TOOL_ROUNDS", "2", async () => {
+    await withEnv("KONO_TOOL_ROUNDS", "2", async () => {
       const res = await app.fetch(chatRequest({
         model: "free:smart", stream: false, tools: "auto",
         messages: [{ role: "user", content: "keep generating ids" }],
       }));
       const data = await asJson(res);
-      if (data.nokey?.degraded === true) throw new Error(`degraded: ${JSON.stringify(data.nokey)}`);
+      if (data.kono?.degraded === true) throw new Error(`degraded: ${JSON.stringify(data.kono)}`);
       if (data.choices[0].finish_reason !== "tool_calls") throw new Error(`finish ${data.choices[0].finish_reason}`);
-      if (data.nokey.tool_rounds !== 2) throw new Error(`rounds ${data.nokey.tool_rounds}`);
-      if (data.nokey.tools_executed?.length !== 2) throw new Error(`executed ${JSON.stringify(data.nokey.tools_executed)}`);
+      if (data.kono.tool_rounds !== 2) throw new Error(`rounds ${data.kono.tool_rounds}`);
+      if (data.kono.tools_executed?.length !== 2) throw new Error(`executed ${JSON.stringify(data.kono.tools_executed)}`);
       // 2 rounds of learning + the final pass-through round = 3 upstream calls.
       if (seen.length !== 3) throw new Error(`upstream calls ${seen.length}`);
       const lastToolMsg = seen[2].messages.filter((m: any) => m.role === "tool");
@@ -652,13 +652,13 @@ test("the agent loop keeps going for several rounds and stops at the round cap",
   }
 });
 
-test("nokey_preamble:false leaves the message list untouched", async () => {
+test("kono_preamble:false leaves the message list untouched", async () => {
   const good = await pickHealthyUrl();
   const seen: any[] = [];
   installMock(scripted(good, () => answerCompletion("done"), seen));
   try {
     await postJson("/v1/chat/completions", {
-      model: "free:smart", stream: false, tools: "auto", nokey_preamble: false,
+      model: "free:smart", stream: false, tools: "auto", kono_preamble: false,
       messages: [{ role: "user", content: "hi" }],
     });
     if (seen.length < 1) throw new Error("no upstream call");
@@ -681,13 +681,13 @@ test("repaired tool arguments still execute and are attributed to the round", as
     call === 0 ? toolCallCompletion("calculate", mangled) : answerCompletion("the median is 7"), seen));
   try {
     const res = await app.fetch(chatRequest({
-      model: "free:smart", stream: false, nokey_tools: ["calculate"],
+      model: "free:smart", stream: false, kono_tools: ["calculate"],
       messages: [{ role: "user", content: "median of 3,5,7,9,100" }],
     }));
     const data = await asJson(res);
     if (data.choices?.[0]?.message?.content !== "the median is 7") throw new Error(JSON.stringify(data.choices?.[0]));
-    const executed = data.nokey.tools_executed?.[0];
-    if (!executed || executed.ok !== true) throw new Error(`tools_executed ${JSON.stringify(data.nokey.tools_executed)}`);
+    const executed = data.kono.tools_executed?.[0];
+    if (!executed || executed.ok !== true) throw new Error(`tools_executed ${JSON.stringify(data.kono.tools_executed)}`);
     if (executed.repaired !== true) throw new Error("the repair was not attributed to the round");
     const toolMsg = seen[1].messages.at(-1);
     if (!String(toolMsg.content).includes('"median":7')) throw new Error(`tool content ${toolMsg.content}`);
@@ -709,9 +709,9 @@ test("a failed tool call goes back to the model as a tool message, never as a re
       messages: [{ role: "user", content: "when was that?" }],
     }));
     const data = await asJson(res);
-    if (data.nokey?.degraded === true) throw new Error("a bad tool call degraded the whole request");
+    if (data.kono?.degraded === true) throw new Error("a bad tool call degraded the whole request");
     if (data.choices?.[0]?.message?.content !== "I could not parse that date.") throw new Error(JSON.stringify(data.choices?.[0]));
-    const executed = data.nokey.tools_executed?.[0];
+    const executed = data.kono.tools_executed?.[0];
     if (executed?.ok !== false || executed?.code !== "TOOL_ERROR") throw new Error(`executed ${JSON.stringify(executed)}`);
     if (typeof executed.error !== "string" || executed.error.length === 0) throw new Error("error text lost");
 
@@ -753,8 +753,8 @@ test("client-owned tool calls pass straight through in a single round", async ()
       throw new Error(`tool_calls ${JSON.stringify(msg.tool_calls)}`);
     }
     if (seen.length !== 1) throw new Error(`router executed a client tool: ${seen.length} upstream calls`);
-    if (data.nokey.tool_rounds !== undefined) throw new Error("tool_rounds leaked into a passthrough response");
-    if (res.headers.get("x-nokey-tool-rounds")) throw new Error("round header leaked into a passthrough response");
+    if (data.kono.tool_rounds !== undefined) throw new Error("tool_rounds leaked into a passthrough response");
+    if (res.headers.get("x-kono-tool-rounds")) throw new Error("round header leaked into a passthrough response");
   } finally {
     restoreMock();
   }
@@ -779,14 +779,14 @@ test("a round mixing built-in and client calls is handed back whole, never half-
   try {
     const res = await app.fetch(chatRequest({
       model: "free:smart", stream: false, tools: [{ type: "function", function: { name: "get_weather" } }],
-      nokey_tools: ["calculate"],
+      kono_tools: ["calculate"],
       messages: [{ role: "user", content: "go" }],
     }));
     const data = await asJson(res);
     if (data.choices[0].finish_reason !== "tool_calls") throw new Error(`finish ${data.choices[0].finish_reason}`);
     if (data.choices[0].message.tool_calls?.length !== 2) throw new Error("calls were dropped");
     if (seen.length !== 1) throw new Error(`partial execution: ${seen.length} upstream calls`);
-    if (data.nokey.tool_rounds !== undefined) throw new Error("rounds reported for a mixed round");
+    if (data.kono.tool_rounds !== undefined) throw new Error("rounds reported for a mixed round");
   } finally {
     restoreMock();
   }
@@ -809,7 +809,7 @@ test("a client declaration shadows a same-named built-in", async () => {
           parameters: { type: "object", properties: { expression: { type: "string" } } },
         },
       }],
-      nokey_tools: ["data"],
+      kono_tools: ["data"],
       messages: [{ role: "user", content: "go" }],
     });
     if (data.choices[0].finish_reason !== "tool_calls") throw new Error(`finish ${data.choices[0].finish_reason}`);
@@ -828,18 +828,18 @@ test("a client declaration shadows a same-named built-in", async () => {
   }
 });
 
-test("NOKEY_TOOL_ROUNDS=0 turns the plane into pure OpenAI passthrough", async () => {
+test("KONO_TOOL_ROUNDS=0 turns the plane into pure OpenAI passthrough", async () => {
   const good = await pickHealthyUrl();
   const seen: any[] = [];
   installMock(scripted(good, () => toolCallCompletion("calculate", '{"expression":"1+1"}'), seen));
   try {
-    await withEnv("NOKEY_TOOL_ROUNDS", "0", async () => {
+    await withEnv("KONO_TOOL_ROUNDS", "0", async () => {
       const data = await postJson("/v1/chat/completions", {
         model: "free:smart", stream: false, tools: "auto", messages: [{ role: "user", content: "1+1" }],
       });
       if (data.choices[0].finish_reason !== "tool_calls") throw new Error(`finish ${data.choices[0].finish_reason}`);
       if (seen.length !== 1) throw new Error(`executed anyway: ${seen.length} calls`);
-      if (data.nokey.tool_rounds !== undefined) throw new Error("rounds reported while disabled");
+      if (data.kono.tool_rounds !== undefined) throw new Error("rounds reported while disabled");
       // Tools are still declared upstream, and the preamble is skipped because
       // nothing will execute the calls.
       if (!(seen[0].tools?.length > 0)) throw new Error("tools not declared while rounds are off");
@@ -851,11 +851,11 @@ test("NOKEY_TOOL_ROUNDS=0 turns the plane into pure OpenAI passthrough", async (
     });
 
     // Out-of-range and unparsable values are clamped, never trusted.
-    await withEnv("NOKEY_TOOL_ROUNDS", "9999", async () => {
+    await withEnv("KONO_TOOL_ROUNDS", "9999", async () => {
       const listing = await getJson("/v1/tools");
       if (listing.agent.max_rounds !== 32) throw new Error(`clamp high ${listing.agent.max_rounds}`);
     });
-    await withEnv("NOKEY_TOOL_ROUNDS", "not-a-number", async () => {
+    await withEnv("KONO_TOOL_ROUNDS", "not-a-number", async () => {
       const listing = await getJson("/v1/tools");
       if (listing.agent.max_rounds !== 8) throw new Error(`default ${listing.agent.max_rounds}`);
     });
@@ -864,12 +864,12 @@ test("NOKEY_TOOL_ROUNDS=0 turns the plane into pure OpenAI passthrough", async (
   }
 });
 
-test("NOKEY_TOOLS=0 disables the plane without breaking client tool passthrough", async () => {
+test("KONO_TOOLS=0 disables the plane without breaking client tool passthrough", async () => {
   const good = await pickHealthyUrl();
   const seen: any[] = [];
   installMock(scripted(good, () => answerCompletion("no tools here"), seen));
   try {
-    await withEnv("NOKEY_TOOLS", "0", async () => {
+    await withEnv("KONO_TOOLS", "0", async () => {
       const listing = await getJson("/v1/tools");
       if (listing.enabled !== false) throw new Error("plane still reported enabled");
 
@@ -885,7 +885,7 @@ test("NOKEY_TOOLS=0 disables the plane without breaking client tool passthrough"
 
     // Client tools keep working with the plane off — that is passthrough, not a
     // plane feature.
-    await withEnv("NOKEY_TOOLS", "0", async () => {
+    await withEnv("KONO_TOOLS", "0", async () => {
       const passthrough = await postJson("/v1/chat/completions", {
         model: "free:smart", stream: false,
         tools: [{ type: "function", function: { name: "get_weather" } }],
@@ -926,14 +926,14 @@ test("streaming drains a tool round quietly, reports it in-band, then streams th
     if (!text.startsWith(": trace ")) throw new Error(`first bytes ${JSON.stringify(text.slice(0, 40))}`);
     const frames = text.split("\n\n").filter((l) => l.startsWith("data: {")).map((l) => JSON.parse(l.slice(6)));
 
-    const rounds = frames.filter((f) => f.nokey?.type === "tool_round");
+    const rounds = frames.filter((f) => f.kono?.type === "tool_round");
     if (rounds.length !== 1) throw new Error(`expected one tool_round frame, got ${rounds.length}`);
     if (!Array.isArray(rounds[0].choices) || rounds[0].choices.length !== 0) {
       throw new Error(`status frame carried choices: ${JSON.stringify(rounds[0].choices)}`);
     }
-    if (rounds[0].nokey.round !== 1) throw new Error(`round ${rounds[0].nokey.round}`);
-    if (rounds[0].nokey.tools?.[0]?.name !== "calculate" || rounds[0].nokey.tools[0].ok !== true) {
-      throw new Error(`tools ${JSON.stringify(rounds[0].nokey.tools)}`);
+    if (rounds[0].kono.round !== 1) throw new Error(`round ${rounds[0].kono.round}`);
+    if (rounds[0].kono.tools?.[0]?.name !== "calculate" || rounds[0].kono.tools[0].ok !== true) {
+      throw new Error(`tools ${JSON.stringify(rounds[0].kono.tools)}`);
     }
     if (rounds[0].object !== "chat.completion.chunk") throw new Error(`status object ${rounds[0].object}`);
 
@@ -943,7 +943,7 @@ test("streaming drains a tool round quietly, reports it in-band, then streams th
     if (!content.includes("The answer is 42.")) throw new Error(`content ${JSON.stringify(content)}`);
     const fin = frames.filter((f) => f.choices?.[0]?.finish_reason);
     if (fin.at(-1)?.choices[0].finish_reason !== "stop") throw new Error(`finish ${JSON.stringify(fin)}`);
-    if (fin.at(-1)?.nokey?.tool_rounds !== 1) throw new Error(`final meta ${JSON.stringify(fin.at(-1)?.nokey)}`);
+    if (fin.at(-1)?.kono?.tool_rounds !== 1) throw new Error(`final meta ${JSON.stringify(fin.at(-1)?.kono)}`);
     if (!text.trimEnd().endsWith("data: [DONE]")) throw new Error("stream did not end with [DONE]");
 
     if (seen.length !== 2) throw new Error(`expected 2 upstream calls, saw ${seen.length}`);
@@ -986,7 +986,7 @@ test("streamed client tool calls still arrive as indexed deltas with finish_reas
     if (merged.get(1)?.name !== "get_time") throw new Error(`call 1 ${JSON.stringify(merged.get(1))}`);
     const fin = frames.filter((f) => f.choices?.[0]?.finish_reason);
     if (fin.at(-1)?.choices[0].finish_reason !== "tool_calls") throw new Error(`finish ${JSON.stringify(fin)}`);
-    if (frames.some((f) => f.nokey?.type === "tool_round")) throw new Error("client calls were treated as plane rounds");
+    if (frames.some((f) => f.kono?.type === "tool_round")) throw new Error("client calls were treated as plane rounds");
     if (seen.length !== 1) throw new Error(`executed client tools: ${seen.length}`);
     if (!text.trimEnd().endsWith("data: [DONE]")) throw new Error("stream did not end with [DONE]");
   } finally {
@@ -1005,7 +1005,7 @@ test("a streaming round whose calls belong to the client is emitted buffered, no
   try {
     const res = await app.fetch(chatRequest({
       model: "free:smart", stream: true,
-      tools: [{ type: "function", function: { name: "get_weather" } }], nokey_tools: "auto",
+      tools: [{ type: "function", function: { name: "get_weather" } }], kono_tools: "auto",
       messages: [{ role: "user", content: "weather" }],
     }));
     const text = await res.text();
@@ -1017,7 +1017,7 @@ test("a streaming round whose calls belong to the client is emitted buffered, no
     }
     const fin = frames.filter((f) => f.choices?.[0]?.finish_reason);
     if (fin.at(-1)?.choices[0].finish_reason !== "tool_calls") throw new Error(`finish ${JSON.stringify(fin)}`);
-    if (frames.some((f) => f.nokey?.type === "tool_round")) throw new Error("reported a round that never ran");
+    if (frames.some((f) => f.kono?.type === "tool_round")) throw new Error("reported a round that never ran");
     if (seen.length !== 1) throw new Error(`extra upstream calls: ${seen.length}`);
   } finally {
     restoreMock();
@@ -1058,7 +1058,7 @@ test("free:tools routes through the tool-aware lane and completes", async () => 
       messages: [{ role: "user", content: "what can you call?" }],
     }));
     const data = await asJson(res);
-    if (data.nokey?.degraded === true) throw new Error(`degraded: ${JSON.stringify(data.nokey)}`);
+    if (data.kono?.degraded === true) throw new Error(`degraded: ${JSON.stringify(data.kono)}`);
     if (data.choices?.[0]?.message?.content !== "tool lane answer") throw new Error(JSON.stringify(data.choices?.[0]));
     if (!(seen[0].tools?.length > 0)) throw new Error("tools not declared on the tool lane");
     if (typeof data.telemetry.tool_competence !== "number" || typeof data.telemetry.tool_pulls !== "number") {
@@ -1125,7 +1125,7 @@ test("tool rounds and direct executions are traced inside the request trace", as
     const data = await postJson("/v1/chat/completions", {
       model: "free:smart", stream: false, tools: "auto", messages: [{ role: "user", content: "hash abc" }],
     });
-    const traceId = data.nokey?.trace_id;
+    const traceId = data.kono?.trace_id;
     if (!traceId) throw new Error("no trace id");
 
     const adminSecret = Deno.env.get("ADMIN_SECRET");
@@ -1161,7 +1161,7 @@ test("tools:auto never hands a call to the user: undeclared names execute, a spe
       : jsonResponse({ choices: [{ index: 0, finish_reason: "stop", message: { role: "assistant", content: "No weather tool; answering directly." } }] }), seen));
   try {
     const data = await asJson(await app.fetch(chatRequest({
-      model: "free:smart", stream: false, tools: "auto", nokey_rounds: 1,
+      model: "free:smart", stream: false, tools: "auto", kono_rounds: 1,
       messages: [{ role: "user", content: "weather in Oslo" }],
     })));
     if (data.choices[0].finish_reason !== "stop") throw new Error(`finish ${data.choices[0].finish_reason}`);
@@ -1190,7 +1190,7 @@ test("a streamed tool call that arrives after the head committed still runs in-p
     }))).text();
     const frames = text.split("\n\n").filter((l) => l.startsWith("data: {")).map((l) => JSON.parse(l.slice(6)));
     if (frames.some((f) => f.choices?.[0]?.delta?.tool_calls)) throw new Error("late calls reached the client");
-    if (!frames.some((f) => f.nokey?.type === "tool_round")) throw new Error("no tool round reported");
+    if (!frames.some((f) => f.kono?.type === "tool_round")) throw new Error("no tool round reported");
     const fin = frames.filter((f) => f.choices?.[0]?.finish_reason).at(-1);
     if (fin?.choices[0].finish_reason !== "stop") throw new Error(`finish ${JSON.stringify(fin)}`);
     if (seen.length !== 2) throw new Error(`expected 2 upstream calls, saw ${seen.length}`);
@@ -1239,17 +1239,17 @@ test("the build gate sends an agent that broke the workspace back to work until 
     () => answerCompletion("Fixed the syntax error; the build is clean."),
   ][Math.min(call, 4)](), seen));
   try {
-    const res = await app.fetch(chatRequest({ model: "free:smart", stream: false, tools: "auto", messages: [{ role: "user", content: "build a sum app" }] }, { "x-nokey-session": session }));
+    const res = await app.fetch(chatRequest({ model: "free:smart", stream: false, tools: "auto", messages: [{ role: "user", content: "build a sum app" }] }, { "x-kono-session": session }));
     const data = await asJson(res);
     if (data.choices?.[0]?.message?.content !== "Fixed the syntax error; the build is clean.") throw new Error(`final ${JSON.stringify(data.choices?.[0]?.message)}`);
     if (seen.length !== 5) throw new Error(`upstream calls ${seen.length}`);
     const gateTurn = seen[3].messages.at(-1);
     if (gateTurn.role !== "user" || !/\[build gate\]/.test(gateTurn.content) || !/app\.js:1/.test(gateTurn.content)) throw new Error(`gate turn ${JSON.stringify(gateTurn)}`);
     if (seen[3].messages.at(-2).content !== "All done.") throw new Error("the premature answer stays in the transcript");
-    if (!data.nokey.tools_executed.some((e: any) => e.tool === "build_gate")) throw new Error(`no gate in log ${JSON.stringify(data.nokey.tools_executed)}`);
-    // nokey_gate:false opts out: the same broken build ends at the first answer.
+    if (!data.kono.tools_executed.some((e: any) => e.tool === "build_gate")) throw new Error(`no gate in log ${JSON.stringify(data.kono.tools_executed)}`);
+    // kono_gate:false opts out: the same broken build ends at the first answer.
     seen.length = 0;
-    const off = await asJson(await app.fetch(chatRequest({ model: "free:smart", stream: false, tools: "auto", nokey_gate: false, messages: [{ role: "user", content: "again" }] }, { "x-nokey-session": session + "b" })));
+    const off = await asJson(await app.fetch(chatRequest({ model: "free:smart", stream: false, tools: "auto", kono_gate: false, messages: [{ role: "user", content: "again" }] }, { "x-kono-session": session + "b" })));
     if (off.choices?.[0]?.message?.content !== "All done." || seen.length !== 3) throw new Error(`opt-out ${seen.length} ${JSON.stringify(off.choices?.[0]?.message)}`);
   } finally {
     restoreMock();
@@ -1267,7 +1267,7 @@ test("agent_team runs sub-agents through the router in the caller's session, one
     return tools === 0 ? toolCallCompletion("agent_team", JSON.stringify({ agents: [{ role: "builder", task: "Write notes/plan.md with a heading." }] })) : answerCompletion("The team wrote the plan.");
   }, seen));
   try {
-    const data = await asJson(await app.fetch(chatRequest({ model: "free:smart", stream: false, tools: "auto", messages: [{ role: "user", content: "plan it with a team" }] }, { "x-nokey-session": session })));
+    const data = await asJson(await app.fetch(chatRequest({ model: "free:smart", stream: false, tools: "auto", messages: [{ role: "user", content: "plan it with a team" }] }, { "x-kono-session": session })));
     if (data.choices?.[0]?.message?.content !== "The team wrote the plan.") throw new Error(`final ${JSON.stringify(data.choices?.[0]?.message)}`);
     const subCalls = seen.filter((p) => p.messages.some((m: any) => /builder agent on a team/.test(String(m.content))));
     if (subCalls.length !== 2) throw new Error(`sub-agent upstream calls ${subCalls.length}`);
@@ -1275,7 +1275,7 @@ test("agent_team runs sub-agents through the router in the caller's session, one
     if (!seen[0].tools.some((t: any) => t.function?.name === "agent_team")) throw new Error("the lead agent should have agent_team");
     const report = JSON.parse(seen.at(-1).messages.at(-1).content);
     if (report.reports?.[0]?.content !== "Wrote notes/plan.md." || report.reports[0].ok !== true) throw new Error(`report ${JSON.stringify(report).slice(0, 300)}`);
-    const read = await postJson("/v1/tools/execute", { calls: [{ name: "fs_read", arguments: { path: "notes/plan.md" } }] }, { "x-nokey-session": session });
+    const read = await postJson("/v1/tools/execute", { calls: [{ name: "fs_read", arguments: { path: "notes/plan.md" } }] }, { "x-kono-session": session });
     if (read.results?.[0]?.result?.content !== "# plan\n") throw new Error(`shared workspace ${JSON.stringify(read).slice(0, 300)}`);
   } finally {
     restoreMock();

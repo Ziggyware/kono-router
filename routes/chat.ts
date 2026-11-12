@@ -31,7 +31,7 @@ export const HEARTBEAT_MS = 5_000;
 // Longest a response may go without sending a byte. Edge proxies and idle-bounded
 // clients drop silent connections; this keeps slow generations and long tool
 // rounds alive end to end.
-export const idleMs = () => clampNum(Number(Deno.env.get("NOKEY_IDLE_MS")) || 15_000, 50, 60_000);
+export const idleMs = () => clampNum(Number((Deno.env.get("KONO_IDLE_MS") ?? Deno.env.get("NOKEY_IDLE_MS"))) || 15_000, 50, 60_000);
 
 
 
@@ -133,6 +133,12 @@ honoApp.post("/v1/chat/completions", async (c) => {
   try {
     // Never 400 on a malformed body: normalise it and keep routing.
     const body = await c.req.json().catch(() => ({} as Json)) as Json;
+    // Rebrand compat: pre-rename clients send nokey_* fields. Alias them onto
+    // the kono_* names so existing integrations keep working unchanged.
+    for (const k of ["tools", "rounds", "builder", "gate", "gate_rounds", "runner", "tests", "preamble"]) {
+      const legacy = `nokey_${k}`;
+      if (body[`kono_${k}`] === undefined && body[legacy] !== undefined) body[`kono_${k}`] = body[legacy];
+    }
     root.io("request", body);
     const messages = normalizeMessages(body.messages, body.prompt);
     reqModel = String(body.model || "free:auto");
@@ -141,24 +147,24 @@ honoApp.post("/v1/chat/completions", async (c) => {
 
     // ---- Tool Plane: what this request may call ---------------------------
     // A client can bring its own tools, ask the router for its built-ins
-    // ("tools": "auto" | "nokey_tools" | header x-nokey-tools), or both. Built-ins
+    // ("tools": "auto" | "kono_tools" | header x-kono-tools), or both. Built-ins
     // are appended, never substituted: a client tool that shadows a built-in name
     // always wins, so the plane cannot hijack a caller's own API.
     const clientTools = Array.isArray(body.tools) ? (body.tools as unknown[]) : [];
-    // App Builder profile (nokey_builder): deterministic, quality-first
+    // App Builder profile (kono_builder): deterministic, quality-first
     // routing — no strategy-arm lottery, no sampled ranking, sticky winner,
     // gate always on. Each behavior is flagged at its site below.
-    const builder = body.nokey_builder === true;
+    const builder = body.kono_builder === true;
     let autoRequest = body.tools === "auto" || body.tools === true
       ? "auto"
-      : body.nokey_tools ?? c.req.header("x-nokey-tools") ?? undefined;
+      : body.kono_tools ?? c.req.header("x-kono-tools") ?? c.req.header("x-nokey-tools") ?? undefined;
     // A builder request implies the router's tool plane when the client did
     // not declare tools of its own: the build gate and the fs_* discipline in
     // the preamble are part of the profile. Explicit client tools win.
     if (builder && autoRequest === undefined && clientTools.length === 0) autoRequest = "auto";
     if (toolPlaneEnabled()) await hydrateForgedTools().catch(logErr);
-    // Sub-agents (x-nokey-depth ≥ 1) get every tool but agent_team: teams do not nest.
-    let autoTools = toolPlaneEnabled() ? resolveAutoToolNames(autoRequest)?.filter((n) => n !== "agent_team" || !(Number(c.req.header("x-nokey-depth") ?? 0) >= 1)) ?? null : null;
+    // Sub-agents (x-kono-depth ≥ 1) get every tool but agent_team: teams do not nest.
+    let autoTools = toolPlaneEnabled() ? resolveAutoToolNames(autoRequest)?.filter((n) => n !== "agent_team" || !(Number(c.req.header("x-kono-depth") ?? c.req.header("x-nokey-depth") ?? 0) >= 1)) ?? null : null;
     // Intent-shaped exposure: a bare "auto" request gets the tool subset its
     // task class can actually use, not all ~30 schemas on every attempt.
     // Explicit name lists, "all", and builder requests keep exactly what
@@ -197,7 +203,7 @@ honoApp.post("/v1/chat/completions", async (c) => {
     // let: the build gate extends the budget when it sends the agent back to work.
     // Builder requests get a deeper default tool budget (24 rounds) when the
     // client did not ask for a specific count; the 0–32 clamp still applies.
-    const roundsRequest = builder && typeof body.nokey_rounds !== "number" ? 24 : body.nokey_rounds;
+    const roundsRequest = builder && typeof body.kono_rounds !== "number" ? 24 : body.kono_rounds;
     let agentRounds = autoTools ? maxToolRounds(roundsRequest) : 0;
     // ---- ASCK-L: task context, strategy arm, lesson injection -------------
     // The class is computed from the caller's messages before any router
@@ -214,7 +220,7 @@ honoApp.post("/v1/chat/completions", async (c) => {
       const m = [...messages].reverse().find((x) => x.role === "user");
       return typeof m?.content === "string" ? m.content : "";
     })();
-    const hasTests = Array.isArray(body.nokey_tests) && body.nokey_tests.length > 0;
+    const hasTests = Array.isArray(body.kono_tests) && body.kono_tests.length > 0;
     const hasVerifier = taskCtx.taskClass === "math" || taskCtx.taskClass === "json" ||
       taskCtx.taskClass === "tool" || (taskCtx.taskClass === "code" && hasTests);
     await hydrateLearning().catch(logErr);
@@ -230,8 +236,8 @@ honoApp.post("/v1/chat/completions", async (c) => {
     // The baseline arm is what the decision log records, truthfully.
     const armChoice = builder ? null : chooseThompson(armCands, Math.random, { epsilon: 0.05, resamples: 120 });
     const arm = builder ? baselineArm : (armDefs.find((a) => a.id === armChoice?.id) ?? DEFAULT_STRATEGY_ARMS[0]);
-    // Pure-passthrough modes (tool plane off: NOKEY_TOOLS=0,
-    // NOKEY_TOOL_ROUNDS=0, or no auto tools on this request) must not mutate
+    // Pure-passthrough modes (tool plane off: KONO_TOOLS=0,
+    // KONO_TOOL_ROUNDS=0, or no auto tools on this request) must not mutate
     // the request — no prompt variant, no lessons, no temperature shift, no
     // verify-retry. The strategy in effect is then the baseline, and the
     // baseline is what the decision log records.
@@ -261,8 +267,8 @@ honoApp.post("/v1/chat/completions", async (c) => {
     const toolAware = hasTools || reqModel.toLowerCase().includes("tools");
     // One line of instruction materially raises tool-use rates on small free
     // models, which otherwise answer from memory. Only added when the router
-    // will actually execute the calls; opt out with nokey_preamble: false.
-    if (autoTools && agentRounds > 0 && body.nokey_preamble !== false) {
+    // will actually execute the calls; opt out with kono_preamble: false.
+    if (autoTools && agentRounds > 0 && body.kono_preamble !== false) {
       // The session's workspace, so the model knows what project exists, what
       // the preview runs and what is broken, before deciding how to answer.
       let briefTimer: ReturnType<typeof setTimeout> | undefined;
@@ -360,7 +366,7 @@ honoApp.post("/v1/chat/completions", async (c) => {
     // MODEL-AGNOSTIC ROUTING: an arbitrary requested model id never aborts the
     // request. Exact/near matches (trigram-Dice + token-Jaccard similarity) are
     // tried first; everything else keeps its Bayesian rank order as fallback.
-    const isVirtualModel = reqModelLower.startsWith("free:") || reqModelLower.startsWith("nokey-image");
+    const isVirtualModel = reqModelLower.startsWith("free:") || reqModelLower.startsWith("kono-image");
     let nearMatches = 0;
     if (!isVirtualModel && ranked.length > 1) {
       // Treat provider-qualified ids (e.g. company/model-name) as aliases for
@@ -583,17 +589,17 @@ honoApp.post("/v1/chat/completions", async (c) => {
     // gate checks the project (static, runtime, tests) and, while anything is
     // unmet, hands the findings back as the next user turn with more rounds.
     // Builder profile: the gate cannot be opted out of (a client-sent
-    // nokey_gate: false is ignored) and its default budget is 10 rounds
-    // instead of 6; an explicit nokey_gate_rounds still wins.
-    const gateMax = planeActive && (builder || body.nokey_gate !== false) && autoTools?.includes("fs_write") ? Math.round(clampNum(Number(body.nokey_gate_rounds) || (builder ? 10 : 6), 1, 12)) : 0;
+    // kono_gate: false is ignored) and its default budget is 10 rounds
+    // instead of 6; an explicit kono_gate_rounds still wins.
+    const gateMax = planeActive && (builder || body.kono_gate !== false) && autoTools?.includes("fs_write") ? Math.round(clampNum(Number(body.kono_gate_rounds) || (builder ? 10 : 6), 1, 12)) : 0;
     let gateRounds = 0;
-    const gateCaps = toolCaps(c, reqModel, body.nokey_runner === true);
+    const gateCaps = toolCaps(c, reqModel, body.kono_runner === true);
     const baseToolChoice = completionOptions.tool_choice;
     const startSig = gateMax ? await workspaceSigFor(gateCaps).catch(() => "") : "";
     const runGate = async (round: number, waitRuntimeMs: number): Promise<GateVerdict | null> => {
       if (!gateMax || gateRounds >= gateMax || master.signal.aborted) return null;
       // Sub-agents answer for their own part; testing the whole app is the lead agent's (or a tester's) job.
-      const v = await buildGate(gateCaps, { startSig, force: body.nokey_gate === "always", tests: !(Number(c.req.header("x-nokey-depth") ?? 0) >= 1), waitRuntimeMs, signal: master.signal })
+      const v = await buildGate(gateCaps, { startSig, force: body.kono_gate === "always", tests: !(Number(c.req.header("x-kono-depth") ?? c.req.header("x-nokey-depth") ?? 0) >= 1), waitRuntimeMs, signal: master.signal })
         .catch((e) => { root.event("build_gate_error", { error: errText(e).slice(0, 200) }); return null; });
       if (!v || v.done) {
         if (v && v.summary.reason !== "unchanged" && v.summary.reason !== "empty") root.event("build_gate", { pass: true, rounds: gateRounds });
@@ -660,7 +666,7 @@ honoApp.post("/v1/chat/completions", async (c) => {
               (res.toolCalls?.length ?? 0) > 0 && !master.signal.aborted;
             if (wantLoop) {
               const roundSpan = root.child("tool_round", { round: toolRound + 1, calls: res.toolCalls!.length, tuple: cand.tupleId });
-              const outcome = await executeOwnedToolCalls(res.toolCalls!, { span: roundSpan, signal: master.signal, admin: isAdminContext(c), clientNames: clientToolNames, caps: toolCaps(c, reqModel, body.nokey_runner === true) });
+              const outcome = await executeOwnedToolCalls(res.toolCalls!, { span: roundSpan, signal: master.signal, admin: isAdminContext(c), clientNames: clientToolNames, caps: toolCaps(c, reqModel, body.kono_runner === true) });
               if (outcome.loop) {
                 for (const e of outcome.executed) {
                   toolLog.push({
@@ -777,7 +783,7 @@ honoApp.post("/v1/chat/completions", async (c) => {
               created,
               model: cand.modelId,
               provider: cand.providerId,
-              nokey: {
+              kono: {
                 ...meta(cand),
                 ...(toolRound > 0 ? { tool_rounds: toolRound, tools_executed: toolLog } : {}),
               },
@@ -810,9 +816,9 @@ honoApp.post("/v1/chat/completions", async (c) => {
             }, 200, {
               ...traceHeaders,
               "Server-Timing": `ttft;dur=${res.ttftMs}, total;dur=${Math.round(root.ms)}`,
-              "X-Nokey-Attempts": String(tried.size),
-              "X-Nokey-Endpoints": String(endpointsAvailable),
-              ...(toolRound > 0 ? { "X-Nokey-Tool-Rounds": String(toolRound) } : {}),
+              "X-Kono-Attempts": String(tried.size),
+              "X-Kono-Endpoints": String(endpointsAvailable),
+              ...(toolRound > 0 ? { "X-Kono-Tool-Rounds": String(toolRound) } : {}),
             });
           }
         } finally {
@@ -822,7 +828,7 @@ honoApp.post("/v1/chat/completions", async (c) => {
       return await idleBuffered(buffered(), async (e) => {
         endDegraded(e);
         return strictErrors() ? c.json({ error: { message: errText(e) } }, 502) : degradedCompletion(c, degradedOpts(e), {});
-      }, { ...traceHeaders, "X-Nokey-Endpoints": String(endpointsAvailable) });
+      }, { ...traceHeaders, "X-Kono-Endpoints": String(endpointsAvailable) });
     }
 
     // Headers leave immediately; routing proceeds behind heartbeat comments and the
@@ -831,7 +837,7 @@ honoApp.post("/v1/chat/completions", async (c) => {
     // committed winner is piped token-by-token (post-commit failover is impossible).
     // When the plane supplied the tools, a round that only produces tool calls is
     // drained quietly, executed server-side and re-dispatched: the client sees
-    // `nokey` status frames instead of intermediate assistant chatter, then the
+    // `kono` status frames instead of intermediate assistant chatter, then the
     // final answer streams normally.
     const sse = async function* (): AsyncGenerator<string> {
       let ok = false;
@@ -880,8 +886,8 @@ honoApp.post("/v1/chat/completions", async (c) => {
               object: "chat.completion.chunk",
               created,
               model: cand.modelId,
-              provider: "nokey-router",
-              nokey: payload,
+              provider: "kono-router",
+              kono: payload,
               choices: [],
             })}\n\n`;
 
@@ -922,7 +928,7 @@ honoApp.post("/v1/chat/completions", async (c) => {
             }
 
             const roundSpan = root.child("tool_round", { round: toolRound + 1, calls: quiet.toolCalls?.length ?? 0, tuple: cand.tupleId });
-            const outcome = await executeOwnedToolCalls(quiet.toolCalls ?? [], { span: roundSpan, signal: master.signal, admin: isAdminContext(c), clientNames: clientToolNames, caps: toolCaps(c, reqModel, body.nokey_runner === true) });
+            const outcome = await executeOwnedToolCalls(quiet.toolCalls ?? [], { span: roundSpan, signal: master.signal, admin: isAdminContext(c), clientNames: clientToolNames, caps: toolCaps(c, reqModel, body.kono_runner === true) });
             if (outcome.loop) {
               roundSpan.end("ok", {
                 executed: outcome.executed.length,
@@ -958,7 +964,7 @@ honoApp.post("/v1/chat/completions", async (c) => {
             ok = true;
             const clientFinish = quiet.finish ?? "tool_calls";
             root.io("response", { model: cand.modelId, provider: cand.providerId, finish: clientFinish, content: quiet.content, tool_calls: quiet.toolCalls });
-            yield chunk({}, clientFinish, { nokey: { ...meta(cand), ...(toolRound > 0 ? { tool_rounds: toolRound } : {}) } });
+            yield chunk({}, clientFinish, { kono: { ...meta(cand), ...(toolRound > 0 ? { tool_rounds: toolRound } : {}) } });
             root.end("ok", {
               tuple: cand.tupleId,
               provider: cand.providerId,
@@ -1014,7 +1020,7 @@ honoApp.post("/v1/chat/completions", async (c) => {
               const late = [...streamedCalls.values()].sort((a, b) => a.index - b.index)
                 .map((t) => ({ id: t.id ?? `call_${t.index}`, type: "function", function: { name: t.function?.name ?? "", arguments: t.function?.arguments ?? "" } }));
               const roundSpan = root.child("tool_round", { round: toolRound + 1, calls: late.length, tuple: cand.tupleId, late: true });
-              const outcome = await executeOwnedToolCalls(late, { span: roundSpan, signal: master.signal, admin: isAdminContext(c), clientNames: clientToolNames, caps: toolCaps(c, reqModel, body.nokey_runner === true) });
+              const outcome = await executeOwnedToolCalls(late, { span: roundSpan, signal: master.signal, admin: isAdminContext(c), clientNames: clientToolNames, caps: toolCaps(c, reqModel, body.kono_runner === true) });
               if (outcome.loop) {
                 roundSpan.end("ok", { executed: outcome.executed.length, failures: outcome.executed.filter((e) => !e.ok).length });
                 messages.push({ role: "assistant", content: streamedText || null, tool_calls: late } as unknown as { role: string; content: unknown });
@@ -1053,7 +1059,7 @@ honoApp.post("/v1/chat/completions", async (c) => {
             ok = true;
             const fin = finish ?? (toolCalls.size ? "tool_calls" : "stop");
             root.io("response", { model: cand.modelId, provider: cand.providerId, finish: fin, content: streamedText, ...(reasoning ? { reasoning_content: reasoning } : {}), ...(streamedCalls.size ? { tool_calls: [...streamedCalls.values()] } : {}) });
-            yield chunk({}, fin, { nokey: { ...meta(cand), ...(toolRound > 0 ? { tool_rounds: toolRound } : {}) } });
+            yield chunk({}, fin, { kono: { ...meta(cand), ...(toolRound > 0 ? { tool_rounds: toolRound } : {}) } });
             const totalMs = Math.max(up.ttftMs + 1, Math.round(performance.now() - up.t0));
             recordTupleSuccess(cand.tupleId, up.ttftMs, totalMs, Math.max(1, Math.ceil((contentChars + reasoning.length) / 4))).catch(logErr);
             if (declaredTools.length > 0 && streamedCalls.size > 0) {
@@ -1120,7 +1126,7 @@ honoApp.post("/v1/chat/completions", async (c) => {
     };
 
     return new Response(ReadableStream.from(keepalive(sse(), idleMs())).pipeThrough(new TextEncoderStream()), {
-      headers: { ...SSE_HEADERS, ...traceHeaders, "X-Nokey-Endpoints": String(endpointsAvailable) },
+      headers: { ...SSE_HEADERS, ...traceHeaders, "X-Kono-Endpoints": String(endpointsAvailable) },
     });
   } catch (err: unknown) {
     clearTimeout(globalTimeout);

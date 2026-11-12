@@ -3,7 +3,7 @@
 // =====================================================================
 const AFILES = ["main.ts", "math.ts", "trace.ts", "index.html", "openapi.json", "CHANGES.md", "services.json", "deno.json"];
 const ARCH_PROMPT = [
-  "You are the Architect, the embedded agent of the nokey-router workspace. You act through tools.",
+  "You are the Architect, the embedded agent of the kono-router workspace. You act through tools.",
   "",
   "TO CALL A TOOL reply with exactly one fenced block:",
   "```action",
@@ -24,7 +24,7 @@ const ARCH_PROMPT = [
   "- run_probe {mode} — admin. Canary-probe top candidates.",
   "- force_sync {} — admin. Full catalog sync.",
   "- list_plugins {} — installed workspace plugins.",
-  "- install_plugin {code} — installs a plugin LIVE and persists it. code must call NokeyPlugins.register({ id, name, description, admin?, mount(el, ctx) }).",
+  "- install_plugin {code} — installs a plugin LIVE and persists it. code must call KonoPlugins.register({ id, name, description, admin?, mount(el, ctx) }).",
   "  ctx: base(), apiKey(), adminSecret(), fetchJson(url, opts) -> {res, data}, toast(msg, bad?), log(msg), esc(s), chat(messages, opts) -> completion JSON,",
   "  chatStream(messages, onDelta(delta, full), opts{model, max_tokens, temperature, tools, onReasoning(delta, full), onToolCalls(calls)}) -> full text, image(prompt, model?) -> URL,",
   "  models(), health(), probe(mode), sync(), resurrect(limit), source(file), traces(limit), trace(id), storeFor(id) -> {get, set, del}.",
@@ -136,11 +136,11 @@ async function runTool(a) {
     case "ping_model": {
       const model = String(a.model ?? "free:smart"), t0 = performance.now();
       const d = await req("/v1/chat/completions", { method: "POST", body: { model, messages: [{ role: "user", content: "Reply with exactly: pong" }], max_tokens: 32 } });
-      return { ok: true, detail: `${model}: ${ms(performance.now() - t0)} via ${d.nokey?.tuple_id ?? d.provider}; degraded=${Boolean(d.nokey?.degraded)}; reply "${String(d.choices?.[0]?.message?.content ?? "").slice(0, 100)}"; trace ${d.nokey?.trace_id ?? ""}` };
+      return { ok: true, detail: `${model}: ${ms(performance.now() - t0)} via ${d.kono?.tuple_id ?? d.provider}; degraded=${Boolean(d.kono?.degraded)}; reply "${String(d.choices?.[0]?.message?.content ?? "").slice(0, 100)}"; trace ${d.kono?.trace_id ?? ""}` };
     }
     case "run_probe": { needAdmin(); const d = await req("/v1/probe", { method: "POST", admin: true, body: { mode: a.mode ?? "smart" } }); return { ok: true, detail: (d.results ?? []).map((r) => r.ok ? `${r.passed ? "PASS" : "WRONG"} ${r.tupleId} ${ms(r.ms)}` : `FAIL ${r.tupleId} ${r.error ?? ""}`).join("\n") || "no candidates" }; }
     case "force_sync": { needAdmin(); const d = await req("/v1/sync", { method: "POST", admin: true, body: {} }); return { ok: true, detail: `catalog synced: ${d.total_models} models` }; }
-    case "list_plugins": return { ok: true, detail: NokeyPlugins._list.map((p) => `- ${p.id} "${p.name}"${p.admin ? " [admin]" : ""}${p.builtin ? " [builtin]" : ""}: ${p.description ?? ""}`).join("\n") || "none" };
+    case "list_plugins": return { ok: true, detail: KonoPlugins._list.map((p) => `- ${p.id} "${p.name}"${p.admin ? " [admin]" : ""}${p.builtin ? " [builtin]" : ""}: ${p.description ?? ""}`).join("\n") || "none" };
     case "install_plugin": {
       const r = installPlugin(String(a.code ?? ""));
       return r.ok ? { ok: true, detail: `installed and persisted: ${r.ids.join(", ")} (Plugins view)` } : { ok: false, detail: r.error };
@@ -181,7 +181,7 @@ async function sendArch() {
       const working = line(`<span class="dim">round ${rounds} · thinking</span>`);
       const res = await req("/v1/chat/completions", { method: "POST", signal: arch.ctl.signal, body: { model: $("#amodel")?.value.trim() || "free:smart", temperature: 0.2, messages: [{ role: "system", content: ARCH_PROMPT }, ...arch.history] } });
       const reply = res.choices?.[0]?.message?.content ?? "";
-      const tr = res.nokey?.trace_id ?? "";
+      const tr = res.kono?.trace_id ?? "";
       working.remove();
       arch.history.push({ role: "assistant", content: reply });
       const action = parseAction(reply);

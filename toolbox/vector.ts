@@ -1,7 +1,7 @@
 // Embeddings without a key. `hash-384` is a signed feature-hashing projection of
 // word unigrams, word bigrams and character 4-grams — deterministic, ~5µs per KB,
 // and honest about what it is: lexical-semantic, not a neural encoder. If the
-// deployment has a real OpenAI-compatible endpoint, set NOKEY_EMBED_URL and the
+// deployment has a real OpenAI-compatible endpoint, set KONO_EMBED_URL and the
 // tool upgrades transparently.
 
 import { truncate } from "./util.ts";
@@ -11,10 +11,10 @@ import type { Json, ToolSpec } from "./types.ts";
 export const estimateTokens = (s: string): number => Math.ceil(s.length / 4);
 
 async function remoteEmbed(texts: string[]): Promise<{ vectors: number[][]; model: string } | null> {
-  const url = Deno.env.get("NOKEY_EMBED_URL");
+  const url = (Deno.env.get("KONO_EMBED_URL") ?? Deno.env.get("NOKEY_EMBED_URL"));
   if (!url) return null;
-  const model = Deno.env.get("NOKEY_EMBED_MODEL") ?? "text-embedding-3-small";
-  const key = Deno.env.get("NOKEY_EMBED_KEY");
+  const model = (Deno.env.get("KONO_EMBED_MODEL") ?? Deno.env.get("NOKEY_EMBED_MODEL")) ?? "text-embedding-3-small";
+  const key = (Deno.env.get("KONO_EMBED_KEY") ?? Deno.env.get("NOKEY_EMBED_KEY"));
   try {
     const res = await fetch(url, {
       method: "POST",
@@ -39,7 +39,7 @@ export const embedTools: ToolSpec[] = [
     kind: "vector",
     aliases: ["embeddings", "vectorize", "semantic_similarity", "cosine"],
     description:
-      "Turn text into vectors and measure semantic closeness. Default model `hash-384` is keyless, deterministic and instant (word + bigram + char-4gram projection); set NOKEY_EMBED_URL to use a neural endpoint instead. Use `compare_to` to get cosine scores without dragging raw vectors through context.",
+      "Turn text into vectors and measure semantic closeness. Default model `hash-384` is keyless, deterministic and instant (word + bigram + char-4gram projection); set KONO_EMBED_URL to use a neural endpoint instead. Use `compare_to` to get cosine scores without dragging raw vectors through context.",
     timeoutMs: 25_000,
     parameters: {
       type: "object",

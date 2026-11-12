@@ -5,13 +5,13 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="color-scheme" content="dark light">
 <meta name="theme-color" content="#06070a">
-<meta name="description" content="nokey-router — one OpenAI-compatible endpoint that routes across every free model lane.">
+<meta name="description" content="kono-router — one OpenAI-compatible endpoint that routes across every free model lane.">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<meta name="apple-mobile-web-app-title" content="nokey">
+<meta name="apple-mobile-web-app-title" content="kono">
 <meta name="format-detection" content="telephone=no">
-<title>nokey-router</title>
+<title>kono-router</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect x='1.2' y='1.2' width='21.6' height='21.6' rx='7' fill='%23b6ff3c'/%3E%3Cpath d='M7.7 16.3V7.7l8.6 8.6V7.7' fill='none' stroke='%2307120a' stroke-width='2.3' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -61,9 +61,9 @@
 <div id="prog" aria-hidden="true"></div>
 <div id="scrim" aria-hidden="true"></div>
 <header>
-  <a class="brand" href="#chat" aria-label="nokey-router home">
+  <a class="brand" href="#chat" aria-label="kono-router home">
     <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="1.2" y="1.2" width="21.6" height="21.6" rx="7" fill="url(#lg)"/><path d="M7.7 16.3V7.7l8.6 8.6V7.7" fill="none" stroke="#07120a" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"/></svg>
-    <b>nokey<span>router</span></b>
+    <b>kono<span>router</span></b>
     <em>v6</em>
   </a>
   <span class="vtitle" id="vtitle"></span>
@@ -100,7 +100,7 @@
       <div class="welcome" id="welcome">
         <div class="wmark">
           <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="1.2" y="1.2" width="21.6" height="21.6" rx="7" fill="url(#lg)"/><path d="M7.7 16.3V7.7l8.6 8.6V7.7" fill="none" stroke="#07120a" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"/></svg>
-          <b style="font:650 15px/1 var(--sans);letter-spacing:-.02em">nokey-router</b>
+          <b style="font:650 15px/1 var(--sans);letter-spacing:-.02em">kono-router</b>
         </div>
         <h1>One endpoint. Every free model.</h1>
         <p>Streaming chat, tool calls, vision and images — routed by Bayesian lane scoring with an exhaustive fallback sweep.</p>
@@ -310,7 +310,7 @@
     <div class="row" id="mctl" data-fold="top" data-fold-label="Image controls" style="margin-bottom:12px;align-items:stretch">
       <textarea id="mprompt" class="grow" rows="2" aria-label="Image prompt"></textarea>
       <div style="display:grid;gap:6px">
-        <div class="row"><select id="mmodel" aria-label="Image model" style="max-width:340px"><option>nokey-image</option><option>nokey-image-flux</option><option>nokey-image-horde</option></select>
+        <div class="row"><select id="mmodel" aria-label="Image model" style="max-width:340px"><option>kono-image</option><option>kono-image-flux</option><option>kono-image-horde</option></select>
           <select id="msize" aria-label="Size"><option>1024x1024</option><option>1024x576</option><option>576x1024</option><option>1792x1024</option><option>1024x1792</option><option>512x512</option></select>
           <select id="mn" aria-label="Count"><option>1</option><option>2</option><option>3</option><option>4</option></select></div>
         <button class="btn" id="mgo" title="Generate (Enter in the prompt box also submits)">generate</button>
@@ -716,7 +716,7 @@ return { words: t.split(/\s+/).filter(Boolean).length, chars: t.length };</texta
           </div>
           <div class="setrow">
             <div><div class="lbl">Router URL</div><div class="dim">Public endpoint of your router</div></div>
-            <div class="field"><input id="set-curl" autocomplete="off" placeholder="https://nokey-router.ziggyware.deno.net"></div>
+            <div class="field"><input id="set-curl" autocomplete="off" placeholder="https://kono-router.onrender.com"></div>
           </div>
           <div class="setrow">
             <div><div class="lbl">Router API key</div><div class="dim">Bearer key sent with every request</div></div>
@@ -752,7 +752,7 @@ return { words: t.split(/\s+/).filter(Boolean).length, chars: t.length };</texta
             <div><b>About</b><small>Version, docs and shortcuts</small></div>
           </div>
           <div class="setrow">
-            <div><div class="lbl">Version</div><div class="dim">nokey-router · v6</div></div>
+            <div><div class="lbl">Version</div><div class="dim">kono-router · v6</div></div>
             <span class="grow"></span><span class="dim">2026-11-04</span>
           </div>
           <div class="setrow">

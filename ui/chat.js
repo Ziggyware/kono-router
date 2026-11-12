@@ -81,7 +81,7 @@ function prefillConnection() {
 }
 function exportChat() {
   const blob = new Blob([JSON.stringify({ model: $("#pmodel").value, system: $("#psys").value, messages: conv.messages.map((m) => ({ ...wire(m), ...(m.reasoning_content ? { reasoning_content: m.reasoning_content } : {}) })) }, null, 2)], { type: "application/json" });
-  const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = `nokey-chat-${Date.now()}.json`; a.click(); URL.revokeObjectURL(a.href);
+  const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = `kono-chat-${Date.now()}.json`; a.click(); URL.revokeObjectURL(a.href);
 }
 function confirmDialog(msg, ok, label = "Clear all") {
   $("#dconfirm-msg").textContent = msg;
@@ -407,7 +407,7 @@ let gateAlways = false;
 // App Builder's Generate (studio.js) sets this just before sendChat(): the
 // next complete() consumes it and runs as a builder request — fresh wire
 // context (the phased build prompt only), an explicit output budget, and
-// nokey_builder for the server's deterministic builder policy. Length-
+// kono_builder for the server's deterministic builder policy. Length-
 // continuation state rides on the object; complete() clears the slot at once.
 let builderReq = null;
 async function complete() {
@@ -432,11 +432,11 @@ async function complete() {
     // router's own tool plane and the router runs the agent loop server-
     // side. The dashboard never forwards client tool definitions and never
     // asks the user to hand-feed tool results into the prompt.
-    ...($("#pauto").checked ? { tools: "auto", nokey_rounds: 16, ...(wsp.runnerOk ? { nokey_runner: true } : {}), ...(gateAlways ? { nokey_gate: "always" } : {}) } : {}),
+    ...($("#pauto").checked ? { tools: "auto", kono_rounds: 16, ...(wsp.runnerOk ? { kono_runner: true } : {}), ...(gateAlways ? { kono_gate: "always" } : {}) } : {}),
   };
   gateAlways = false;
   if (breq) {
-    body.nokey_builder = true;
+    body.kono_builder = true;
     body.max_tokens = 16384;
     body.temperature = 0.2;
     body.messages = [...(sys ? [{ role: "system", content: sys }] : []), { role: "user", content: breq.prompt }];
@@ -459,7 +459,7 @@ async function complete() {
       const msg = j.choices?.[0]?.message ?? {};
       const prior = m.content ?? "";
       Object.assign(m, { content: prior + (msg.content ?? ""), ...(msg.reasoning_content ? { reasoning_content: (m.reasoning_content ?? "") + msg.reasoning_content } : {}), ...(msg.tool_calls ? { tool_calls: msg.tool_calls } : {}) });
-      Object.assign(k, { ttft: j.telemetry?.observed_ttft_ms, finish: j.choices?.[0]?.finish_reason, tuple: j.nokey?.tuple_id, provider: j.provider, degraded: j.nokey?.degraded, rounds: j.nokey?.tool_rounds, executed: j.nokey?.tools_executed });
+      Object.assign(k, { ttft: j.telemetry?.observed_ttft_ms, finish: j.choices?.[0]?.finish_reason, tuple: j.kono?.tuple_id, provider: j.provider, degraded: j.kono?.degraded, rounds: j.kono?.tool_rounds, executed: j.kono?.tools_executed });
     } else {
       let rs0 = 0;
       for await (const { data, comment } of sse(res, chatCtl.signal)) {
@@ -470,16 +470,16 @@ async function complete() {
         if (j.error) throw new Error(j.error.message);
         // Router status frames carry bookkeeping only (empty choices): the
         // plane ran a tool round itself and is about to re-dispatch.
-        if (j.nokey?.type === "tool_round") {
-          k.rounds = j.nokey.round;
-          k.toolRun = (j.nokey.tools ?? []).map((t) => `${t.name}${t.ok ? "" : " ✗"}`).join(", ");
-          if ((j.nokey.tools ?? []).some((t) => WSP_TOUCH.test(t.name))) { k.touched = true; wspProbe(); }
+        if (j.kono?.type === "tool_round") {
+          k.rounds = j.kono.round;
+          k.toolRun = (j.kono.tools ?? []).map((t) => `${t.name}${t.ok ? "" : " ✗"}`).join(", ");
+          if ((j.kono.tools ?? []).some((t) => WSP_TOUCH.test(t.name))) { k.touched = true; wspProbe(); }
           repaint();
           continue;
         }
         // The router's build gate sent the agent back: show why, keep streaming.
-        if (j.nokey?.type === "build_gate") {
-          const g = j.nokey;
+        if (j.kono?.type === "build_gate") {
+          const g = j.kono;
           k.gate = g.gate_round;
           k.toolRun = `build gate ${g.gate_round}: ` + [g.static_errors ? `${g.static_errors} static` : "", g.runtime_errors ? `${g.runtime_errors} runtime` : "", g.tests?.failed ? `${g.tests.failed} failing tests` : "", !g.static_errors && !g.runtime_errors && !g.tests ? "untested" : ""].filter(Boolean).join(", ") + " — continuing";
           k.touched = true;
@@ -500,7 +500,7 @@ async function complete() {
         }
         if (j.provider) k.provider = j.provider;
         if (j.choices?.[0]?.finish_reason) k.finish = j.choices[0].finish_reason;
-        if (j.nokey) { k.tuple = j.nokey.tuple_id ?? k.tuple; k.degraded = j.nokey.degraded; k.rounds = j.nokey.tool_rounds ?? k.rounds; }
+        if (j.kono) { k.tuple = j.kono.tuple_id ?? k.tuple; k.degraded = j.kono.degraded; k.rounds = j.kono.tool_rounds ?? k.rounds; }
         if (performance.now() - streamSaveAt > 5000) { streamSaveAt = performance.now(); saveConv(); }
         repaint();
       }
@@ -579,7 +579,7 @@ function parallelModels(n) {
 function parLetter(i) { return String.fromCharCode(65 + i); }
 
 async function parFetch(model, messages, rounds = 8) {
-  const body = { model, messages, stream: false, ...(rounds > 0 && $("#pauto")?.checked ? { tools: "auto", nokey_rounds: rounds } : {}) };
+  const body = { model, messages, stream: false, ...(rounds > 0 && $("#pauto")?.checked ? { tools: "auto", kono_rounds: rounds } : {}) };
   const d = await req("/v1/chat/completions", { method: "POST", body });
   const text = d.choices?.[0]?.message?.content ?? "";
   if (!String(text).trim()) throw new Error("empty answer");

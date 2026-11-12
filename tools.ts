@@ -1,6 +1,6 @@
 /**
  * ============================================================================
- * NOKEY TOOL PLANE — ASCK-T v1 (Adaptive Stochastic Control Kernel · Tools)
+ * KONO TOOL PLANE — ASCK-T v1 (Adaptive Stochastic Control Kernel · Tools)
  * ============================================================================
  * First-class tool support for the keyless mesh: real, executable tool
  * implementations plus the learning machinery that makes them compound.
@@ -593,7 +593,7 @@ export const TEAM_DISCIPLINE = "Use agent_team to work in parallel whenever a jo
 export function toolPreamble(names?: string[]): string {
   const tools = names?.length ? names.map((n) => getTool(n)?.name ?? normalizeToolName(n)) : listTools().filter((t) => !t.admin).map((t) => t.name);
   return [
-    "You have server-side tools executed by the nokey-router tool plane.",
+    "You have server-side tools executed by the kono-router tool plane.",
     `Available: ${tools.join(", ")}.`,
     "Call them with a single valid JSON object of arguments; the router executes them and returns the result as a tool message.",
     "Prefer tools to guessing: web_search/web_fetch for current facts, fs_* for durable files, memory_* across conversations, rag_* for large documents, calculate/data/time/crypto for exact computation.",

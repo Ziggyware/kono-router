@@ -453,10 +453,10 @@ export const IP_BUCKETS = new Map<string, { tokens: number; lastRefill: number }
 
 // Generous but bounded: a normal client must never see a 429 from the router,
 // while a pathological flood is still contained. Tunable per deployment.
-export const MAX_BURST = clampNum(Number(Deno.env.get("NOKEY_RATE_BURST")) || 120, 5, 10_000);
+export const MAX_BURST = clampNum(Number((Deno.env.get("KONO_RATE_BURST") ?? Deno.env.get("NOKEY_RATE_BURST"))) || 120, 5, 10_000);
 
 
-export const REFILL_PER_SEC = clampNum(Number(Deno.env.get("NOKEY_RATE_REFILL")) || 8, 0.1, 1_000);
+export const REFILL_PER_SEC = clampNum(Number((Deno.env.get("KONO_RATE_REFILL") ?? Deno.env.get("NOKEY_RATE_REFILL"))) || 8, 0.1, 1_000);
 
 
 
@@ -809,7 +809,7 @@ hydrateForgedTools(true).catch((e) => console.error("forged tool boot hydrate:",
 export const VALID_ROLES = new Set(["system", "user", "assistant", "tool", "developer", "function"]);
 
 
-honoApp.use("*", cors({ origin: "*", exposeHeaders: ["traceparent", "Server-Timing", "X-Nokey-Attempts", "X-Nokey-Endpoints", "X-Nokey-Degraded", "X-Nokey-Free-Tier"] }));
+honoApp.use("*", cors({ origin: "*", exposeHeaders: ["traceparent", "Server-Timing", "X-Kono-Attempts", "X-Kono-Endpoints", "X-Kono-Degraded", "X-Kono-Free-Tier"] }));
 
 
 honoApp.use("*", bodyLimit({ maxSize: 512 * 1024 }));
@@ -847,7 +847,7 @@ honoApp.use("/v1/*", async (c, next) => {
         },
       }, 429);
     }
-    c.header("X-Nokey-Free-Tier", `${FREE_TIER_DAILY - used} requests left today`);
+    c.header("X-Kono-Free-Tier", `${FREE_TIER_DAILY - used} requests left today`);
   }
   await next();
 });

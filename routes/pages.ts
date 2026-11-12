@@ -14,7 +14,7 @@ export const PRICING_HTML = `<!DOCTYPE html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>nokey-router — Pricing</title>
+<title>kono-router — Pricing</title>
 <style>
   :root { color-scheme: dark; }
   body { margin: 0; font: 15px/1.6 -apple-system, "Segoe UI", Roboto, sans-serif; background: #0a0c10; color: #e8eaf0; }
@@ -34,7 +34,7 @@ export const PRICING_HTML = `<!DOCTYPE html>
 </head>
 <body>
 <main>
-  <h1>nokey-router — pricing</h1>
+  <h1>kono-router — pricing</h1>
   <p class="sub">One router for open models: chat, tools, images. No keys, no sign-up to start.</p>
 
   <div class="card">
@@ -59,7 +59,7 @@ export const PRICING_HTML = `<!DOCTYPE html>
 
   <div class="card">
     <h2>How to pay</h2>
-    <p>Unlimited is activated personally — there is no checkout form. Contact Michael Morton, say you want <b>nokey-router unlimited ($5/month)</b>, and you will get payment instructions and your API key in reply:</p>
+    <p>Unlimited is activated personally — there is no checkout form. Contact Michael Morton, say you want <b>kono-router unlimited ($5/month)</b>, and you will get payment instructions and your API key in reply:</p>
     <p class="contact">
       Email: <a href="mailto:ziggyware@gmail.com">ziggyware@gmail.com</a><br>
       Phone: <a href="tel:+19796612553">+1-979-661-2553</a>
@@ -78,7 +78,7 @@ export const FORGE_DOCS_HTML = `<!DOCTYPE html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>nokey-router — Forge tool format</title>
+<title>kono-router — Forge tool format</title>
 <style>
   :root { color-scheme: dark; }
   body { margin: 0; font: 15px/1.65 -apple-system, "Segoe UI", Roboto, sans-serif; background: #0a0c10; color: #e8eaf0; }
@@ -142,7 +142,7 @@ export const FORGE_DOCS_HTML = `<!DOCTYPE html>
     <tr><td><code>args</code></td><td>The arguments object, already validated against the parameters schema.</td></tr>
     <tr><td><code>api.fetch</code></td><td>The router's fetch — call other APIs and return parsed results.</td></tr>
     <tr><td><code>api.kv</code></td><td>The Deno KV handle from the call's capabilities, when present — durable storage for the tool.</td></tr>
-    <tr><td><code>api.namespace</code></td><td>The caller's session namespace (from the <code>x-nokey-session</code> header), so state can be scoped per user.</td></tr>
+    <tr><td><code>api.namespace</code></td><td>The caller's session namespace (from the <code>x-kono-session</code> header), so state can be scoped per user.</td></tr>
     <tr><td><code>api.signal</code></td><td>An AbortSignal that fires at the tool's deadline — pass it to fetch.</td></tr>
     <tr><td><code>api.now</code></td><td>Current time in milliseconds.</td></tr>
     <tr><td><code>api.locals</code></td><td>Router-injected data for the call (for example the tool-skill snapshot).</td></tr>

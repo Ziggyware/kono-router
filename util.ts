@@ -197,7 +197,7 @@ export const errText = (e: unknown) => (e instanceof Error ? e.message : String(
 //
 //  AGENT LOOP. When a completion's tool calls all resolve to plane built-ins,
 //  the router executes them, appends the `role:"tool"` results and re-dispatches
-//  — bounded by NOKEY_TOOL_ROUNDS. Calls the router does not own are returned to
+//  — bounded by KONO_TOOL_ROUNDS. Calls the router does not own are returned to
 //  the client untouched, because the OpenAI contract requires the client to
 //  answer every call it is handed. Streaming requests keep standard semantics:
 //  tool_calls are piped through, never buffered into a second assistant turn.
@@ -212,7 +212,7 @@ export const errText = (e: unknown) => (e instanceof Error ? e.message : String(
 /** Tenant/tool namespace: one header scopes files, memory, RAG and clipboard.
  *  Absent header → a shared namespace, never another tenant's. */
 export function toolNamespace(c: Context): string {
-  const raw = c.req.header("x-nokey-session") ?? c.req.header("x-session-id") ?? "";
+  const raw = c.req.header("x-kono-session") ?? c.req.header("x-nokey-session") ?? c.req.header("x-session-id") ?? "";
   return normalizeToolName(raw).slice(0, 48) || "shared";
 }
 
@@ -220,17 +220,17 @@ export function toolNamespace(c: Context): string {
 
 /** The plane is on unless an operator explicitly turns it off. */
 export function toolPlaneEnabled(): boolean {
-  return Deno.env.get("NOKEY_TOOLS") !== "0";
+  return (Deno.env.get("KONO_TOOLS") ?? Deno.env.get("NOKEY_TOOLS")) !== "0";
 }
 
 
 
 /** Server-side tool rounds per request. 0 = pure OpenAI passthrough.
- *  Default 8; a request may ask for more via `nokey_rounds`, up to 32 —
+ *  Default 8; a request may ask for more via `kono_rounds`, up to 32 —
  *  deep agency is per-request, and the loop still ends the moment the
- *  model stops calling tools. NOKEY_TOOL_ROUNDS sets the default. */
+ *  model stops calling tools. KONO_TOOL_ROUNDS sets the default. */
 export function maxToolRounds(requested?: unknown): number {
-  const raw = Deno.env.get("NOKEY_TOOL_ROUNDS");
+  const raw = Deno.env.get("KONO_TOOL_ROUNDS") ?? Deno.env.get("NOKEY_TOOL_ROUNDS");
   const env = raw === undefined || raw.trim() === "" ? 8 : Number(raw);
   const base = Number.isFinite(env) ? env : 8;
   const want = typeof requested === "number" && Number.isFinite(requested) ? requested : base;
@@ -250,4 +250,4 @@ export function traceAttrs(attrs: Json): Attrs {
 }
 
 
-export const strictErrors = () => Deno.env.get("NOKEY_STRICT_ERRORS") === "1";
+export const strictErrors = () => (Deno.env.get("KONO_STRICT_ERRORS") ?? Deno.env.get("NOKEY_STRICT_ERRORS")) === "1";

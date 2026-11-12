@@ -426,7 +426,7 @@ async function askNotch() {
   ans.hidden = false;
   ans.textContent = "…";
   try {
-    const sys = "You are an inline assistant inside the nokey-router dashboard, helping the user with ONE form field.\n"
+    const sys = "You are an inline assistant inside the kono-router dashboard, helping the user with ONE form field.\n"
       + "Field: " + notchLabel(field) + "\n"
       + "What it is: " + (field.dataset.notchContext || "") + "\n"
       + "Current contents:\n" + (field.value || "(empty)") + "\n\n"
