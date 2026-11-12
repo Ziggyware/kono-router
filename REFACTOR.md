@@ -18,12 +18,17 @@ Verified after the restructure (Deno 2.9.6):
 | `main.ts` | ~27k | Thin entry: imports, Hono app assembly, middleware, register calls, cron/serve bootstrap. Still exports `app` (tests import it from here). |
 | `state.ts` | ~7k | Shared runtime state: `kv` (with in-memory fallback, below), `honoApp`, L1 cache, registries. |
 | `util.ts` | ~9k | Shared helper functions (errText, logErr, …). |
-| `engine/providers.ts` | ~47k | Provider catalog, scoring, candidates, sync, canary/resurrect probes. |
+| `engine/providers.ts` | ~25k | Native provider table, catalog sync, sweep/coverage, canary/resurrect probes, `getRankedCandidates`. |
+| `engine/capabilities.ts` | ~6k | `analyzeModelCapabilities` — name-derived capability profiles. |
+| `engine/registry.ts` | ~10k | services.json registry: parse/validate, provider construction, `loadTextFile`. |
+| `engine/ranking.ts` | ~8k | Candidate scoring (`scoreRecord`), provider interleave, breaker ids. |
 | `engine/mesh.ts` | ~28k | Mesh tool registration, sub-agents, forged tools. |
 | `engine/dispatch.ts` | ~25k | Upstream execution, streaming delta machinery. |
 | `engine/learning.ts` | ~11k | ASCK-L learning glue (rewards, lessons, posteriors). |
 | `engine/core.ts` | ~5k | Shared engine glue (requireAdmin, loadTextFile, health payload, traced tool runner). |
-| `routes/chat.ts` | ~71k | `POST /v1/chat/completions` + its private machinery. The one big file left — a single cohesive handler. |
+| `routes/chat.ts` | ~53k | `POST /v1/chat/completions` — the register handler, agent loop, gate, streaming. |
+| `routes/chat-learning.ts` | ~6k | Chat-side learning glue: strategy-arm posteriors, decision persistence, math/JSON verifiers. |
+| `routes/chat-dispatch.ts` | ~17k | Hedged dispatch policies, owned tool-round execution, tool-call grading, degraded responses. |
 | `routes/community.ts` | ~12k | Community routes (messages, posts, votes, stream). |
 | `routes/images.ts` | ~13k | Image probe/generation routes. |
 | `routes/pages.ts` | ~11k | `/`, `/pricing`, `/forge-docs`, `/admin`, `/health` + the page HTML. |
@@ -34,8 +39,28 @@ Verified after the restructure (Deno 2.9.6):
 | `routes/traces.ts` | ~2k | `/v1/traces*`. |
 | `routes/agent-protocols.ts` | ~31k | Agent protocols: `POST /mcp` (MCP), `POST /a2a` + `GET /.well-known/agent-card.json` (A2A), `POST /v1/responses` (Responses API). Adapters over in-process dispatch. |
 | `routes/agent-run.ts` | ~18k | `POST /v1/agent/run` — plan → parallel workers → verify → synthesize; AG-UI event streaming. |
-| `tools.ts` | ~71k | The tool plane (was 81.5k). |
+| `routes/conversations.ts` | ~7k | Conversation persistence: `PUT`/`GET /v1/conversations/current` (live chat) + snapshot library (`GET`/`POST /v1/conversations`, `GET`/`DELETE /v1/conversations/:id`), KV scoped by sha256 of the session id. |
+| `tools.ts` | ~48k | The tool plane (was 81.5k): tool definitions, execution, preamble. |
+| `tools-schema.ts` | ~25k | JSON-schema validation engine (`validateJson`, coercion, $ref), re-exported from `tools.ts`. |
 | `tools-text.ts` | ~11k | Text tool-call parsing (`parseTextToolCalls`, `repairJsonText`, openers), re-exported from `tools.ts`. |
+| `index.html` | ~86k | Dashboard shell: markup + theme bootstrap only. CSS and JS live under `ui/` (below), loaded in original order; served by `routes/pages.ts`. |
+| `ui/dashboard.css` | ~102k | All dashboard CSS (extracted verbatim from the shell's former `<style>` block). |
+| `ui/core.js` | ~26k | Script preamble: store helper, `$`, utils, creds, navigation, settings plumbing. |
+| `ui/chat.js` | ~41k | CHAT section. |
+| `ui/architect.js` | ~16k | ARCHITECT section. |
+| `ui/plugins.js` | ~13k | PLUGINS section. |
+| `ui/media.js` | ~5k | MEDIA section. |
+| `ui/catalog.js` | ~18k | CATALOG + HARVESTER sections. |
+| `ui/lanes.js` | ~11k | LANES + ENDPOINTS sections. |
+| `ui/tools.js` | ~46k | TOOLS section (tool plane UI). |
+| `ui/studio.js` | ~42k | CHAT TOOLS INTEGRATION & DRAWER + APP BUILDER STUDIO & LIVE SANDBOX RUNNER. |
+| `ui/community.js` | ~17k | PEOPLE CHAT section. |
+| `ui/traces.js` | ~9k | TRACES section. |
+| `ui/ops.js` | ~5k | OPS + SOURCE section. |
+| `ui/ui2.js` | ~21k | UI v2: theme, mobile shell, folds, AI field notches. |
+| `ui/workspace.js` | ~90k | Durable workspace drawer, split-pane live preview host and sandbox bridge. Served via `GET /ui/<file>` in `routes/pages.ts`. |
+| `ui/library.js` | ~24k | Conversation library (snapshots) and GitHub sync (Contents API; token stays in the browser). |
+| `ui/boot.js` | ~0.4k | Boot sequence (runs last). |
 
 Route modules export `register<Area>()`; `main.ts` calls each at the position
 of the area's first original route, so middleware and registration order are

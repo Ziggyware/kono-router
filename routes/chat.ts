@@ -1,617 +1,28 @@
 // routes/chat.ts — Chat route registrations extracted from main.ts.
 // main.ts calls registerChat() at the position of this area's first route, preserving registration order.
+// Learning-loop glue lives in ./chat-learning.ts; hedge/dispatch and tool-round
+// machinery lives in ./chat-dispatch.ts (both extracted verbatim).
 
-import { thompsonPropensity, betaMean, gradeReward, classifyTask, DEFAULT_STRATEGY_ARMS, armsForClass, emptyCell, effectivePosterior, chooseThompson, PROMPT_VARIANTS, rankLessons, decideCompute, failureSignature } from "../learning.ts";
-import type { StrategyArm, TaskContext, Lesson, ComputeDecision, RewardSignal, BanditCandidate } from "../learning.ts";
-import { evaluate as evaluateCalc } from "../toolbox/calc.ts";
-import { parseToolArguments, partitionToolCalls, executeToolCalls, toolResultContent, normalizeToolCalls, listTools, observeTupleToolStats, resolveAutoToolNames, mergeToolDeclarations, toToolSpecs, toolPreamble } from "../tools.ts";
-import type { ToolCaps, ToolExecution } from "../tools.ts";
+import { classifyTask, DEFAULT_STRATEGY_ARMS, armsForClass, emptyCell, effectivePosterior, chooseThompson, PROMPT_VARIANTS, rankLessons, decideCompute, failureSignature } from "../learning.ts";
+import type { RewardSignal, BanditCandidate } from "../learning.ts";
+import { resolveAutoToolNames, mergeToolDeclarations, toToolSpecs, toolPreamble } from "../tools.ts";
 import { startTrace } from "../trace.ts";
-import type { Span } from "../trace.ts";
-import { hedgePlan, clamp as clampNum, modelSimilarity } from "../math.ts";
-import type { Context } from "hono";
+import { clamp as clampNum, modelSimilarity } from "../math.ts";
 import { workspaceBrief, workspaceSigFor } from "../toolbox/project.ts";
 import { buildGate } from "../toolbox/testing.ts";
 import type { GateVerdict } from "../toolbox/testing.ts";
-import { hydrateLearning, hydrateToolSkills, hydrateForgedTools, learningKappa } from "../main.ts";
-import type { PendingDecision, StoredDecision, ScoredCandidate, Json, RoutingMode, UpstreamStream, CompletionOptions, RankOptions, CompletionResult, ToolCallDelta, Delta } from "../main.ts";
-import { ARM_DEFS, ARM_CELLS, kv, LEARN_DECISION_PREFIX, DECISION_TTL_MS, L1_CACHE, TOOL_SKILLS, SSE_HEADERS, honoApp, LESSONS } from "../state.ts";
-import { logErr, errText, traceAttrs, toolPlaneEnabled, maxToolRounds, toolNamespace, armCellKey, extractMessageText, classifyPromptIntent, strictErrors, mergeToolCalls } from "../util.ts";
-import { contextualPosterior, recordLearningReward, recordTupleFailure, recordTupleSuccess, writeLesson } from "../engine/learning.ts";
-import { resolveProviderById, activeProviderList, PROVIDERS, getRankedCandidates, allSweepCandidates } from "../engine/providers.ts";
-import { recordToolExecution, normalizeMessages, isAdminContext, toolCaps, collectUpstream } from "../engine/dispatch.ts";
-import { atomicUpdateModel } from "../engine/core.ts";
-
-
-
-export async function loadStrategyArms(): Promise<StrategyArm[]> {
-  await hydrateLearning();
-  return [...ARM_DEFS.values()];
-}
-
-
-
-export function armGlobalPosterior(armId: string): { alpha: number; beta: number } {
-  let s = 0;
-  let f = 0;
-  for (const c of ARM_CELLS.values()) {
-    if (c.arm_id !== armId) continue;
-    s += Math.max(0, c.alpha - 1);
-    f += Math.max(0, c.beta - 1);
-  }
-  return { alpha: 1 + s, beta: 1 + f };
-}
-
-
-
-export interface LearnCtx {
-  traceId: string;
-  taskCtx: TaskContext;
-  arm: StrategyArm;
-  armPropensity: number;
-  tenant: string;
-  lessons: Lesson[];
-  hasVerifier: boolean;
-  planeActive: boolean;
-  compute: ComputeDecision;
-}
-
-
-
-export async function saveDecision(d: PendingDecision, reward: number | null): Promise<void> {
-  const rec: StoredDecision = {
-    traceId: d.traceId,
-    ts: d.ts,
-    taskClass: d.taskClass,
-    action: d.armId,
-    tupleId: d.tupleId,
-    propensity: d.armPropensity,
-    armPropensity: d.armPropensity,
-    tuplePropensity: d.tuplePropensity,
-    tokens: d.tokens,
-    extraTokens: d.extraTokens,
-    expectedReward: d.expectedReward,
-    computeMode: d.computeMode,
-    lessonIds: d.lessonIds,
-    tenant: d.tenant,
-    reward,
-  };
-  await kv.set([LEARN_DECISION_PREFIX, d.traceId], rec, { expireIn: DECISION_TTL_MS }).catch(logErr);
-}
-
-
-
-/** Grade a finished decision and persist everything the loop learns from. */
-export async function finalizeLearning(args: {
-  ctx: LearnCtx;
-  cand: ScoredCandidate;
-  ranked: ScoredCandidate[];
-  signals: RewardSignal[];
-  tokens: number;
-  extraTokens: number;
-  now: number;
-}): Promise<void> {
-  const { ctx, cand } = args;
-  const top = args.ranked.slice(0, 8);
-  if (!top.some((c) => c.tupleId === cand.tupleId)) top.push(cand);
-  const cands: BanditCandidate[] = top.map((c) => {
-    const rec = L1_CACHE.get(c.tupleId);
-    const post = rec
-      ? contextualPosterior(rec, ctx.taskCtx.taskClass, ctx.tenant, args.now)
-      : { alpha: 2, beta: 1, pulls: 0 };
-    return { id: c.tupleId, alpha: post.alpha, beta: post.beta, pulls: post.pulls };
-  });
-  const winner = cands.find((c) => c.id === cand.tupleId) ?? cands[0];
-  const tuplePropensity = thompsonPropensity(cands, cand.tupleId, Math.random, 120);
-  const d: PendingDecision = {
-    traceId: ctx.traceId,
-    ts: args.now,
-    taskClass: ctx.taskCtx.taskClass,
-    tupleId: cand.tupleId,
-    armId: ctx.arm.id,
-    tenant: ctx.tenant,
-    armPropensity: ctx.armPropensity,
-    tuplePropensity,
-    tokens: args.tokens,
-    extraTokens: args.extraTokens,
-    expectedReward: winner ? Number(betaMean(winner.alpha, winner.beta).toFixed(4)) : 0.5,
-    computeMode: ctx.compute.mode,
-    lessonIds: ctx.lessons.map((l) => l.id),
-  };
-  if (!d.traceId) return;
-  const graded = gradeReward(args.signals, { tupleId: cand.tupleId, armId: ctx.arm.id });
-  await saveDecision(d, graded?.reward ?? null);
-  if (graded) await recordLearningReward(d, graded);
-}
-
-
-
-/** Arithmetic verifier: the deterministic calculate evaluator, independent
- *  of whatever model produced the answer. */
-export function verifyMathAnswer(userText: string, answer: string): { pass: boolean; expected: number } | null {
-  const m = userText.replace(/,/g, "").match(/\d+(?:\.\d+)?(?:\s*[-+*/^%()]\s*\d+(?:\.\d+)?)+/);
-  if (!m) return null;
-  const expr = m[0].trim();
-  if (expr.length > 120) return null;
-  let expected: number;
-  try {
-    expected = evaluateCalc(expr);
-  } catch {
-    return null;
-  }
-  if (!Number.isFinite(expected)) return null;
-  const nums = (answer.match(/-?\d+(?:\.\d+)?/g) ?? []).map(Number);
-  const pass = nums.some((n) => Math.abs(n - expected) <= Math.max(1e-6, Math.abs(expected) * 1e-6));
-  return { pass, expected };
-}
-
-
-
-/** JSON verifier: parse + JSON-schema validation via the tool plane's own
- *  validator — again, code that did not generate the answer. */
-export function verifyJsonAnswer(content: string, responseFormat: unknown): { pass: boolean; signature: string } | null {
-  let text = content.trim();
-  if (!text) return null;
-  const fence = text.match(/```(?:json)?\s*([\s\S]*?)```/);
-  if (fence) text = fence[1].trim();
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(text);
-  } catch {
-    return { pass: false, signature: "parse" };
-  }
-  const rf = (responseFormat ?? {}) as Json;
-  const holder = (rf.json_schema ?? {}) as Json;
-  const schema = holder.schema ?? (rf.type === "json_schema" ? rf.schema : undefined);
-  if (schema !== undefined) {
-    const v = parseToolArguments(parsed, schema, { coerce: false });
-    return { pass: v.ok, signature: v.ok ? "" : "invalid" };
-  }
-  return { pass: true, signature: "" };
-}
-
-
-
-// ============================================================================
-// 7b. ADAPTIVE HEDGED FIRST-TOKEN DISPATCH (ASCK v1 / TAIL-AT-SCALE)
-// ============================================================================
-
-// TTFT is modelled log-normal with a Kalman posterior mean/variance. hedgePlan()
-// solves the survival-based stopping rule: with k spare endpoints, hedge at the
-// (1 - θ0^(1/(1+η·ln(1+k)))) quantile; kill at the p99.9 predictive quantile.
-// Tiers 1-3 are staggered hedges; tier 4 (exhaustive sweep) bursts every
-// configured endpoint at once with a short, bounded first-token deadline.
-export interface HedgePolicy {
-  maxInflight: number;
-  tailProbability: number;
-  hedgeMinMs: number;
-  hedgeMaxMs: number;
-  killFloorMs: number;
-  killCeilMs: number;
-  burst: boolean;
-}
-
-
-
-export const HEDGE: Record<RoutingMode, HedgePolicy> = {
-  fast: { maxInflight: 4, tailProbability: 0.20, hedgeMinMs: 120, hedgeMaxMs: 8_000, killFloorMs: 4_000, killCeilMs: 300_000, burst: false },
-  code: { maxInflight: 3, tailProbability: 0.10, hedgeMinMs: 150, hedgeMaxMs: 8_000, killFloorMs: 25_000, killCeilMs: 300_000, burst: false },
-  smart: { maxInflight: 3, tailProbability: 0.10, hedgeMinMs: 150, hedgeMaxMs: 8_000, killFloorMs: 25_000, killCeilMs: 300_000, burst: false },
-  reasoning: { maxInflight: 3, tailProbability: 0.05, hedgeMinMs: 200, hedgeMaxMs: 8_000, killFloorMs: 90_000, killCeilMs: 300_000, burst: false },
-};
-
-
-
-// Tier 2: widen across lanes with more concurrency and a tighter deadline.
-export const ESCALATION_POLICY: HedgePolicy = {
-  maxInflight: 6,
-  tailProbability: 0.25,
-  hedgeMinMs: 120,
-  hedgeMaxMs: 3_000,
-  killFloorMs: 10_000,
-  killCeilMs: 30_000,
-  burst: false,
-};
-
-
-
-// Tier 3: burst the whole catalog with a hard, short first-token deadline.
-export const WIDE_POLICY: HedgePolicy = {
-  maxInflight: 32,
-  tailProbability: 0.35,
-  hedgeMinMs: 100,
-  hedgeMaxMs: 1_500,
-  killFloorMs: 8_000,
-  killCeilMs: 20_000,
-  burst: true,
-};
-
-
-
-// Tier 4: every configured endpoint at once; bounded so an outage resolves
-// into a graceful degraded answer in seconds, not minutes.
-export const SWEEP_POLICY: HedgePolicy = {
-  maxInflight: 128,
-  tailProbability: 0.45,
-  hedgeMinMs: 60,
-  hedgeMaxMs: 1_000,
-  killFloorMs: 6_000,
-  killCeilMs: 15_000,
-  burst: true,
-};
-
-
-
-/** Portable AbortSignal.any: a tier can be cut without killing the request. */
-export function combineSignals(a: AbortSignal, b: AbortSignal): AbortSignal {
-  const ctrl = new AbortController();
-  a.addEventListener("abort", () => ctrl.abort(a.reason), { once: true });
-  b.addEventListener("abort", () => ctrl.abort(b.reason), { once: true });
-  return ctrl.signal;
-}
-
-
-
-export interface Dispatched {
-  cand: ScoredCandidate;
-  up: UpstreamStream;
-}
-
-
-
-export async function hedgedDispatch(
-  order: ScoredCandidate[],
-  mode: RoutingMode,
-  messages: Array<{ role: string; content: unknown }>,
-  options: CompletionOptions,
-  master: AbortSignal,
-  tried: Set<string>,
-  maxAttempts: number,
-  span: Span,
-  policyOverride?: HedgePolicy,
-): Promise<Dispatched> {
-  const policy = policyOverride ?? HEDGE[mode];
-  const pending = order.filter((c) => !tried.has(c.tupleId)).slice(0, maxAttempts);
-  // One in-flight attempt per provider: forces provider diversity and avoids self-inflicted 429s.
-  const busy = new Set<string>();
-  const live = new Set<AbortController>();
-  let lastErr: unknown = null;
-  let settled = false;
-  let hedgeTimer: ReturnType<typeof setTimeout> | undefined;
-  let hedgeDelayMs = policy.hedgeMinMs;
-
-  return await new Promise<Dispatched>((resolve, reject) => {
-    const fail = (e: unknown) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(hedgeTimer);
-      for (const ctrl of live) ctrl.abort(new Error("HEDGE_LOST"));
-      reject(e);
-    };
-    master.addEventListener("abort", () => fail(master.reason), { once: true });
-
-    const start = (cand: ScoredCandidate) => {
-      tried.add(cand.tupleId);
-      const ctrl = new AbortController();
-      const onMaster = () => ctrl.abort(master.reason);
-      master.addEventListener("abort", onMaster, { once: true });
-      live.add(ctrl);
-      busy.add(cand.providerId);
-
-      const plan = hedgePlan({
-        mu: cand.logTtftMu,
-        sigma: cand.logTtftSigma,
-        tailProbability: policy.tailProbability,
-        alternatives: pending.length,
-        minMs: policy.hedgeMinMs,
-        maxMs: policy.hedgeMaxMs,
-        killFloorMs: policy.killFloorMs,
-        killCeilMs: policy.killCeilMs,
-      });
-      // Waiting past the best pending alternative's median TTFT is dominated: hedge then.
-      let altMedianMs = Number.POSITIVE_INFINITY;
-      for (const p of pending) {
-        const median = Math.exp(p.logTtftMu);
-        if (median < altMedianMs) altMedianMs = median;
-      }
-      hedgeDelayMs = Math.max(policy.hedgeMinMs, Math.min(plan.hedgeMs, altMedianMs));
-      const killMs = plan.killMs;
-      const killer = setTimeout(() => ctrl.abort(new Error(`TIMEOUT_FIRST_TOKEN: ${killMs}ms`)), killMs);
-      const attempt = span.child("attempt", {
-        tuple: cand.tupleId,
-        provider: cand.providerId,
-        model: cand.modelId,
-        hedge_ms: Math.round(hedgeDelayMs),
-        kill_ms: Math.round(killMs),
-        p50_ms: Math.round(Math.exp(cand.logTtftMu)),
-        reliability: cand.reliabilityDraw,
-      });
-
-      attempt.run(() =>
-        resolveProviderById(cand.providerId).then((p) => {
-          if (!p || !p.isConfigured()) throw new Error(`Provider missing or unconfigured: ${cand.providerId}`);
-          return p.executeCompletion(cand.modelId, messages, ctrl.signal, options);
-        })
-      )
-        .then((up) => {
-          clearTimeout(killer);
-          if (settled) {
-            attempt.end("unset", { outcome: "late", ttft_ms: up.ttftMs });
-            ctrl.abort(new Error("HEDGE_LOST"));
-            master.removeEventListener("abort", onMaster);
-            return;
-          }
-          settled = true;
-          attempt.end("ok", { outcome: "won", ttft_ms: up.ttftMs });
-          clearTimeout(hedgeTimer);
-          for (const other of live) if (other !== ctrl) other.abort(new Error("HEDGE_LOST"));
-          resolve({ cand, up });
-        }, (err) => {
-          clearTimeout(killer);
-          master.removeEventListener("abort", onMaster);
-          live.delete(ctrl);
-          busy.delete(cand.providerId);
-          if (settled || master.aborted) {
-            attempt.end("unset", { outcome: "cancelled" });
-            return;
-          }
-          lastErr = ctrl.signal.aborted ? ctrl.signal.reason : err;
-          attempt.end("error", {
-            outcome: /TIMEOUT/.test(errText(lastErr)) ? "timeout" : "failed",
-            error: errText(lastErr).slice(0, 200),
-          });
-          recordTupleFailure(cand.tupleId, errText(lastErr)).catch(logErr);
-          launch();
-        });
-    };
-
-    const launch = () => {
-      clearTimeout(hedgeTimer);
-      if (settled) return;
-      // Burst mode fills the whole pipeline immediately: every configured
-      // endpoint is attempted rather than only the head of the ranking.
-      const target = policy.burst
-        ? policy.maxInflight
-        : (live.size < policy.maxInflight ? live.size + 1 : live.size);
-      while (live.size < target) {
-        const i = pending.findIndex((c) => !busy.has(c.providerId));
-        if (i < 0) break;
-        start(pending.splice(i, 1)[0]);
-      }
-      if (live.size === 0) return fail(lastErr ?? new Error("No candidate produced a valid first token"));
-      if (pending.length > 0) hedgeTimer = setTimeout(launch, hedgeDelayMs);
-    };
-
-    launch();
-  });
-}
-
-
-
-/** Look up a client-declared tool's schema so its arguments can be graded. */
-export function declaredToolSchema(declared: unknown[], name: string): unknown {
-  for (const entry of declared ?? []) {
-    if (!entry || typeof entry !== "object") continue;
-    const holder = entry as Json;
-    const fn = (holder.function ?? holder) as Json;
-    if (typeof fn.name !== "string") continue;
-    if (fn.name === name || fn.name.toLowerCase() === name.toLowerCase()) {
-      return fn.parameters ?? fn.input_schema ?? true;
-    }
-  }
-  return undefined;
-}
-
-
-
-// ---------------------------------------------------------------------------
-// AGENT LOOP PLUMBING
-// ---------------------------------------------------------------------------
-
-export interface ToolRoundOutcome {
-  /** True when the router owned every call and executed them itself. */
-  loop: boolean;
-  /** `role:"tool"` messages to append, one per executed call, in call order. */
-  messages: Array<{ role: string; content: unknown } & Json>;
-  executed: Array<{ id: string; name: string; ok: boolean; ms: number; repaired: boolean; error?: string; code?: string }>;
-}
-
-
-
-/** Execute a completion's tool calls when — and only when — the plane owns all
- *  of them. Client-declared tools are handed straight back to the caller. */
-export async function executeOwnedToolCalls(
-  calls: unknown[],
-  opts: { span?: Span; admin?: boolean; signal?: AbortSignal; now?: number; clientNames?: string[]; caps?: ToolCaps } = {},
-): Promise<ToolRoundOutcome> {
-  const { mine } = partitionToolCalls(calls, { clientNames: opts.clientNames });
-  if (mine.length === 0) return { loop: false, messages: [], executed: [] };
-
-  const skills = await hydrateToolSkills().catch(() => TOOL_SKILLS);
-  const locals: Json = { tool_skills: Object.fromEntries([...skills.entries()]) as Json };
-  const results = await executeToolCalls(
-    mine.map((call) => ({ id: call.id, name: call.resolved ?? call.name, arguments: call.arguments })),
-    {
-      admin: opts.admin ?? false,
-      caps: opts.caps,
-      locals,
-      signal: opts.signal,
-      now: opts.now,
-      event: (name, attrs) => opts.span?.event(name, traceAttrs(attrs ?? {})),
-    },
-  );
-
-  const byId = new Map(results.map((r) => [r.id, r]));
-  const messages: Array<{ role: string; content: unknown } & Json> = [];
-  const executed: ToolRoundOutcome["executed"] = [];
-  for (const call of mine) {
-    const result = byId.get(call.id);
-    const execution: ToolExecution | undefined = result?.execution;
-    const content = execution ? toolResultContent(execution) : JSON.stringify({ error: "tool execution was skipped" });
-    messages.push({ role: "tool", tool_call_id: call.id, name: call.name, content });
-    if (execution) {
-      executed.push({
-        id: call.id,
-        name: execution.tool ?? call.name,
-        ok: execution.ok,
-        ms: execution.ms,
-        repaired: execution.repaired ?? false,
-        ...(execution.ok ? {} : { error: execution.error.slice(0, 200), code: execution.code }),
-      });
-      // Skill memory compounds in the background; a KV hiccup never fails a request.
-      recordToolExecution(execution.tool ?? call.name, execution).catch(logErr);
-    }
-  }
-  return { loop: true, messages, executed };
-}
-
-
-
-export interface ToolCallVerdict {
-  /** Nothing to learn: no tool calls and no forced tool choice. */
-  neutral: boolean;
-  valid: boolean;
-  repaired: boolean;
-  calls: number;
-  problems: string[];
-}
-
-
-
-/**
- * Grade a completion's tool calls against the tools that were declared for it.
- * A call is valid when it names a declared tool and its arguments survive the
- * repair ladder and validate against that tool's schema. This verdict is what
- * the tuple's tool posterior learns from, so it is deliberately strict about
- * hallucinated names and lenient about wire-format damage.
- */
-export function gradeToolCalls(
-  calls: unknown[],
-  declared: unknown[],
-  toolChoice: unknown,
-): ToolCallVerdict {
-  const forced = toolChoice === "required" || toolChoice === "any" ||
-    (toolChoice && typeof toolChoice === "object" && typeof (toolChoice as Json).type === "string");
-  const normalized = normalizeToolCalls(calls);
-  if (normalized.length === 0) {
-    return forced
-      ? { neutral: false, valid: false, repaired: false, calls: 0, problems: ["tool_choice required a call but none was produced"] }
-      : { neutral: true, valid: false, repaired: false, calls: 0, problems: [] };
-  }
-  const problems: string[] = [];
-  let repaired = false;
-  for (const call of normalized) {
-    // The caller's own declaration wins: a client tool that shadows a built-in
-    // is graded against the client's schema, never the registry's.
-    const declaredSchema = declaredToolSchema(declared, call.name) ??
-      (call.resolved ? declaredToolSchema(declared, call.resolved) : undefined);
-    const builtin = call.builtin ? listTools().find((t) => t.name === call.resolved) : undefined;
-    const schema = declaredSchema ?? builtin?.parameters;
-    if (schema === undefined) {
-      problems.push(`${call.name}: not a declared tool`);
-      continue;
-    }
-    const parsed = parseToolArguments(call.arguments, schema, { coerce: true });
-    if (parsed.repaired) repaired = true;
-    if (!parsed.ok) problems.push(`${call.name}: ${parsed.error ?? "invalid arguments"}`.slice(0, 200));
-  }
-  return { neutral: false, valid: problems.length === 0, repaired, calls: normalized.length, problems };
-}
-
-
-
-/** Fold a verdict into the tuple's stored tool posterior (CAS, best effort). */
-export async function learnToolVerdict(tupleId: string, verdict: ToolCallVerdict): Promise<void> {
-  if (verdict.neutral) return;
-  const now = Date.now();
-  try {
-    await atomicUpdateModel(tupleId, (r) => ({
-      ...r,
-      ...observeTupleToolStats(r, { valid: verdict.valid, repaired: verdict.repaired }, now),
-    }));
-  } catch (err) {
-    console.error("[tools] tuple competence update failed:", err);
-  }
-}
-
-
-
-export function degradationMessage(attempts: number, endpoints: number, lastErr: string): string {
-  const tail = lastErr ? ` Last upstream error: ${lastErr.slice(0, 160)}.` : "";
-  return `[nokey-router] No upstream model endpoint returned a valid completion for this request. ` +
-    `All ${endpoints} configured endpoints were attempted (${attempts} dispatch attempts, including ` +
-    `cross-lane fallbacks, protocol negotiation and a full endpoint sweep).${tail} ` +
-    `No answer was fabricated — please retry shortly. GET /health and GET /v1/endpoints show live coverage.`;
-}
-
-
-
-export interface DegradedOpts {
-  id: string;
-  created: number;
-  requestedModel: string;
-  attempts: number;
-  endpoints: number;
-  lastErr: string;
-  stream: boolean;
-  traceId: string;
-}
-
-
-
-export function degradedMeta(o: DegradedOpts) {
-  return {
-    degraded: true,
-    endpoints_available: o.endpoints,
-    endpoints_attempted: o.attempts,
-    attempts: o.attempts,
-    requested_model: o.requestedModel,
-    reason: "all_upstreams_failed",
-    trace_id: o.traceId,
-  };
-}
-
-
-
-/** The degraded answer as SSE frames; also emitted in-band once a stream's headers are out. */
-export function degradedSse(o: DegradedOpts): string {
-  const meta = degradedMeta(o);
-  const frame = (delta: Record<string, unknown>, finish: string | null) =>
-    `data: ${JSON.stringify({
-      id: o.id,
-      object: "chat.completion.chunk",
-      created: o.created,
-      model: o.requestedModel,
-      provider: "nokey-router",
-      nokey: meta,
-      choices: [{ index: 0, delta, finish_reason: finish }],
-    })}\n\n`;
-  return frame({ role: "assistant" }, null) +
-    frame({ content: degradationMessage(o.attempts, o.endpoints, o.lastErr) }, null) +
-    frame({}, "stop") +
-    "data: [DONE]\n\n";
-}
-
-
-
-export function degradedCompletion(c: Context, o: DegradedOpts, headers: Record<string, string>): Response {
-  if (o.stream) return new Response(degradedSse(o), { status: 200, headers: { ...SSE_HEADERS, ...headers, "X-Nokey-Degraded": "1" } });
-  return c.json({
-    id: o.id,
-    object: "chat.completion",
-    created: o.created,
-    model: o.requestedModel,
-    provider: "nokey-router",
-    nokey: degradedMeta(o),
-    choices: [{
-      index: 0,
-      message: { role: "assistant", content: degradationMessage(o.attempts, o.endpoints, o.lastErr) },
-      finish_reason: "stop",
-    }],
-  }, 200, { ...headers, "X-Nokey-Degraded": "1" });
-}
-
-
+import { hydrateLearning, hydrateForgedTools, learningKappa } from "../main.ts";
+import type { ScoredCandidate, Json, RoutingMode, CompletionOptions, RankOptions, CompletionResult, ToolCallDelta, Delta } from "../main.ts";
+import { ARM_CELLS, kv, L1_CACHE, SSE_HEADERS, honoApp, LESSONS } from "../state.ts";
+import { logErr, errText, toolPlaneEnabled, maxToolRounds, toolNamespace, armCellKey, extractMessageText, classifyPromptIntent, strictErrors, mergeToolCalls } from "../util.ts";
+import { contextualPosterior, recordTupleFailure, recordTupleSuccess, writeLesson } from "../engine/learning.ts";
+import { activeProviderList, PROVIDERS, getRankedCandidates, allSweepCandidates } from "../engine/providers.ts";
+import { normalizeMessages, isAdminContext, toolCaps, collectUpstream } from "../engine/dispatch.ts";
+import { loadStrategyArms, armGlobalPosterior, finalizeLearning, verifyMathAnswer, verifyJsonAnswer } from "./chat-learning.ts";
+import type { LearnCtx } from "./chat-learning.ts";
+import { ESCALATION_POLICY, WIDE_POLICY, SWEEP_POLICY, combineSignals, hedgedDispatch, executeOwnedToolCalls, gradeToolCalls, learnToolVerdict, degradedSse, degradedCompletion } from "./chat-dispatch.ts";
+import type { HedgePolicy, Dispatched, ToolCallVerdict, DegradedOpts } from "./chat-dispatch.ts";
+export type { ToolRoundOutcome, ToolCallVerdict } from "./chat-dispatch.ts";
 
 // Comment frames keep proxies and clients alive while the race is still routing.
 export const HEARTBEAT_MS = 5_000;
@@ -734,9 +145,17 @@ honoApp.post("/v1/chat/completions", async (c) => {
     // are appended, never substituted: a client tool that shadows a built-in name
     // always wins, so the plane cannot hijack a caller's own API.
     const clientTools = Array.isArray(body.tools) ? (body.tools as unknown[]) : [];
-    const autoRequest = body.tools === "auto" || body.tools === true
+    // App Builder profile (nokey_builder): deterministic, quality-first
+    // routing — no strategy-arm lottery, no sampled ranking, sticky winner,
+    // gate always on. Each behavior is flagged at its site below.
+    const builder = body.nokey_builder === true;
+    let autoRequest = body.tools === "auto" || body.tools === true
       ? "auto"
       : body.nokey_tools ?? c.req.header("x-nokey-tools") ?? undefined;
+    // A builder request implies the router's tool plane when the client did
+    // not declare tools of its own: the build gate and the fs_* discipline in
+    // the preamble are part of the profile. Explicit client tools win.
+    if (builder && autoRequest === undefined && clientTools.length === 0) autoRequest = "auto";
     if (toolPlaneEnabled()) await hydrateForgedTools().catch(logErr);
     // Sub-agents (x-nokey-depth ≥ 1) get every tool but agent_team: teams do not nest.
     const autoTools = toolPlaneEnabled() ? resolveAutoToolNames(autoRequest)?.filter((n) => n !== "agent_team" || !(Number(c.req.header("x-nokey-depth") ?? 0) >= 1)) ?? null : null;
@@ -761,7 +180,10 @@ honoApp.post("/v1/chat/completions", async (c) => {
     // Self-execution is opt-in: only when the router supplied the tools does it
     // run the agentic loop. Otherwise tool_calls go straight back to the caller.
     // let: the build gate extends the budget when it sends the agent back to work.
-    let agentRounds = autoTools ? maxToolRounds(body.nokey_rounds) : 0;
+    // Builder requests get a deeper default tool budget (24 rounds) when the
+    // client did not ask for a specific count; the 0–32 clamp still applies.
+    const roundsRequest = builder && typeof body.nokey_rounds !== "number" ? 24 : body.nokey_rounds;
+    let agentRounds = autoTools ? maxToolRounds(roundsRequest) : 0;
     // ---- ASCK-L: task context, strategy arm, lesson injection -------------
     // The class is computed from the caller's messages before any router
     // system text is added, so the classifier sees the request as sent.
@@ -787,16 +209,20 @@ honoApp.post("/v1/chat/completions", async (c) => {
       const eff = effectivePosterior(cell, armGlobalPosterior(a.id), learningKappa());
       return { id: a.id, alpha: eff.alpha, beta: eff.beta, pulls: cell.pulls };
     });
-    const armChoice = chooseThompson(armCands, Math.random, { epsilon: 0.05, resamples: 120 });
-    const arm = armDefs.find((a) => a.id === armChoice?.id) ?? DEFAULT_STRATEGY_ARMS[0];
+    const baselineArm = armDefs.find((a) => a.id === "baseline") ?? DEFAULT_STRATEGY_ARMS[0];
+    // Builder profile: strategy-arm selection is skipped outright — no
+    // Thompson draw, no variant prompt, no temperature delta downstream.
+    // The baseline arm is what the decision log records, truthfully.
+    const armChoice = builder ? null : chooseThompson(armCands, Math.random, { epsilon: 0.05, resamples: 120 });
+    const arm = builder ? baselineArm : (armDefs.find((a) => a.id === armChoice?.id) ?? DEFAULT_STRATEGY_ARMS[0]);
     // Pure-passthrough modes (tool plane off: NOKEY_TOOLS=0,
     // NOKEY_TOOL_ROUNDS=0, or no auto tools on this request) must not mutate
     // the request — no prompt variant, no lessons, no temperature shift, no
     // verify-retry. The strategy in effect is then the baseline, and the
     // baseline is what the decision log records.
     const planeActive = Boolean(autoTools && agentRounds > 0);
-    const effArm = planeActive ? arm : (armDefs.find((a) => a.id === "baseline") ?? DEFAULT_STRATEGY_ARMS[0]);
-    const variantText = planeActive ? PROMPT_VARIANTS[effArm.promptVariant] : null;
+    const effArm = builder ? baselineArm : (planeActive ? arm : baselineArm);
+    const variantText = !builder && planeActive ? PROMPT_VARIANTS[effArm.promptVariant] : null;
     if (variantText) messages.unshift({ role: "system", content: variantText });
     const injectedLessons = planeActive ? rankLessons([...LESSONS.values()], taskCtx.taskClass, 2, Math.random) : [];
     if (injectedLessons.length > 0) {
@@ -857,7 +283,8 @@ honoApp.post("/v1/chat/completions", async (c) => {
       reasoning: body.reasoning,
       response_format: body.response_format,
     };
-    if (learnCtx.arm.temperatureDelta !== 0) {
+    // Builder profile: the request temperature is used exactly as sent.
+    if (!builder && learnCtx.arm.temperatureDelta !== 0) {
       completionOptions.temperature = Number(
         clampNum((completionOptions.temperature ?? 0.7) + learnCtx.arm.temperatureDelta, 0, 2).toFixed(2),
       );
@@ -877,6 +304,7 @@ honoApp.post("/v1/chat/completions", async (c) => {
     root.set({
       "model.requested": reqModel,
       mode,
+      builder,
       stream: wantsStream,
       messages: messages.length,
       tools: declaredTools.length,
@@ -893,7 +321,9 @@ honoApp.post("/v1/chat/completions", async (c) => {
 
     const safeRanked = async (m: RoutingMode, o: RankOptions = {}): Promise<ScoredCandidate[]> => {
       try {
-        return await getRankedCandidates(m, false, false, { ...o, toolAware });
+        // Builder profile: deterministic scoring (Wilson/posterior lower
+        // bounds, no Thompson draw, no UCB bonus, no Gumbel noise).
+        return await getRankedCandidates(m, builder, false, { ...o, toolAware });
       } catch (err) {
         console.error(`[rank] ${m} ranking failed:`, err);
         return [];
@@ -901,9 +331,14 @@ honoApp.post("/v1/chat/completions", async (c) => {
     };
 
     const rankSpan = root.child("rank", { mode });
-    let ranked = await safeRanked(mode, { taskClass: taskCtx.taskClass, tenant });
+    // Builder tier 1 ranks verified tuples only. If that pool is empty the
+    // widening fallbacks below still apply, exactly as exhaustion works for
+    // any other request — tier 1 itself never samples unverified tuples.
+    let ranked = await safeRanked(mode, builder
+      ? { taskClass: taskCtx.taskClass, tenant, verifiedOnly: true }
+      : { taskClass: taskCtx.taskClass, tenant });
     // Vision lanes must not filter themselves into an empty pool.
-    if (ranked.length === 0 && hasVisionPayload) ranked = await getRankedCandidates(mode, false, hasVisionPayload, { toolAware }).catch(() => []);
+    if (ranked.length === 0 && hasVisionPayload) ranked = await getRankedCandidates(mode, builder, hasVisionPayload, { toolAware }).catch(() => []);
     if (ranked.length === 0) ranked = await safeRanked(mode, { unrestricted: true });
     if (ranked.length === 0) ranked = await allSweepCandidates(mode).catch(() => []);
 
@@ -1030,12 +465,22 @@ honoApp.post("/v1/chat/completions", async (c) => {
       },
     ];
 
+    // Builder profile: the tuple that won the previous dispatch of THIS
+    // request is moved to the head of every later pool, so a continuation
+    // (tool round, gate round, verify retry) is tried on the winning model
+    // first instead of merely keeping it eligible somewhere in the pool.
+    let stickyTupleId: string | null = null;
     const dispatch = async (): Promise<Dispatched> => {
       let err: unknown = null;
       for (const [i, tier] of tiers.entries()) {
         let candidates: ScoredCandidate[] = [];
         try {
-          candidates = (await tier.pool()).slice(0, tier.cap);
+          const poolList = await tier.pool();
+          if (builder && stickyTupleId) {
+            const si = poolList.findIndex((x) => x.tupleId === stickyTupleId);
+            if (si > 0) poolList.unshift(poolList.splice(si, 1)[0]);
+          }
+          candidates = poolList.slice(0, tier.cap);
         } catch (e) {
           console.error(`[race] tier ${i + 1} pool failed:`, e);
           continue;
@@ -1061,6 +506,7 @@ honoApp.post("/v1/chat/completions", async (c) => {
           clearTimeout(tierDeadline);
           if (tier.allowRetried) for (const id of tierTried) tried.add(id);
           tierSpan.end("ok", { winner: won.cand.tupleId, attempted: tierTried.size });
+          if (builder) stickyTupleId = won.cand.tupleId;
           return won;
         } catch (e) {
           clearTimeout(tierDeadline);
@@ -1089,7 +535,10 @@ honoApp.post("/v1/chat/completions", async (c) => {
     // An agent that changed the workspace is not done when it says so: the
     // gate checks the project (static, runtime, tests) and, while anything is
     // unmet, hands the findings back as the next user turn with more rounds.
-    const gateMax = planeActive && body.nokey_gate !== false && autoTools?.includes("fs_write") ? Math.round(clampNum(Number(body.nokey_gate_rounds) || 6, 1, 12)) : 0;
+    // Builder profile: the gate cannot be opted out of (a client-sent
+    // nokey_gate: false is ignored) and its default budget is 10 rounds
+    // instead of 6; an explicit nokey_gate_rounds still wins.
+    const gateMax = planeActive && (builder || body.nokey_gate !== false) && autoTools?.includes("fs_write") ? Math.round(clampNum(Number(body.nokey_gate_rounds) || (builder ? 10 : 6), 1, 12)) : 0;
     let gateRounds = 0;
     const gateCaps = toolCaps(c, reqModel, body.nokey_runner === true);
     const baseToolChoice = completionOptions.tool_choice;

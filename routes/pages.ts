@@ -202,6 +202,21 @@ honoApp.get("/", (_c) => {
         });
 });
 
+// Dashboard components: index.html is a shell; its CSS and section scripts
+// live as separate files under ui/ so each can be edited on its own.
+honoApp.get("/ui/:file", (c) => {
+  const file = c.req.param("file");
+  if (!/^[a-z0-9][a-z0-9.-]*\.(js|css)$/i.test(file)) return c.notFound();
+  const body = loadTextFile("ui/" + file);
+  if (body === null) return c.notFound();
+  return new Response(body, {
+    headers: {
+      "Content-Type": file.endsWith(".css") ? "text/css; charset=utf-8" : "text/javascript; charset=utf-8",
+      "Cache-Control": "no-cache",
+    },
+  });
+});
+
 // The workspace at / absorbed the standalone admin page; old links land on its Lanes view.
 honoApp.get("/admin", (c) => c.redirect("/#lanes", 301));
 

@@ -1,5 +1,5 @@
 /** Exercise the same budget helpers used by the workspace, not a copy. */
-const page = await Deno.readTextFile(new URL("../index.html", import.meta.url));
+const page = await Deno.readTextFile(new URL("../ui/catalog.js", import.meta.url));
 const start = page.indexOf("function modelContext(");
 const end = page.indexOf("function chatTokenBudget(", start);
 if (start < 0 || end < 0) throw new Error("UI budget helpers not found");
@@ -27,7 +27,9 @@ Deno.test("token estimate accounts for conversation and tool schema", () => {
   assert(helpers.estimatePromptTokens([{ role: "user", content: "hello" }], "") > baseline, "message cost");
   assert(helpers.estimatePromptTokens([], "", "schema text") > baseline, "tool cost");
 });
-Deno.test("mobile chat opens without persisted desktop parameters or an invisible blur", () => {
-  assert(page.includes('if (innerWidth <= 860 || store.get("side") === false)'), "mobile parameters must start closed");
-  assert(page.includes('#scrim:not(.open) { visibility: hidden; backdrop-filter: none;'), "closed scrim must not blur");
+Deno.test("mobile chat opens without persisted desktop parameters or an invisible blur", async () => {
+  const chatJs = await Deno.readTextFile(new URL("../ui/chat.js", import.meta.url));
+  const css = await Deno.readTextFile(new URL("../ui/dashboard.css", import.meta.url));
+  assert(chatJs.includes('if (innerWidth <= 860 || store.get("side") === false)'), "mobile parameters must start closed");
+  assert(css.includes('#scrim:not(.open) { visibility: hidden; backdrop-filter: none;'), "closed scrim must not blur");
 });

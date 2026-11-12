@@ -148,6 +148,8 @@ import { registerImages } from "./routes/images.ts";
 
 import { registerAgentProtocols } from "./routes/agent-protocols.ts";
 
+import { registerConversations } from "./routes/conversations.ts";
+
 import { registerAgentRun } from "./routes/agent-run.ts";
 
 export type { ToolRoundOutcome, ToolCallVerdict } from "./routes/chat.ts";
@@ -873,6 +875,8 @@ registerToolsRoutes();
 registerOps();
 
 registerAgentProtocols();
+
+registerConversations();
 
 registerAgentRun();
 

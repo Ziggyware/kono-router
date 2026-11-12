@@ -1,3 +1,54 @@
+# Builder profile + component split — 2026-11-11
+
+App Builder requests (`nokey_builder: true`) now run a deterministic,
+quality-first profile instead of the chat lottery: strategy-arm
+(Thompson) selection is skipped entirely — no variant prompt, no
+temperature delta, the request temperature reaches the upstream as
+sent; tier-1 ranking is deterministic (posterior means, no UCB/Gumbel
+noise) and verified-only; the winning tuple is moved to the head of
+every later dispatch in the request; the build gate is forced on
+(budget 10) even if the client disabled it; tool rounds default to 24;
+and builder implies the tool plane (`tools: "auto"`) when the client
+sent none, so the fs_*-first preamble always applies.
+
+The dashboard's Generate flow now builds in phases — spec to
+`.appbuilder/spec.md`, implement with fs_write/fs_patch into the
+workspace, verify with app_debug/app_test — includes the selected
+technology's starter template in the prompt, sends an explicit
+16384-token budget at temperature 0.2 on a fresh context, and
+auto-continues (up to 2×) when a reply is cut off at the length limit.
+
+The codebase is split into components for piecemeal editing: the
+dashboard is an 86 KB shell plus `ui/*.js` / `ui/dashboard.css` served
+from `/ui/<file>`; `tools-schema.ts` (schema engine) left `tools.ts`;
+`engine/{capabilities,registry,ranking}.ts` left `engine/providers.ts`;
+`routes/{chat-learning,chat-dispatch}.ts` left `routes/chat.ts`. All
+extractions are verbatim moves behind re-exports — no importer changed.
+
+# Conversation persistence: chat and library move server-side — 2026-11-11
+
+Chat used to live only in the dashboard's localStorage, as one
+unbounded JSON blob whose save failures were swallowed — app-building
+chats (whole files in tool calls, long reasoning, up to 30 full
+library snapshots sharing the same ~5 MB quota) crossed the quota and
+every later save failed silently and permanently. The router now
+stores conversations in KV, scoped per caller by the sha256 of the
+session id (`x-nokey-session`, fallback `x-session-id`):
+
+- `PUT /v1/conversations/current` / `GET /v1/conversations/current` —
+  the live conversation (`{saved, messages}`; ≤2000 messages, ~5 MB
+  body cap, validated message shapes).
+- `POST /v1/conversations` / `GET /v1/conversations` — the snapshot
+  library: create (id generated when omitted) and list the index
+  (`{id, title, saved, count}`), capped at 30 snapshots with the
+  oldest evicted.
+- `GET /v1/conversations/:id` / `DELETE /v1/conversations/:id` — read
+  or delete one snapshot (delete is idempotent).
+
+Missing session header → `400 missing_session`; unknown ids and
+foreign sessions read as `404 not_found` — no existence leak across
+sessions.
+
 # Agent protocols: MCP, A2A, Responses API, AG-UI multi-agent runs — 2026-11-10
 
 KONO now speaks the modern agent protocols natively, as an adapter

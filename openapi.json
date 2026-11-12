@@ -35,6 +35,33 @@
     }
   ],
   "paths": {
+    "/ui/{file}": {
+      "get": {
+        "tags": [
+          "pages"
+        ],
+        "summary": "Serve a dashboard component file (JS/CSS) from ui/.",
+        "parameters": [
+          {
+            "name": "file",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[a-z0-9][a-z0-9.-]*\\.(js|css)$"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The component file."
+          },
+          "404": {
+            "description": "Unknown component file."
+          }
+        }
+      }
+    },
     "/health": {
       "get": {
         "tags": [
@@ -2081,6 +2108,226 @@
                 }
               }
             }
+          }
+        }
+      }
+    },
+    "/v1/conversations/current": {
+      "get": {
+        "tags": [
+          "conversations"
+        ],
+        "operationId": "getCurrentConversation",
+        "summary": "Read the caller's live conversation",
+        "description": "Returns the stored live conversation for the session identified by the `x-nokey-session` header (fallback `x-session-id`): `{saved, messages}`. Conversations are scoped to the sha256 of the session id. 404 when nothing is stored; 400 when the session header is missing.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The stored conversation."
+          },
+          "400": {
+            "description": "Missing session header."
+          },
+          "404": {
+            "description": "No conversation stored for this session."
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "conversations"
+        ],
+        "operationId": "putCurrentConversation",
+        "summary": "Store the caller's live conversation",
+        "description": "Overwrites the live conversation for the session identified by the `x-nokey-session` header (fallback `x-session-id`). Body: `{saved, messages}` with at most 2000 messages, each an object with a string `role`; bodies over ~5 MB are rejected with 413.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "saved": {
+                    "type": "number"
+                  },
+                  "messages": {
+                    "type": "array",
+                    "items": {
+                      "type": "object"
+                    }
+                  }
+                },
+                "required": [
+                  "saved",
+                  "messages"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Stored; returns {ok, saved}."
+          },
+          "400": {
+            "description": "Missing session header or invalid messages."
+          },
+          "413": {
+            "description": "Body too large."
+          }
+        }
+      }
+    },
+    "/v1/conversations": {
+      "get": {
+        "tags": [
+          "conversations"
+        ],
+        "operationId": "listConversationSnapshots",
+        "summary": "List the caller's saved conversation snapshots",
+        "description": "Returns `{items: [{id, title, saved, count}]}` for the session identified by the `x-nokey-session` header (fallback `x-session-id`); empty when the library is empty.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Snapshot index."
+          },
+          "400": {
+            "description": "Missing session header."
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "conversations"
+        ],
+        "operationId": "createConversationSnapshot",
+        "summary": "Save a conversation snapshot to the library",
+        "description": "Stores a snapshot `{id?, title, saved, messages}` (same validation as the live conversation) for the session identified by the `x-nokey-session` header (fallback `x-session-id`). The id is generated when omitted. The library holds at most 30 snapshots; the oldest by `saved` are evicted.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string"
+                  },
+                  "title": {
+                    "type": "string"
+                  },
+                  "saved": {
+                    "type": "number"
+                  },
+                  "messages": {
+                    "type": "array",
+                    "items": {
+                      "type": "object"
+                    }
+                  }
+                },
+                "required": [
+                  "saved",
+                  "messages"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Stored; returns {ok, id}."
+          },
+          "400": {
+            "description": "Missing session header or invalid messages."
+          },
+          "413": {
+            "description": "Body too large."
+          }
+        }
+      }
+    },
+    "/v1/conversations/{id}": {
+      "get": {
+        "tags": [
+          "conversations"
+        ],
+        "operationId": "getConversationSnapshot",
+        "summary": "Read one saved conversation snapshot",
+        "description": "Returns the full snapshot `{id, title, saved, session?, messages}` for the session identified by the `x-nokey-session` header (fallback `x-session-id`); 404 when the id is unknown to this session.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The snapshot."
+          },
+          "400": {
+            "description": "Missing session header."
+          },
+          "404": {
+            "description": "Snapshot not found."
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "conversations"
+        ],
+        "operationId": "deleteConversationSnapshot",
+        "summary": "Delete one saved conversation snapshot",
+        "description": "Removes the snapshot and its library index entry for the session identified by the `x-nokey-session` header (fallback `x-session-id`). Idempotent: deleting an unknown id still returns {ok: true}.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Deleted (or already absent)."
+          },
+          "400": {
+            "description": "Missing session header."
           }
         }
       }
