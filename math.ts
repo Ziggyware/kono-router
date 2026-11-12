@@ -2,7 +2,7 @@
  * ============================================================================
  * ASCK v1 — Adaptive Stochastic Control Kernel
  * ============================================================================
- * Pure, side-effect-free mathematics used by the Kono Router hot path.
+ * Pure, side-effect-free mathematics used by the Nokey Router hot path.
  * Everything here is deliberately O(1) per candidate and dependency-free so it
  * can run inside a Deno Deploy isolate with no warm-up cost.
  *

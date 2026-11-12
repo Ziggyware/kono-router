@@ -153,19 +153,19 @@ test("exhaustive sweep attempts ALL endpoints when every upstream is dead, and s
     }));
     if (res.status !== 200) throw new Error(`expected 200, got ${res.status}`);
     const data = await asJson(res);
-    if (data.kono?.degraded !== true) throw new Error("degraded response not labelled");
+    if (data.nokey?.degraded !== true) throw new Error("degraded response not labelled");
     if (!String(data.choices?.[0]?.message?.content ?? "").includes("No upstream model endpoint")) {
       throw new Error("degraded response missing honest explanation");
     }
-    if (res.headers.get("x-kono-degraded") !== "1") throw new Error("missing degraded header");
+    if (res.headers.get("x-nokey-degraded") !== "1") throw new Error("missing degraded header");
     // Every configured endpoint's chat URL must have been POSTed at least once.
     const covered = (endpoints.data as Array<{ url: string }>)
       .filter((e) => e.url && mock.chatUrls.has(e.url)).length;
     if (covered < expected) {
       throw new Error(`only ${covered}/${expected} endpoints were attempted`);
     }
-    if (!(Number(data.kono.endpoints_attempted) >= expected)) {
-      throw new Error(`attempt count ${data.kono.endpoints_attempted} < ${expected}`);
+    if (!(Number(data.nokey.endpoints_attempted) >= expected)) {
+      throw new Error(`attempt count ${data.nokey.endpoints_attempted} < ${expected}`);
     }
   } finally {
     restoreMock();
@@ -186,11 +186,11 @@ test("an arbitrary unknown requested model still completes via a healthy endpoin
     }));
     if (res.status !== 200) throw new Error(`status ${res.status}`);
     const data = await asJson(res);
-    if (data.kono?.degraded === true) throw new Error("request degraded instead of completing");
+    if (data.nokey?.degraded === true) throw new Error("request degraded instead of completing");
     if (!String(data.choices?.[0]?.message?.content ?? "").includes("adaptive stochastic control kernel")) {
       throw new Error(`unexpected content: ${JSON.stringify(data.choices?.[0]?.message)}`);
     }
-    if (data.kono?.requested_model !== "totally-made-up-frontier-model-9000") {
+    if (data.nokey?.requested_model !== "totally-made-up-frontier-model-9000") {
       throw new Error("requested model not reported");
     }
   } finally {
@@ -257,7 +257,7 @@ test("protocol negotiation: stream:true 400s fall through to a JSON completion",
     }));
     if (res.status !== 200) throw new Error(`status ${res.status}`);
     const data = await asJson(res);
-    if (data.kono?.degraded === true) throw new Error("protocol negotiation did not rescue the request");
+    if (data.nokey?.degraded === true) throw new Error("protocol negotiation did not rescue the request");
     if (!String(data.choices?.[0]?.message?.content ?? "").includes("adaptive stochastic")) {
       throw new Error("negotiated completion missing");
     }
@@ -281,7 +281,7 @@ test("plain-text upstream answers are accepted", async () => {
     }));
     if (res.status !== 200) throw new Error(`status ${res.status}`);
     const data = await asJson(res);
-    if (data.kono?.degraded === true) throw new Error("plain-text response rejected");
+    if (data.nokey?.degraded === true) throw new Error("plain-text response rejected");
     if (!String(data.choices?.[0]?.message?.content ?? "").includes("adaptive stochastic")) {
       throw new Error("plain-text content missing");
     }
@@ -303,7 +303,7 @@ test("malformed / empty bodies are normalised instead of 400ing", async () => {
     }));
     if (res.status !== 200) throw new Error(`status ${res.status}`);
     const data = await asJson(res);
-    if (data.kono?.degraded === true) throw new Error("malformed body degraded");
+    if (data.nokey?.degraded === true) throw new Error("malformed body degraded");
   } finally {
     restoreMock();
   }
@@ -317,7 +317,7 @@ test("GET /v1/models advertises model-agnostic routing", async () => {
     const data = await asJson(res);
     if (data.accepts_any_model !== true) throw new Error("accepts_any_model missing");
     const ids = (data.data as Array<{ id: string }>).map((m) => m.id);
-    for (const id of ["free:auto", "free:fast", "kono-image"]) {
+    for (const id of ["free:auto", "free:fast", "nokey-image"]) {
       if (!ids.includes(id)) throw new Error(`missing ${id}`);
     }
   } finally {
@@ -337,15 +337,15 @@ test("image generation under total outage reports still-processing, never a fake
       body: JSON.stringify({ model: "some-unknown-image-model", prompt: "a red cube" }),
     }));
     if (res.status !== 503) throw new Error(`status ${res.status}`);
-    if (res.headers.get("x-kono-still-processing") !== "1") throw new Error("missing still-processing header");
+    if (res.headers.get("x-nokey-still-processing") !== "1") throw new Error("missing still-processing header");
     const data = await asJson(res);
     if (data.error?.code !== "image_providers_busy") throw new Error("wrong error code");
-    if (data.kono?.still_processing !== true) throw new Error("still_processing not labelled");
+    if (data.nokey?.still_processing !== true) throw new Error("still_processing not labelled");
     // No output image may ever claim the providers are unavailable.
     if (data.data) throw new Error("must not emit an image payload when every provider failed");
-    if (!(data.kono.providers_reviewed >= 3)) throw new Error("not all image providers reviewed");
-    if (data.kono.sweeps < 2) throw new Error("backend must re-review the whole chain in multiple sweeps");
-    if (!Array.isArray(data.kono.errors) || !data.kono.errors.length) throw new Error("errors not reported");
+    if (!(data.nokey.providers_reviewed >= 3)) throw new Error("not all image providers reviewed");
+    if (data.nokey.sweeps < 2) throw new Error("backend must re-review the whole chain in multiple sweeps");
+    if (!Array.isArray(data.nokey.errors) || !data.nokey.errors.length) throw new Error("errors not reported");
   } finally {
     restoreMock();
   }
@@ -364,7 +364,7 @@ test("b64_json image requests also report still-processing under total image out
     }));
     if (res.status !== 503) throw new Error(`status ${res.status}`);
     const data = await asJson(res);
-    if (data.kono?.still_processing !== true) throw new Error("still_processing not labelled");
+    if (data.nokey?.still_processing !== true) throw new Error("still_processing not labelled");
     if (data.data) throw new Error("must not emit a b64 placeholder image when every provider failed");
   } finally {
     restoreMock();
@@ -437,7 +437,7 @@ test("inline <think> split across chunks streams as reasoning_content in real ti
     if (reasoning !== "step one, step two") throw new Error(`reasoning ${JSON.stringify(reasoning)}`);
     if (!content.startsWith("The answer: ")) throw new Error(`content ${JSON.stringify(content.slice(0, 40))}`);
     if (content.includes("<think>") || content.includes("</think>")) throw new Error("think tags leaked into content");
-    if (frames.at(-1)?.kono?.trace_id?.length !== 32) throw new Error("final chunk missing trace id");
+    if (frames.at(-1)?.nokey?.trace_id?.length !== 32) throw new Error("final chunk missing trace id");
   } finally {
     restoreMock();
   }
@@ -546,7 +546,7 @@ test("traces record attempts and protocol negotiation; admin guard and live tail
   try {
     const res = await app.fetch(chatCompletion({ model: "free:smart", messages: [{ role: "user", content: "hi" }], stream: false }));
     const data = await asJson(res);
-    const id = data.kono?.trace_id;
+    const id = data.nokey?.trace_id;
     if (!res.headers.get("traceparent")?.includes(id)) throw new Error("traceparent/trace_id mismatch");
     if (!/ttft;dur=\d+, total;dur=\d+/.test(res.headers.get("server-timing") ?? "")) throw new Error("server-timing");
 
@@ -609,14 +609,14 @@ test("a silent committed stream emits keepalive comments and still completes", a
       },
     }), { headers: { "content-type": "text/event-stream" } });
   }));
-  Deno.env.set("KONO_IDLE_MS", "150");
+  Deno.env.set("NOKEY_IDLE_MS", "150");
   try {
     const text = await (await app.fetch(chatCompletion({ model: "free:smart", messages: [{ role: "user", content: "hi" }], stream: true }))).text();
     const firstChunk = text.indexOf('"content"'), keep = text.indexOf(": keepalive"), last = text.lastIndexOf('"content"');
     if (!(firstChunk >= 0 && keep > firstChunk && last > keep)) throw new Error("keepalive not emitted between committed chunks");
     if (!text.includes("[DONE]") || !text.includes("relay mesh")) throw new Error("stream incomplete");
   } finally {
-    Deno.env.delete("KONO_IDLE_MS");
+    Deno.env.delete("NOKEY_IDLE_MS");
     restoreMock();
   }
 });
@@ -631,16 +631,16 @@ test("a slow buffered completion keeps the connection alive with leading whitesp
         ctrl.close();
       },
     }), { headers: { "content-type": "application/json" } })));
-  Deno.env.set("KONO_IDLE_MS", "150");
+  Deno.env.set("NOKEY_IDLE_MS", "150");
   try {
     const res = await app.fetch(chatCompletion({ model: "free:smart", messages: [{ role: "user", content: "hi" }], stream: false }));
     if (res.status !== 200 || !res.headers.get("traceparent")) throw new Error("slow path headers");
     const text = await res.text();
     if (!/^ {2,}\{/.test(text)) throw new Error(`expected whitespace keepalives before JSON, got ${JSON.stringify(text.slice(0, 20))}`);
     const data = JSON.parse(text);
-    if (!String(data.choices?.[0]?.message?.content).includes("relay mesh") || data.kono?.degraded !== false) throw new Error("bad body");
+    if (!String(data.choices?.[0]?.message?.content).includes("relay mesh") || data.nokey?.degraded !== false) throw new Error("bad body");
   } finally {
-    Deno.env.delete("KONO_IDLE_MS");
+    Deno.env.delete("NOKEY_IDLE_MS");
     restoreMock();
   }
 });

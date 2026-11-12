@@ -1,13 +1,13 @@
 {
   "openapi": "3.1.0",
   "info": {
-    "title": "kono-router",
+    "title": "nokey-router",
     "version": "asck-v1",
-    "description": "OpenAI-compatible free-inference router. Chat and image routes never fail: after an exhaustive endpoint sweep they return 200 with `kono.degraded=true` (buffered responses also set `X-Kono-Degraded: 1`; streams send headers before routing settles, so they signal it in-band). Every request is traced: `traceparent` is honoured inbound and returned outbound, spans are exported via OpenTelemetry and kept in a per-isolate ring under `/v1/traces`. The ASCK-T tool plane adds first-class tool support: `GET /v1/tools` lists executable built-ins (calculation, data/JSON, text, time, crypto, durable files, clipboard, tasks, memory, RAG, embeddings, web search/fetch, HTTP and mesh introspection) with their learned reliability, `POST /v1/tools/execute` runs them directly, and a chat request can attach them with `\"tools\": \"auto\"` so the router executes the calls itself and loops until the model answers."
+    "description": "OpenAI-compatible free-inference router. Chat and image routes never fail: after an exhaustive endpoint sweep they return 200 with `nokey.degraded=true` (buffered responses also set `X-Nokey-Degraded: 1`; streams send headers before routing settles, so they signal it in-band). Every request is traced: `traceparent` is honoured inbound and returned outbound, spans are exported via OpenTelemetry and kept in a per-isolate ring under `/v1/traces`. The ASCK-T tool plane adds first-class tool support: `GET /v1/tools` lists executable built-ins (calculation, data/JSON, text, time, crypto, durable files, clipboard, tasks, memory, RAG, embeddings, web search/fetch, HTTP and mesh introspection) with their learned reliability, `POST /v1/tools/execute` runs them directly, and a chat request can attach them with `\"tools\": \"auto\"` so the router executes the calls itself and loops until the model answers."
   },
   "servers": [
     {
-      "url": "https://kono-router.vercel.app"
+      "url": "https://nokey-router.ziggyware.deno.net"
     }
   ],
   "tags": [
@@ -28,9 +28,40 @@
     },
     {
       "name": "community"
+    },
+    {
+      "name": "agents",
+      "description": "Agent protocols: MCP, A2A, Responses, multi-agent runs"
     }
   ],
   "paths": {
+    "/ui/{file}": {
+      "get": {
+        "tags": [
+          "pages"
+        ],
+        "summary": "Serve a dashboard component file (JS/CSS) from ui/.",
+        "parameters": [
+          {
+            "name": "file",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[a-z0-9][a-z0-9.-]*\\.(js|css)$"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The component file."
+          },
+          "404": {
+            "description": "Unknown component file."
+          }
+        }
+      }
+    },
     "/health": {
       "get": {
         "tags": [
@@ -313,7 +344,7 @@
         },
         "responses": {
           "200": {
-            "description": "Completion. With stream=true, headers and a `: trace <id>` comment are sent immediately, `: routing` heartbeats follow every 5 s until an upstream commits, then chunks stream in real time: `delta.reasoning_content` (including leading inline <think> blocks), `delta.content`, `delta.tool_calls` (stable index; id and type on each call's first chunk). The final chunk carries `kono`. No response stays silent longer than KONO_IDLE_MS (default 15 s): streams send `: keepalive` comments whenever nothing else has been sent (a quiet upstream, a server-side tool round); buffered responses still unfinished at that point commit the 200 and send whitespace (valid before JSON) until the body is ready, so their timing headers move into `kono`/`telemetry`.",
+            "description": "Completion. With stream=true, headers and a `: trace <id>` comment are sent immediately, `: routing` heartbeats follow every 5 s until an upstream commits, then chunks stream in real time: `delta.reasoning_content` (including leading inline <think> blocks), `delta.content`, `delta.tool_calls` (stable index; id and type on each call's first chunk). The final chunk carries `nokey`. No response stays silent longer than NOKEY_IDLE_MS (default 15 s): streams send `: keepalive` comments whenever nothing else has been sent (a quiet upstream, a server-side tool round); buffered responses still unfinished at that point commit the 200 and send whitespace (valid before JSON) until the body is ready, so their timing headers move into `nokey`/`telemetry`.",
             "headers": {
               "traceparent": {
                 "description": "W3C trace context of this request's root span",
@@ -327,17 +358,17 @@
                   "type": "string"
                 }
               },
-              "X-Kono-Attempts": {
+              "X-Nokey-Attempts": {
                 "schema": {
                   "type": "integer"
                 }
               },
-              "X-Kono-Endpoints": {
+              "X-Nokey-Endpoints": {
                 "schema": {
                   "type": "integer"
                 }
               },
-              "X-Kono-Degraded": {
+              "X-Nokey-Degraded": {
                 "schema": {
                   "type": "string",
                   "enum": [
@@ -1787,6 +1818,618 @@
           }
         }
       }
+    },
+    "/mcp": {
+      "post": {
+        "tags": [
+          "agents"
+        ],
+        "operationId": "mcpJsonRpc",
+        "summary": "MCP Streamable HTTP endpoint (JSON-RPC)",
+        "description": "Model Context Protocol Streamable HTTP transport, protocolVersion 2025-03-26. Methods: initialize, ping, tools/list, tools/call. Batch requests are rejected with JSON-RPC error -32600. Tool failures are returned as isError content in the result, never as transport errors. Public envelope: no bearer auth on the endpoint itself; internal work is metered.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "jsonrpc": {
+                    "const": "2.0"
+                  },
+                  "id": {},
+                  "method": {
+                    "type": "string"
+                  },
+                  "params": {
+                    "type": "object"
+                  }
+                }
+              },
+              "example": {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "tools/list",
+                "params": {}
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "JSON-RPC result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid or batch JSON-RPC request (-32600)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "tags": [
+          "agents"
+        ],
+        "operationId": "mcpStreamUnsupported",
+        "summary": "Stateless MCP server: no server-initiated stream (405)",
+        "description": "This MCP server is stateless and offers no server-initiated SSE stream; GET is rejected with 405.",
+        "responses": {
+          "405": {
+            "description": "Method not allowed: no server-initiated stream",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/a2a": {
+      "post": {
+        "tags": [
+          "agents"
+        ],
+        "operationId": "a2aJsonRpc",
+        "summary": "A2A agent JSON-RPC endpoint",
+        "description": "Agent2Agent (A2A) JSON-RPC endpoint. Methods: message/send, message/stream (SSE), tasks/get, tasks/cancel, tasks/resubscribe. Tasks are persisted in KV for 24h and are owner-scoped: unknown or foreign task ids return TaskNotFound (-32001). Push notifications are not supported. Public envelope: no bearer auth on the endpoint itself; internal work is metered.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "jsonrpc": {
+                    "const": "2.0"
+                  },
+                  "id": {},
+                  "method": {
+                    "type": "string"
+                  },
+                  "params": {
+                    "type": "object"
+                  }
+                }
+              },
+              "example": {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "message/send",
+                "params": {
+                  "message": {
+                    "role": "user",
+                    "parts": [
+                      {
+                        "kind": "text",
+                        "text": "ping"
+                      }
+                    ],
+                    "messageId": "msg-1"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "JSON-RPC result: a Task or Message. With message/stream, an SSE stream of task/status/artifact events.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              },
+              "text/event-stream": {
+                "schema": {
+                  "type": "string",
+                  "description": "`data: <JSON-RPC response>` frames carrying Task, status-update and artifact-update events"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid JSON-RPC request, or TaskNotFound (-32001) for unknown or foreign task ids",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/.well-known/agent-card.json": {
+      "get": {
+        "tags": [
+          "agents"
+        ],
+        "operationId": "agentCard",
+        "summary": "A2A agent card (public discovery)",
+        "description": "Public A2A agent card for this router: name, skills, capabilities (streaming; push notifications not supported) and the /a2a JSON-RPC endpoint URL.",
+        "responses": {
+          "200": {
+            "description": "Agent card",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/responses": {
+      "post": {
+        "tags": [
+          "agents",
+          "inference"
+        ],
+        "operationId": "createResponse",
+        "summary": "OpenAI Responses API adapter over chat completions",
+        "description": "OpenAI Responses API surface backed by the chat-completions router. `input` is a string or an array of items; `instructions` sets the system prompt. `previous_response_id` continues a chain whose state is stored for 24h in KV. Streaming emits response.created, response.output_text.delta and response.completed events. Degraded upstreams produce a response with status failed and error code upstream_degraded instead of a fabricated answer.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "model": {
+                    "type": "string"
+                  },
+                  "input": {
+                    "oneOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "array",
+                        "items": {
+                          "type": "object"
+                        }
+                      }
+                    ],
+                    "description": "Input text, or an array of input items."
+                  },
+                  "instructions": {
+                    "type": "string"
+                  },
+                  "previous_response_id": {
+                    "type": "string",
+                    "description": "Id of a previous response (stored 24h in KV) to continue from."
+                  },
+                  "stream": {
+                    "type": "boolean",
+                    "default": false
+                  },
+                  "temperature": {
+                    "type": "number"
+                  },
+                  "max_output_tokens": {
+                    "type": "integer"
+                  }
+                }
+              },
+              "example": {
+                "model": "free:auto",
+                "input": "ping"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Response object. With stream=true, SSE events: response.created, response.output_text.delta, response.completed; a degraded upstream completes with status failed and error code upstream_degraded.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              },
+              "text/event-stream": {
+                "schema": {
+                  "type": "string",
+                  "description": "`data: <response event>` frames (response.created / response.output_text.delta / response.completed)"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request, or unknown previous_response_id",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid ROUTER_API_KEY",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Per-isolate rate limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/conversations/current": {
+      "get": {
+        "tags": [
+          "conversations"
+        ],
+        "operationId": "getCurrentConversation",
+        "summary": "Read the caller's live conversation",
+        "description": "Returns the stored live conversation for the session identified by the `x-nokey-session` header (fallback `x-session-id`): `{saved, messages}`. Conversations are scoped to the sha256 of the session id. 404 when nothing is stored; 400 when the session header is missing.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The stored conversation."
+          },
+          "400": {
+            "description": "Missing session header."
+          },
+          "404": {
+            "description": "No conversation stored for this session."
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "conversations"
+        ],
+        "operationId": "putCurrentConversation",
+        "summary": "Store the caller's live conversation",
+        "description": "Overwrites the live conversation for the session identified by the `x-nokey-session` header (fallback `x-session-id`). Body: `{saved, messages}` with at most 2000 messages, each an object with a string `role`; bodies over ~5 MB are rejected with 413.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "saved": {
+                    "type": "number"
+                  },
+                  "messages": {
+                    "type": "array",
+                    "items": {
+                      "type": "object"
+                    }
+                  }
+                },
+                "required": [
+                  "saved",
+                  "messages"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Stored; returns {ok, saved}."
+          },
+          "400": {
+            "description": "Missing session header or invalid messages."
+          },
+          "413": {
+            "description": "Body too large."
+          }
+        }
+      }
+    },
+    "/v1/conversations": {
+      "get": {
+        "tags": [
+          "conversations"
+        ],
+        "operationId": "listConversationSnapshots",
+        "summary": "List the caller's saved conversation snapshots",
+        "description": "Returns `{items: [{id, title, saved, count}]}` for the session identified by the `x-nokey-session` header (fallback `x-session-id`); empty when the library is empty.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Snapshot index."
+          },
+          "400": {
+            "description": "Missing session header."
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "conversations"
+        ],
+        "operationId": "createConversationSnapshot",
+        "summary": "Save a conversation snapshot to the library",
+        "description": "Stores a snapshot `{id?, title, saved, messages}` (same validation as the live conversation) for the session identified by the `x-nokey-session` header (fallback `x-session-id`). The id is generated when omitted. The library holds at most 30 snapshots; the oldest by `saved` are evicted.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string"
+                  },
+                  "title": {
+                    "type": "string"
+                  },
+                  "saved": {
+                    "type": "number"
+                  },
+                  "messages": {
+                    "type": "array",
+                    "items": {
+                      "type": "object"
+                    }
+                  }
+                },
+                "required": [
+                  "saved",
+                  "messages"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Stored; returns {ok, id}."
+          },
+          "400": {
+            "description": "Missing session header or invalid messages."
+          },
+          "413": {
+            "description": "Body too large."
+          }
+        }
+      }
+    },
+    "/v1/conversations/{id}": {
+      "get": {
+        "tags": [
+          "conversations"
+        ],
+        "operationId": "getConversationSnapshot",
+        "summary": "Read one saved conversation snapshot",
+        "description": "Returns the full snapshot `{id, title, saved, session?, messages}` for the session identified by the `x-nokey-session` header (fallback `x-session-id`); 404 when the id is unknown to this session.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The snapshot."
+          },
+          "400": {
+            "description": "Missing session header."
+          },
+          "404": {
+            "description": "Snapshot not found."
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "conversations"
+        ],
+        "operationId": "deleteConversationSnapshot",
+        "summary": "Delete one saved conversation snapshot",
+        "description": "Removes the snapshot and its library index entry for the session identified by the `x-nokey-session` header (fallback `x-session-id`). Idempotent: deleting an unknown id still returns {ok: true}.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Deleted (or already absent)."
+          },
+          "400": {
+            "description": "Missing session header."
+          }
+        }
+      }
+    },
+    "/v1/agent/run": {
+      "post": {
+        "tags": [
+          "agents"
+        ],
+        "operationId": "agentRun",
+        "summary": "Multi-agent run: plan, parallel workers, verify, synthesize",
+        "description": "One multi-agent run over this router: a planner decomposes the task, workers execute the steps in parallel, a verifier checks the results and a synthesizer writes the final answer. Bounded at 11 internal chat calls per run. With stream=true the run returns AG-UI events: RUN_STARTED, STEP_STARTED, TOOL_CALL_START, TOOL_CALL_RESULT, TEXT_MESSAGE_CONTENT, RUN_FINISHED, RUN_ERROR.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "input": {
+                    "type": "string",
+                    "description": "The task for the run."
+                  },
+                  "messages": {
+                    "type": "array",
+                    "items": {
+                      "type": "object"
+                    },
+                    "description": "Alternative to input: the last user message is the task."
+                  },
+                  "model": {
+                    "type": "string",
+                    "default": "free:smart"
+                  },
+                  "stream": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "Stream AG-UI events instead of a buffered result."
+                  }
+                }
+              },
+              "example": {
+                "input": "Research the options and draft a recommendation.",
+                "model": "free:smart"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Run result. With stream=true, an SSE stream of AG-UI events (RUN_STARTED, STEP_STARTED, TOOL_CALL_START, TOOL_CALL_RESULT, TEXT_MESSAGE_CONTENT, RUN_FINISHED, RUN_ERROR).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              },
+              "text/event-stream": {
+                "schema": {
+                  "type": "string",
+                  "description": "`data: <AG-UI event>` frames"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "No input",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid ROUTER_API_KEY",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Per-isolate rate limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -2248,8 +2891,8 @@
           "parallel_tool_calls": {
             "type": "boolean"
           },
-          "kono_tools": {
-            "description": "Attach built-in tools alongside any client tools: true/\"auto\" for the default set, \"all\" for every non-admin tool, or a comma/space separated list of names. Equivalent to the x-kono-tools request header.",
+          "nokey_tools": {
+            "description": "Attach built-in tools alongside any client tools: true/\"auto\" for the default set, \"all\" for every non-admin tool, or a comma/space separated list of names. Equivalent to the x-nokey-tools request header.",
             "oneOf": [
               {
                 "type": "boolean"
@@ -2265,30 +2908,30 @@
               }
             ]
           },
-          "kono_preamble": {
+          "nokey_preamble": {
             "type": "boolean",
             "default": true,
             "description": "Prepend a one-line system message describing the attached tools. Set false to leave the message list untouched."
           },
-          "kono_rounds": {
+          "nokey_rounds": {
             "type": "integer",
             "minimum": 0,
             "maximum": 32,
-            "description": "Server-side agent rounds for tools:\"auto\" (default KONO_TOOL_ROUNDS, 8). The build gate extends it while it sends the agent back to work."
+            "description": "Server-side agent rounds for tools:\"auto\" (default NOKEY_TOOL_ROUNDS, 8). The build gate extends it while it sends the agent back to work."
           },
-          "kono_gate": {
+          "nokey_gate": {
             "oneOf": [{ "type": "boolean" }, { "type": "string", "enum": ["always"] }],
             "default": true,
-            "description": "Build gate. When an agent turn changed the session workspace, the final answer is checked: static diagnostics, runtime errors of the current files and app_test results (and, with a test runner, that a test run passed against the current files). While anything is unmet the findings go back to the agent as a user turn and the loop continues (status frame `kono.type = build_gate` on streams). false disables it; \"always\" checks even when nothing changed."
+            "description": "Build gate. When an agent turn changed the session workspace, the final answer is checked: static diagnostics, runtime errors of the current files and app_test results (and, with a test runner, that a test run passed against the current files). While anything is unmet the findings go back to the agent as a user turn and the loop continues (status frame `nokey.type = build_gate` on streams). false disables it; \"always\" checks even when nothing changed."
           },
-          "kono_gate_rounds": {
+          "nokey_gate_rounds": {
             "type": "integer",
             "minimum": 1,
             "maximum": 12,
             "default": 6,
             "description": "Most times the build gate may send the agent back in one request."
           },
-          "kono_runner": {
+          "nokey_runner": {
             "type": "boolean",
             "default": false,
             "description": "The client runs app_test jobs in a browser (the dashboard's hidden preview, via the admin app_runner tool) for the duration of this request. Lets app_test wait for results and makes the gate require a passing test run."
@@ -2441,7 +3084,7 @@
           }
         }
       },
-      "KonoMeta": {
+      "NokeyMeta": {
         "type": "object",
         "properties": {
           "degraded": {
@@ -2526,8 +3169,8 @@
           "model": {
             "type": "string"
           },
-          "kono": {
-            "$ref": "#/components/schemas/KonoMeta"
+          "nokey": {
+            "$ref": "#/components/schemas/NokeyMeta"
           },
           "telemetry": {
             "type": "object",
@@ -2621,11 +3264,11 @@
           "model": {
             "type": "string",
             "enum": [
-              "kono-image",
-              "kono-image-flux",
-              "kono-image-horde"
+              "nokey-image",
+              "nokey-image-flux",
+              "nokey-image-horde"
             ],
-            "default": "kono-image"
+            "default": "nokey-image"
           },
           "size": {
             "type": "string",
@@ -2675,7 +3318,7 @@
               }
             }
           },
-          "kono": {
+          "nokey": {
             "type": "object",
             "properties": {
               "degraded": {
@@ -2914,7 +3557,7 @@
           },
           "enabled": {
             "type": "boolean",
-            "description": "false when KONO_TOOLS=0"
+            "description": "false when NOKEY_TOOLS=0"
           },
           "session": {
             "type": "object",
@@ -2926,7 +3569,7 @@
               "scope_header": {
                 "type": "string",
                 "examples": [
-                  "x-kono-session"
+                  "x-nokey-session"
                 ]
               },
               "storage": {
@@ -2942,7 +3585,7 @@
             "properties": {
               "max_rounds": {
                 "type": "integer",
-                "description": "KONO_TOOL_ROUNDS; 0 disables the server-side agent loop"
+                "description": "NOKEY_TOOL_ROUNDS; 0 disables the server-side agent loop"
               },
               "auto_tools": {
                 "type": "array",

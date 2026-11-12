@@ -1,6 +1,6 @@
 # Reusable code research — router math, frameworks & source-code analysis
 
-Research for pulling reusable, well-maintained code into kono-router instead of
+Research for pulling reusable, well-maintained code into nokey-router instead of
 hand-rolling it. All packages verified against the public registries on
 2026-11-06 (registry.npmjs.org / pypi.org / github.com).
 

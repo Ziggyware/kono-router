@@ -5,11 +5,11 @@
  * next to bare leaf names. This pulls the renderer straight out of index.html
  * so the markup and the behaviour cannot drift apart.
  */
-const page = await Deno.readTextFile(new URL("../index.html", import.meta.url));
+const page = await Deno.readTextFile(new URL("../ui/catalog.js", import.meta.url));
 
 const start = page.indexOf("const LANE_IDS");
 const end = page.indexOf("async function loadCatalog");
-if (start < 0 || end < 0 || end <= start) throw new Error("model-list renderer not found in index.html");
+if (start < 0 || end < 0 || end <= start) throw new Error("model-list renderer not found in ui/catalog.js");
 const source = page.slice(start, end);
 
 type Renderer = {
@@ -30,7 +30,7 @@ const catalog = [
   { id: "free:reasoning", owned_by: "vajra-mesh-router" },
   { id: "free:auto", owned_by: "vajra-mesh-router" },
   { id: "free:smart", owned_by: "vajra-mesh-router" },
-  { id: "kono-image", owned_by: "kono-image" },
+  { id: "nokey-image", owned_by: "nokey-image" },
   { id: "claude-opus-5.5", owned_by: "anthropic" },
   { id: "anthropic/claude-opus-5.5", owned_by: "anthropic" },
   { id: "anthropic/claude-opus-5.5", owned_by: "openrouter" },

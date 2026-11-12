@@ -32,7 +32,7 @@ export interface ToolCaps {
   /** Run a sub-agent (a full tool-using completion in the same session).
    *  Absent inside a sub-agent: teams do not nest. */
   subagent?: (task: SubagentTask, signal: AbortSignal) => Promise<SubagentResult>;
-  /** The requesting client runs app_test jobs in a browser (it said so with kono_runner). */
+  /** The requesting client runs app_test jobs in a browser (it said so with nokey_runner). */
   runner?: boolean;
 }
 

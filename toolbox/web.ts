@@ -10,7 +10,7 @@ import { cacheGet, cachePut, store } from "./store.ts";
 import { decodeEntities, oneLine, stripTags, truncate, utf8 } from "./util.ts";
 import type { Json, ToolContext, ToolSpec } from "./types.ts";
 
-const UA = "kono-router-toolbox/2 (+https://github.com/Ziggyware/kono-router)";
+const UA = "nokey-router-toolbox/2 (+https://github.com/Ziggyware/nokey-router)";
 const MAX_BYTES = 2 * 1024 * 1024;
 const DEFAULT_CACHE_MS = 15 * 60_000;
 

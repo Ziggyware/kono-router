@@ -12,19 +12,16 @@
     "cron"
   ],
   "imports": {
-    "@std/assert": "jsr:@std/assert@^1.0.19",
     "hono": "npm:hono@4.13.16",
     "hono/cors": "npm:hono@4.13.16/cors",
     "hono/body-limit": "npm:hono@4.13.16/body-limit",
     "@opentelemetry/api": "npm:@opentelemetry/api@1.10.0",
     "sucrase": "npm:sucrase@3.35.0",
+    "@libsql/client/http": "npm:@libsql/client@0.18.0/http",
     "typescript": "npm:typescript@5.9.3"
   },
   "compilerOptions": {
     "strict": true,
-    "noImplicitAny": false,
-    "strictNullChecks": false,
-    "unsupported": true
     "lib": [
       "deno.window",
       "deno.unstable"
