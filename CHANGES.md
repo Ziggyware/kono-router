@@ -1,3 +1,16 @@
+# Dependency resolution hardened: nodeModulesDir auto — 2026-11-12
+
+`deno.json` now sets `"nodeModulesDir": "auto"`, and the Dockerfile
+builds with `deno install` instead of `deno cache`. Before this, any
+environment where a foreign `node_modules` existed (an `npm install`
+on a dev machine, an uploaded folder, a build context that carried
+one in) made Deno resolve npm packages from that directory and die
+with "Could not find a matching package for 'npm:hono@…'". With
+auto, Deno manages the directory itself and auto-installs what's
+missing. Verified in a hostile fixture — a bogus npm-style
+node_modules and a cold cache — the server installs its real
+dependencies and boots; the full suite stays green.
+
 # External KV store: state survives disk-less hosts — 2026-11-12
 
 The router's state no longer has to live in Deno KV. `kv-store.ts`
