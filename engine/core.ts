@@ -2,7 +2,7 @@
 
 import { encoder, IP_BUCKETS, MAX_BURST, REFILL_PER_SEC } from "../main.ts";
 import type { MeshModelRecord } from "../main.ts";
-import { L1_CACHE, kv, UNIVERSAL_MODEL_ALIAS } from "../state.ts";
+import { L1_CACHE, kv, UNIVERSAL_MODEL_ALIAS, VIRTUAL_TUPLES } from "../state.ts";
 import type { MiddlewareHandler } from "hono";
 
 
@@ -39,6 +39,28 @@ export async function atomicUpdateModel(
     }
     await new Promise((r) => setTimeout(r, 10 * (attempt + 1) + Math.random() * 15));
   }
+}
+
+/** Like atomicUpdateModel, but creates the KV row from `seed()` when the
+ *  tuple has never been persisted. Catalog sync no longer writes a row per
+ *  discovered model; rows appear on first real observation instead. A
+ *  concurrent create race is benign: both writers start from an equivalent
+ *  seed and the loser's mutation replays on its next observation. */
+export async function atomicUpdateModelOrCreate(
+  tupleId: string,
+  seed: () => MeshModelRecord,
+  mutator: (current: MeshModelRecord) => MeshModelRecord,
+): Promise<void> {
+  const key = [KV_PREFIX, tupleId];
+  const entry = await kv.get<MeshModelRecord>(key);
+  if (entry.value) {
+    await atomicUpdateModel(tupleId, mutator);
+    return;
+  }
+  const created = mutator(seed());
+  await kv.set(key, created);
+  L1_CACHE.set(tupleId, created);
+  VIRTUAL_TUPLES.delete(tupleId);
 }
 
 

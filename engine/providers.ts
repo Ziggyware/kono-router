@@ -5,7 +5,7 @@
 
 import { IMAGE_CATALOG, perEndpointSyncGate, hydrateL1Cache, ensureCatalogSynced, PROVIDER_BREAKER, hydrateLearning, providerModelHints, loadServiceJsonRegistry } from "../main.ts";
 import type { ProviderSpec, MeshModelRecord, ScoredCandidate, RoutingMode, RankOptions } from "../main.ts";
-import { kv, L1_CACHE, UNIVERSAL_MODEL_ALIAS } from "../state.ts";
+import { kv, L1_CACHE, UNIVERSAL_MODEL_ALIAS, VIRTUAL_TUPLES } from "../state.ts";
 import { clamp as clampNum } from "../math.ts";
 import { pickOpenRouterKey, KV_PREFIX, atomicUpdateModel } from "./core.ts";
 import { openUpstreamAdaptive, collectUpstream } from "./dispatch.ts";
@@ -218,9 +218,151 @@ export interface SyncProviderTask {
 
 
 
+export const CATALOG_KV_PREFIX = "mesh_catalog_v1";
+export const DISCOVERY_META_PREFIX = "mesh_discovery_meta_v5_2";
+
+export interface CatalogRow {
+  /** Last successful discovery (epoch ms) — the old per-provider meta value. */
+  at: number;
+  models: Array<{ id: string; context?: number }>;
+  images: string[];
+}
+
+const catalogRowCache = new Map<string, CatalogRow>();
+let catalogRowsLoaded = false;
+let legacyMigrationDone = false;
+
+/** A KV model row is an untouched catalog seed iff no observation ever
+ *  landed on it: priors are recomputed deterministically from the model id,
+ *  so deleting these loses nothing. */
+export function isUntouchedSeed(r: MeshModelRecord): boolean {
+  return r.success_count === 0 && r.failure_streak === 0 && r.cooldown_until === 0 &&
+    r.last_probed === 0 && r.last_error == null && r.alpha_success === 2 &&
+    r.beta_failure === 1 && !r.last_success_at && !r.tool_alpha && !r.tool_beta &&
+    !(r.tool_pulls && r.tool_pulls > 0);
+}
+
+async function loadCatalogRows(): Promise<Map<string, CatalogRow>> {
+  if (catalogRowsLoaded) return catalogRowCache;
+  catalogRowsLoaded = true;
+  for await (const e of kv.list<CatalogRow>({ prefix: [CATALOG_KV_PREFIX] })) {
+    if (e.value && Array.isArray(e.value.models)) catalogRowCache.set(String(e.key[1]), e.value);
+  }
+  // Legacy merge: discovery timestamps and image lists from the pre-packing
+  // prefixes fold into rows (models arrive via the seed migration below).
+  for await (const e of kv.list<number>({ prefix: [DISCOVERY_META_PREFIX] })) {
+    const id = String(e.key[1]);
+    const row = catalogRowCache.get(id) ?? { at: 0, models: [], images: [] };
+    row.at = Math.max(row.at, Number(e.value) || 0);
+    catalogRowCache.set(id, row);
+  }
+  for await (const e of kv.list<string[]>({ prefix: [IMAGE_KV_PREFIX] })) {
+    const id = String(e.key[1]);
+    const row = catalogRowCache.get(id) ?? { at: 0, models: [], images: [] };
+    if (!row.images.length && Array.isArray(e.value)) row.images = e.value;
+    catalogRowCache.set(id, row);
+  }
+  return catalogRowCache;
+}
+
+/** One-time migration: providers that still have only legacy per-model rows
+ *  get a packed catalog row built from them, and their untouched seed rows
+ *  are deleted. Telemetry-bearing rows are kept verbatim. Runs inside the
+ *  catalog sync; a crash mid-way simply resumes next cycle — a provider's
+ *  row is written before any of its seeds are deleted. */
+async function migrateLegacyModelRows(rows: Map<string, CatalogRow>): Promise<void> {
+  if (legacyMigrationDone) return;
+  legacyMigrationDone = true;
+  const byProvider = new Map<string, Array<{ id: string; context?: number }>>();
+  const seedKeys: Deno.KvKey[] = [];
+  for await (const e of kv.list<MeshModelRecord>({ prefix: [KV_PREFIX] })) {
+    const r = e.value;
+    if (!r) continue;
+    if (!rows.get(r.provider_id)?.models.length) {
+      const list = byProvider.get(r.provider_id) ?? [];
+      list.push({ id: r.model_id, context: r.context_window });
+      byProvider.set(r.provider_id, list);
+    }
+    if (isUntouchedSeed(r)) seedKeys.push(e.key);
+  }
+  for (const [pid, models] of byProvider) {
+    const row = rows.get(pid) ?? { at: 0, models: [], images: [] };
+    if (!row.models.length) {
+      row.models = models;
+      if (!row.images.length) row.images = models.map((m) => m.id).filter(isImageModelId);
+      rows.set(pid, row);
+      await kv.set([CATALOG_KV_PREFIX, pid], row).catch(() => {});
+    }
+  }
+  // Batched deletes: one pass, bounded concurrency.
+  for (let i = 0; i < seedKeys.length; i += 50) {
+    await Promise.allSettled(seedKeys.slice(i, i + 50).map((k) => kv.delete(k)));
+  }
+  if (seedKeys.length) console.log(`[catalog] migrated ${byProvider.size} providers to packed rows; deleted ${seedKeys.length} untouched seed rows`);
+}
+
+/** Seed (or refresh) L1 records for a provider's discovered models WITHOUT
+ *  writing KV rows. Persisted telemetry records keep their learned state;
+ *  only catalog-derived fields refresh, in memory. New tuples become
+ *  VIRTUAL_TUPLES — a KV row appears only when real usage is observed. */
+export function seedVirtualRecords(provider: ProviderSpec, models: Array<{ id: string; context?: number }>): void {
+  for (const item of models) {
+    const ctxWindow = item.context || 128000;
+    const profile = analyzeModelCapabilities(item.id, ctxWindow);
+    const tupleId = `${provider.id}::${item.id}`;
+    if (profile.iqPrior <= 0.0) {
+      // Non-chat models never rank; evict any stale entry.
+      if (L1_CACHE.delete(tupleId)) VIRTUAL_TUPLES.delete(tupleId);
+      void kv.delete([KV_PREFIX, tupleId]).catch(() => {});
+      continue;
+    }
+    const existing = L1_CACHE.get(tupleId);
+    if (existing) {
+      existing.iq_prior = profile.iqPrior;
+      if (existing.success_count === 0) existing.iq_verified = Math.min(existing.iq_verified, 0.55);
+      existing.supports_reasoning = profile.supportsReasoning;
+      existing.supports_vision = profile.supportsVision;
+      existing.is_coding_specialist = profile.isCodingSpecialist;
+      existing.context_window = ctxWindow;
+    } else {
+      L1_CACHE.set(tupleId, {
+        tuple_id: tupleId,
+        provider_id: provider.id,
+        model_id: item.id,
+        iq_prior: profile.iqPrior,
+        iq_verified: 0.55,
+        supports_reasoning: profile.supportsReasoning,
+        supports_vision: profile.supportsVision,
+        is_coding_specialist: profile.isCodingSpecialist,
+        context_window: ctxWindow,
+        ewma_ttft_ms: 2500.0,
+        ewma_tps: 42.0,
+        alpha_success: 2.0,
+        beta_failure: 1.0,
+        success_count: 0,
+        failure_streak: 0,
+        cooldown_until: 0,
+        last_probed: 0,
+        last_error: null,
+      });
+      VIRTUAL_TUPLES.add(tupleId);
+    }
+  }
+}
+
 export async function runSyncProviderTask(task: SyncProviderTask): Promise<void> {
   const { provider, last, force } = task;
   if (!provider.isConfigured()) return;
+
+  // Rebuild this provider's L1 slice from its packed catalog row first —
+  // one KV read instead of one row per model, and no network.
+  const rows = await loadCatalogRows();
+  const row = rows.get(provider.id);
+  if (row?.models.length) {
+    seedVirtualRecords(provider, row.models);
+    if (provider.imagesUrl && row.images.length) IMAGE_CATALOG.set(provider.id, row.images);
+  }
+
   if (!force && last > 0 && Date.now() - last < 6 * 3600 * 1000) return;
 
   const ctrl = new AbortController();
@@ -231,67 +373,16 @@ export async function runSyncProviderTask(task: SyncProviderTask): Promise<void>
       return [] as Array<{ id: string; context?: number }>;
     });
     if (!discovered || discovered.length === 0) return;
-    if (provider.imagesUrl) {
-      const images = discovered.map((m) => m.id).filter(isImageModelId);
-      IMAGE_CATALOG.set(provider.id, images);
-      await kv.set([IMAGE_KV_PREFIX, provider.id], images);
-    }
-
-    const modelTasks = discovered.map(async (item) => {
-      const ctxWindow = item.context || 128000;
-      const profile = analyzeModelCapabilities(item.id, ctxWindow);
-      const tupleId = `${provider.id}::${item.id}`;
-      const modelKey = [KV_PREFIX, tupleId];
-      // Non-chat models (image, audio, embeddings) never rank; one catalogued
-      // before the exclusion list caught it is evicted on the next sync.
-      if (profile.iqPrior <= 0.0) {
-        if (L1_CACHE.has(tupleId)) { L1_CACHE.delete(tupleId); await kv.delete(modelKey); }
-        return;
-      }
-      const existing = await kv.get<MeshModelRecord>(modelKey);
-
-      if (existing.value) {
-        const updated: MeshModelRecord = {
-          ...existing.value,
-          iq_prior: profile.iqPrior,
-          iq_verified: existing.value.success_count > 0
-            ? existing.value.iq_verified
-            : Math.min(existing.value.iq_verified, 0.55),
-          supports_reasoning: profile.supportsReasoning,
-          supports_vision: profile.supportsVision,
-          is_coding_specialist: profile.isCodingSpecialist,
-          context_window: ctxWindow,
-        };
-        await kv.set(modelKey, updated);
-        L1_CACHE.set(tupleId, updated);
-      } else {
-        const freshRecord: MeshModelRecord = {
-          tuple_id: tupleId,
-          provider_id: provider.id,
-          model_id: item.id,
-          iq_prior: profile.iqPrior,
-          iq_verified: 0.55,
-          supports_reasoning: profile.supportsReasoning,
-          supports_vision: profile.supportsVision,
-          is_coding_specialist: profile.isCodingSpecialist,
-          context_window: ctxWindow,
-          ewma_ttft_ms: 2500.0,
-          ewma_tps: 42.0,
-          alpha_success: 2.0,
-          beta_failure: 1.0,
-          success_count: 0,
-          failure_streak: 0,
-          cooldown_until: 0,
-          last_probed: 0,
-          last_error: null,
-        };
-        await kv.set(modelKey, freshRecord);
-        L1_CACHE.set(tupleId, freshRecord);
-      }
-    });
-
-    await Promise.allSettled(modelTasks);
-    await kv.set(["mesh_discovery_meta_v5_2", provider.id], Date.now());
+    const models = discovered.map((d) => ({ id: d.id, ...(d.context ? { context: d.context } : {}) }));
+    const images = provider.imagesUrl ? models.map((m) => m.id).filter(isImageModelId) : (row?.images ?? []);
+    if (provider.imagesUrl) IMAGE_CATALOG.set(provider.id, images);
+    const fresh: CatalogRow = { at: Date.now(), models, images };
+    catalogRowCache.set(provider.id, fresh);
+    await kv.set([CATALOG_KV_PREFIX, provider.id], fresh);
+    seedVirtualRecords(provider, models);
+    // Legacy per-provider entries for this provider are now redundant.
+    await kv.delete([DISCOVERY_META_PREFIX, provider.id]).catch(() => {});
+    if (provider.imagesUrl) await kv.delete([IMAGE_KV_PREFIX, provider.id]).catch(() => {});
   } catch (err) {
     console.error(`sync task failed for ${provider.id}:`, err);
   } finally {
@@ -301,21 +392,16 @@ export async function runSyncProviderTask(task: SyncProviderTask): Promise<void>
 
 
 
-
-
 export async function runCatalogSyncBody(force: boolean = false): Promise<void> {
 
   const mergedProviders = [...PROVIDERS, ...await serviceJsonProviderList()];
 
-  const syncMap = new Map<string, number>();
-  const metaIter = kv.list<number>({ prefix: ["mesh_discovery_meta_v5_2"] });
-  for await (const entry of metaIter) {
-    syncMap.set(String(entry.key[1]), Number(entry.value));
-  }
+  const rows = await loadCatalogRows();
+  await migrateLegacyModelRows(rows).catch((err) => console.error("catalog migration:", err));
 
   const syncTasks = mergedProviders.map((p) => ({
     provider: p,
-    last: syncMap.get(p.id) ?? 0,
+    last: rows.get(p.id)?.at ?? 0,
     force,
   }));
 
@@ -342,8 +428,6 @@ export async function runCatalogSyncBody(force: boolean = false): Promise<void> 
   await Promise.allSettled(syncTasks.map(router));
   perEndpointSyncGate.clear();
 }
-
-
 
 
 
@@ -659,7 +743,10 @@ export function isImageModelId(id: string): boolean {
 
 export async function hydrateImageCatalog(): Promise<void> {
   if (IMAGE_CATALOG.size) return;
-  for await (const e of kv.list<string[]>({ prefix: [IMAGE_KV_PREFIX] })) {
-    if (Array.isArray(e.value)) IMAGE_CATALOG.set(String(e.key[1]), e.value);
+  // Packed catalog rows carry the image lists now; the legacy per-provider
+  // prefix is read only as a fallback for not-yet-migrated providers.
+  const rows = await loadCatalogRows();
+  for (const [pid, row] of rows) {
+    if (row.images.length) IMAGE_CATALOG.set(pid, row.images);
   }
 }

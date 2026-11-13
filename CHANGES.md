@@ -1,5 +1,13 @@
 # Speed: forged-tool hydration no longer blocks requests — 2026-11-12
 
+## 2026-11-12 — KV storage optimization: packed catalog rows, lazy model rows
+
+- mesh_discovery_meta_v5_2 (one row per provider holding a single timestamp), kono_images (one row per provider) and the per-model seed rows are replaced by ONE packed row per provider under mesh_catalog_v1: { at, models: [{id, context}], images }. A warm restart rebuilds the whole L1 catalog from ~102 rows with no network.
+- Catalog sync no longer writes a KV row per discovered model. seedVirtualRecords seeds L1 only (VIRTUAL_TUPLES in state.ts, carried across refreshL1Cache cycles); a mesh_models_v5_2 row is created lazily by the first real observation via atomicUpdateModelOrCreate (recordTupleSuccess / recordTupleFailure / learnToolVerdict). Sync also stops rewriting every record each cycle.
+- One-time migration runs inside the catalog sync: legacy providers get their packed row built from existing records (meta timestamps and image lists folded in), then UNTOUCHED seed rows (isUntouchedSeed: no successes, failures, probes, errors, cooldowns or tool stats — priors are deterministic from the model id) are deleted in batches. Telemetry-bearing rows are never touched. Verified against a real KV: 3 legacy rows + meta + images → 1 catalog row + the 1 telemetry row; a first success then created exactly one new row.
+- Net effect on the live store: ~4,806 model rows + ~204 meta/image rows collapse to ~102 catalog rows plus one row per tuple that has actually been used.
+
+
 ## 2026-11-12 — Rebrand: NOKEY → KONO across the whole tree
 
 - Every NOKEY/Nokey/nokey identifier, string, env var, body parameter, header, KV prefix and doc reference is now KONO/Kono/kono (394 substitutions, 49 files) — including the engine banner (kono-sovereign-v6-asck2-toolbox), the chat response envelope key (kono), NokeyPlugins → KonoPlugins, and NOKEY_* env vars → KONO_*.

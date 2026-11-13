@@ -90,6 +90,14 @@ export const kv: Deno.Kv = await (async () => {
 
 export const L1_CACHE = new Map<string, MeshModelRecord>();
 
+/** Tuples whose L1 record is a catalog seed with NO KV row yet. Model rows
+ *  are created lazily — only real usage (success/failure/verdict) persists
+ *  one — so the store holds one packed catalog row per provider plus a row
+ *  per tuple that has actually been observed, not one per catalog entry.
+ *  refreshL1Cache carries these across KV refreshes; the telemetry writers
+ *  remove a tuple from the set when they persist it. */
+export const VIRTUAL_TUPLES = new Set<string>();
+
 
 export const TOOL_SKILLS = new Map<string, ToolSkillRecord>();
 
