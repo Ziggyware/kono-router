@@ -8,8 +8,15 @@ import { learningKappa, PROVIDER_BREAKER, hydrateL1Cache } from "../main.ts";
 import type { MeshModelRecord, LearningCellRecord, ArmCellRecord, PendingDecision } from "../main.ts";
 import { executeTool } from "../tools.ts";
 import { kalmanObserve, clamp as clampNum, decorrelatedJitter } from "../math.ts";
-import { breakerProviderId } from "./providers.ts";
-import { atomicUpdateModel } from "./core.ts";
+import { breakerProviderId, syntheticRecord } from "./providers.ts";
+import { atomicUpdateModel, atomicUpdateModelOrCreate } from "./core.ts";
+
+/** Seed for lazy model-row creation: the catalog record for a tuple that
+ *  has never been persisted (catalog sync seeds L1 only). */
+export const modelSeedFor = (tupleId: string) => () => {
+  const i = tupleId.indexOf("::");
+  return syntheticRecord(tupleId.slice(0, i), tupleId.slice(i + 2));
+};
 
 
 
@@ -246,7 +253,7 @@ export async function recordTupleSuccess(
   const observedTps = Math.min(800, Math.max(2, estTokens / streamDurationSec));
 
   const now = Date.now();
-  await atomicUpdateModel(tupleId, (r) => {
+  await atomicUpdateModelOrCreate(tupleId, modelSeedFor(tupleId), (r) => {
     // Bayesian state-space update (ASCK v1): the Kalman gain is the optimal
     // learning rate, and the posterior variance feeds the hedge/kill quantiles.
     const posterior = kalmanObserve({
@@ -320,7 +327,7 @@ export async function recordTupleFailure(tupleId: string, errMsg: string): Promi
     ? 900
     : 60;
 
-  await atomicUpdateModel(tupleId, (r) => {
+  await atomicUpdateModelOrCreate(tupleId, modelSeedFor(tupleId), (r) => {
     const streak = r.failure_streak + 1;
     const backoffMultiplier = Math.min(8, Math.pow(1.5, streak - 1));
     return {

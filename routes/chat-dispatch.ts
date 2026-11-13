@@ -16,7 +16,8 @@ import { recordTupleFailure, writeLesson } from "../engine/learning.ts";
 import { failureSignature } from "../learning.ts";
 import { resolveProviderById } from "../engine/providers.ts";
 import { recordToolExecution } from "../engine/dispatch.ts";
-import { atomicUpdateModel } from "../engine/core.ts";
+import { atomicUpdateModelOrCreate } from "../engine/core.ts";
+import { modelSeedFor } from "../engine/learning.ts";
 
 // ============================================================================
 // 7b. ADAPTIVE HEDGED FIRST-TOKEN DISPATCH (ASCK v1 / TAIL-AT-SCALE)
@@ -485,7 +486,7 @@ export async function learnToolVerdict(tupleId: string, verdict: ToolCallVerdict
   if (verdict.neutral) return;
   const now = Date.now();
   try {
-    await atomicUpdateModel(tupleId, (r) => ({
+    await atomicUpdateModelOrCreate(tupleId, modelSeedFor(tupleId), (r) => ({
       ...r,
       ...observeTupleToolStats(r, { valid: verdict.valid, repaired: verdict.repaired }, now),
     }));

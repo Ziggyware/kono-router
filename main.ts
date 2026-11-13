@@ -118,7 +118,7 @@ import { TEAM_ROLES } from "./toolbox/team.ts";
 
 import type { SubagentResult, SubagentTask } from "./toolbox/types.ts";
 
-import { L1_CACHE, kv, TOOL_SKILLS, LEARN_ARM_DEF_PREFIX, LEARNING_CELLS, ARM_CELLS, ARM_DEFS, LESSONS, FORGED_TOOLS, UNIVERSAL_MODEL_ALIAS, honoApp, FREE_TIER_DAILY, IMAGE_BLOCKED } from "./state.ts";
+import { L1_CACHE, kv, TOOL_SKILLS, LEARN_ARM_DEF_PREFIX, LEARNING_CELLS, ARM_CELLS, ARM_DEFS, LESSONS, FORGED_TOOLS, UNIVERSAL_MODEL_ALIAS, honoApp, FREE_TIER_DAILY, IMAGE_BLOCKED, VIRTUAL_TUPLES } from "./state.ts";
 
 import { L1_TTL_MS, KV_PREFIX, TOOL_SKILL_TTL_MS, SERVICE_JSON_FILE, isServiceJsonFile, NATIVE_MODEL_HINTS, checkRateLimit, timingSafeCompare, freeTierConsume, IMAGE_BLOCK_KV } from "./engine/core.ts";
 import { TOOL_SKILL_PREFIX } from "./engine/dispatch.ts";
@@ -224,6 +224,16 @@ async function refreshL1Cache(force: boolean): Promise<Map<string, MeshModelReco
     }
   }
   if (fresh.size > 0 || force) {
+    // Catalog seeds live only in L1 (no KV row until first real usage);
+    // carry them across the refresh so the catalog never shrinks to the
+    // persisted subset.
+    for (const id of VIRTUAL_TUPLES) {
+      if (!fresh.has(id)) {
+        const v = L1_CACHE.get(id);
+        if (v) fresh.set(id, v);
+        else VIRTUAL_TUPLES.delete(id);
+      }
+    }
     L1_CACHE.clear();
     for (const [k, v] of fresh) L1_CACHE.set(k, v);
     l1LastHydrated = now;

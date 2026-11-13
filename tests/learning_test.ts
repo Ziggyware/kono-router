@@ -575,3 +575,17 @@ Deno.test("resetBenchedEndpoints lifts cooldowns and reports the count", async (
     await hydrateL1Cache(true);
   }
 });
+
+
+
+itest("isUntouchedSeed: only never-observed records qualify for migration deletion", async () => {
+  const { syntheticRecord, isUntouchedSeed } = await import("../engine/providers.ts");
+  const seed = syntheticRecord("p", "m");
+  assert(isUntouchedSeed(seed) === true, "fresh seed qualifies");
+  assert(isUntouchedSeed({ ...seed, success_count: 1 }) === false, "a success disqualifies");
+  assert(isUntouchedSeed({ ...seed, failure_streak: 1 }) === false, "a failure disqualifies");
+  assert(isUntouchedSeed({ ...seed, cooldown_until: Date.now() + 1000 }) === false, "a cooldown disqualifies");
+  assert(isUntouchedSeed({ ...seed, last_probed: 1 }) === false, "a probe disqualifies");
+  assert(isUntouchedSeed({ ...seed, last_error: "boom" }) === false, "an error disqualifies");
+  assert(isUntouchedSeed({ ...seed, tool_alpha: 2, tool_beta: 1, tool_pulls: 3 }) === false, "tool stats disqualify");
+});
