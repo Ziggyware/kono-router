@@ -3049,6 +3049,18 @@
             "type": "boolean",
             "default": false,
             "description": "The client runs app_test jobs in a browser (the dashboard's hidden preview, via the admin app_runner tool) for the duration of this request. Lets app_test wait for results and makes the gate require a passing test run."
+          },
+          "kono_continue": {
+            "type": "boolean",
+            "default": true,
+            "description": "Anti-pause. When a reply announces the work instead of doing it (a plan that ends on \"Let me write the code now.\") or promises the artifact it has not emitted (a fragment followed by \"the full file will be constructed now\"), the router spends up to kono_continue_rounds extra turns telling the model to finish, forcing one tool call when the plane owns tools and an artifact was requested. false disables it."
+          },
+          "kono_continue_rounds": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 6,
+            "default": 2,
+            "description": "Most continuation turns per request for kono_continue (default KONO_STALL_ROUNDS, 2)."
           }
         }
       },

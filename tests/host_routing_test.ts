@@ -310,6 +310,40 @@ test("a paused answer is continued inside the spine", async () => {
   expect(events.some((e) => e.stage === "assemble" && e.chunkId === "continue"), "continuation event");
 });
 
+test("a promised-but-missing artifact is continued inside the spine", async () => {
+  let calls = 0;
+  const events: HostEvent[] = [];
+  const fragment = [
+    "```html",
+    "<canvas id=\"lens\"></canvas>",
+    "<script>",
+    "const g = document.getElementById(\"lens\").getContext(\"2d\");",
+    "function fresnel(r) {",
+    "  return Math.exp(-1j * r * r);",
+    "}",
+    "</script>",
+    "```",
+    "",
+    "(The full, complete HTML artifact will be constructed now, including the rest of the logic and animation loop, and written to the file.)",
+  ].join("\n");
+  const ports = memoryPortsWithEvents(events, {
+    planner: () => "not json at all",
+    answer: () => {
+      calls += 1;
+      return calls === 1 ? fragment : "<html>finished artifact</html>";
+    },
+  });
+  const res = await createHostRouter(ports).handle(
+    { model: "free:auto", messages: [{ role: "user", content: "build me an html hologram demo" }] },
+    { tenant: "test" },
+  );
+  expectEqual(res.finish, "stop", "finish");
+  expectMatch(res.content, /<html>finished artifact<\/html>/, "the continuation is appended");
+  expect(res.report.notes.some((n) => n.code === "assemble.continued"), "continuation note");
+  expect(!res.report.notes.some((n) => n.code === "assemble.stalled"), "not left flagged as stalled");
+  expectEqual(calls, 2, "one extra turn, not a loop");
+});
+
 // ---------------------------------------------------------------------------
 // direct invocation (node or deno); silent when imported by a test runner
 // ---------------------------------------------------------------------------

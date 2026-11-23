@@ -8,10 +8,12 @@
 //   deno run -A tests/stall_test.ts
 
 import {
+  artifactOutputTokens,
   detectStall,
   maxStallContinuations,
   nextStallTurn,
   stallNudge,
+  lastCodeBlock,
   stallSummary,
   wantsArtifactRequest,
 } from "../engine/stall.ts";
@@ -87,6 +89,8 @@ const PAUSED_PLAN = [
   "Let me write the code now.",
 ].join("\n");
 
+// A genuinely finished artifact: closed fence, balanced scopes, no elision, and
+// it ends with a sentence in the future tense — none of which may count.
 const FINISHED_FILE = [
   "Here is the hologram demo.",
   "",
@@ -94,7 +98,20 @@ const FINISHED_FILE = [
   "<!doctype html>",
   "<html><body><canvas id=c></canvas><script>",
   "const ctx = document.getElementById('c').getContext('2d');",
-  "// ... 200 lines ...",
+  "function rings(n, pitch) {",
+  "  const out = [];",
+  "  for (let i = 0; i < n; i++) {",
+  "    out.push({ r: i * pitch, phi: Math.PI * (i % 2) });",
+  "  }",
+  "  return out;",
+  "}",
+  "ctx.fillStyle = '#111';",
+  "rings(64, 4).forEach((p) => {",
+  "  ctx.beginPath();",
+  "  ctx.arc(320, 180, p.r, 0, Math.PI * 2);",
+  "  ctx.strokeStyle = p.phi > 0 ? '#7cf' : '#f7c';",
+  "  ctx.stroke();",
+  "});",
   "</script></body></html>",
   "```",
   "",
@@ -236,6 +253,140 @@ test("the nudge is specific about what was said and what to do", () => {
   expect(nudge.includes("cut off mid-way"), nudge);
   expect(nudge.includes("Use the tools"), nudge);
   expect(nudge.length < 600, `nudge too long: ${nudge.length}`);
+});
+
+// ---------------------------------------------------------------------------
+// the artifact promise (reported: nvidia/nemotron-3.5-bolt)
+// ---------------------------------------------------------------------------
+
+// Verbatim shape of the second reported transcript: a fragment of the file, a
+// closed fence, and then a parenthetical narrating the work that never happened.
+const PROMISED_FRAGMENT = [
+  "```html",
+  "<!doctype html>",
+  "<html>",
+  "<body>",
+  "<canvas id=\"lens\" width=\"640\" height=\"360\"></canvas>",
+  "<script>",
+  "const cv = document.getElementById(\"lens\");",
+  "const g = cv.getContext(\"2d\");",
+  "const N = 256, lam = 550e-9;",
+  "function fresnel(r) {",
+  "  const k = 2 * Math.PI / lam;",
+  "  return Math.exp(-1j * k * r * r / (2 * 1.2));",
+  "}",
+  "```",
+  "",
+  "(The full, complete HTML artifact will be constructed now, including the rest of the logic, animation loop, and control bindings, and written to the file.)",
+].join("\n");
+
+test("a fragment plus a promise to finish is a stall", () => {
+  const v = detectStall(PROMISED_FRAGMENT, { finish: "stop", hasTools: true, wantsArtifact: true });
+  expect(v.stalled, `expected a stall, got ${v.kind}@${v.confidence} (${v.reasons.join("; ")})`);
+  expectEqual(v.kind, "promise");
+  expect(v.partialArtifact, "the artifact is flagged incomplete");
+  expect(!v.planOnly, "this is not a plan");
+  expect(v.reasons.join("; ").includes("promises the rest"), v.reasons.join("; "));
+});
+
+test("the promise is caught even when the request did not declare artifact intent", () => {
+  const v = detectStall(PROMISED_FRAGMENT, { finish: "stop" });
+  expect(v.stalled, `expected a stall, got ${v.kind}@${v.confidence}`);
+  expect(v.partialArtifact, "flagged from the code block alone");
+});
+
+test("a closed fence that stops mid-scope is a truncation stall", () => {
+  const cut = "```js\nfunction draw(t) {\n  g.clearRect(0, 0, 640, 360);\n  for (let i = 0; i < N; i++) {\n    g.fillRect(i, 0, 1, 10);\n  }\n```";
+  const v = detectStall(cut, { finish: "stop", wantsArtifact: true });
+  expect(v.stalled, `expected a stall, got ${v.kind}@${v.confidence}`);
+  expect(v.partialArtifact, "unbalanced braces flagged");
+});
+
+test("an elision marker inside the artifact is an elision stall", () => {
+  const text = [
+    "```ts",
+    "export function phaseMask(n: number): Float32Array {",
+    "  const out = new Float32Array(n * n);",
+    "  // ... rest of the implementation",
+    "  return out;",
+    "}",
+    "```",
+  ].join("\n");
+  const v = detectStall(text, { finish: "stop", wantsArtifact: true });
+  expect(v.stalled, `expected a stall, got ${v.kind}@${v.confidence}`);
+  expectEqual(v.kind, "elided");
+});
+
+test("a complete artifact that ends with a plain closing note is not a stall", () => {
+  const text = [
+    FINISHED_FILE,
+    "",
+    "The complete file is above; save it as lens.html.",
+  ].join("\n");
+  const v = detectStall(text, { finish: "stop", wantsArtifact: true });
+  expect(!v.stalled, `expected no stall, got ${v.kind}@${v.confidence} (${v.reasons.join("; ")})`);
+});
+
+test("braces inside strings and comments do not look like truncation", () => {
+  const text = [
+    "```js",
+    "const open = \"{\"; // a literal brace",
+    "const close = \"}\";",
+    "/* { this comment is balanced below } */",
+    "export const pair = () => open + close;",
+    "```",
+  ].join("\n");
+  const v = detectStall(text, { finish: "stop", wantsArtifact: true });
+  expect(!v.partialArtifact, `false truncation: ${v.reasons.join("; ")}`);
+  expect(!v.stalled, `expected no stall, got ${v.kind}@${v.confidence}`);
+});
+
+test("the continuation for a promise resumes instead of restarting", () => {
+  const v = detectStall(PROMISED_FRAGMENT, { finish: "stop", hasTools: true, wantsArtifact: true });
+  const turn = nextStallTurn(v, { continuations: 0 }, {
+    hasTools: true,
+    wantsArtifact: true,
+    maxContinuations: 2,
+  });
+  expect(turn !== null, "expected a continuation");
+  if (!turn) return;
+  expect(turn.nudge.includes("cut off mid-way"), turn.nudge);
+  expect(turn.nudge.includes("Resume from exactly this point"), turn.nudge);
+  expect(turn.nudge.includes("no elisions"), turn.nudge);
+  expect(turn.nudge.includes("g.fillRect") || turn.nudge.includes("fresnel") || turn.nudge.includes("exp("), turn.nudge);
+  expect(turn.nudge.length < 700, `nudge too long: ${turn.nudge.length}`);
+  // no plan to force: this is an incomplete artifact, not an announced one
+  expectEqual(turn.toolChoice, undefined);
+});
+
+test("an artifact request without a budget gets one, clamped by env", () => {
+  expectEqual(artifactOutputTokens(), 8192);
+  const set = (v: string | undefined) => {
+    const holder = globalThis as { process?: { env?: Record<string, string | undefined> } };
+    if (!holder.process?.env) return false;
+    if (v === undefined) delete holder.process.env.KONO_MAX_OUTPUT_TOKENS;
+    else holder.process.env.KONO_MAX_OUTPUT_TOKENS = v;
+    return true;
+  };
+  if (set("4096")) {
+    expectEqual(artifactOutputTokens(), 4096);
+    set("999999");
+    expectEqual(artifactOutputTokens(), 65536);
+    set("1");
+    expectEqual(artifactOutputTokens(), 64);
+    set("0");
+    expectEqual(artifactOutputTokens(), 0, "0 disables the floor");
+    set("nonsense");
+    expectEqual(artifactOutputTokens(), 8192);
+    set(undefined);
+    expectEqual(artifactOutputTokens(), 8192);
+  }
+});
+
+test("lastCodeBlock returns the final fenced body, not the first", () => {
+  const text = "```js\nconst a = 1;\n```\n\ntext\n\n```js\nconst b = 2;\n```";
+  expectEqual(lastCodeBlock(text).trim(), "const b = 2;");
+  expectEqual(lastCodeBlock("no code here"), "");
 });
 
 // ---------------------------------------------------------------------------
