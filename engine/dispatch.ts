@@ -81,7 +81,7 @@ export async function recordToolExecution(tool: string, exec: ToolExecution): Pr
 
 
 export const POISON_REGEX =
-  /rate limit exceeded|too many requests|cloudflare ray id|just a moment\.\.\.|api key is required|insufficient_quota|error code: 1020|visit https:\/\/|upgrade your plan|free tier limit|model is overloaded|service unavailable|provider returned error|<\s*!doctype|<\s*html|access denied|captcha|bad gateway|upstream connect error|service temporarily unavailable|enable javascript|origin (?:is|not) allowed/i;
+  /rate limit exceeded|too many requests|cloudflare ray id|just a moment\.\.\.|api key is required|insufficient_quota|error code: 1020|visit https:\/\/|upgrade your plan|free tier limit|model is overloaded|service unavailable|provider returned error|access denied|captcha|bad gateway|upstream connect error|service temporarily unavailable|enable javascript|origin (?:is|not) allowed/i;
 
 
 
@@ -110,6 +110,11 @@ export function computeShannonEntropy(str: string): number {
 export function verifyCleanText(text: string): void {
   const trimmed = text.trim();
   if (!trimmed) throw new Error("POISON_EMPTY: Zero content tokens");
+  // A relay may return a failed generation as a 200 response. Only reject
+  // the diagnostic envelope at the start, not ordinary discussion of TODOs.
+  if (/^\[Generation failed\]\s*Reason\s*:/i.test(trimmed)) {
+    throw new Error("POISON_SOFTBLOCK: Upstream generation failure notice");
+  }
   if (POISON_REGEX.test(trimmed.slice(0, 400))) {
     throw new Error("POISON_SOFTBLOCK: Upstream proxy error disguised as 200 OK");
   }
