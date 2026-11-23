@@ -18,7 +18,13 @@ import { logErr, errText, toolPlaneEnabled, maxToolRounds, toolNamespace, armCel
 import { contextualPosterior, recordTupleFailure, recordTupleSuccess, writeLesson, resetBenchedEndpoints } from "../engine/learning.ts";
 import { activeProviderList, PROVIDERS, getRankedCandidates, allSweepCandidates } from "../engine/providers.ts";
 import { normalizeMessages, isAdminContext, toolCaps, collectUpstream } from "../engine/dispatch.ts";
-import { detectStall, maxStallContinuations, nextStallTurn, wantsArtifactRequest } from "../engine/stall.ts";
+import {
+  artifactOutputTokens,
+  detectStall,
+  maxStallContinuations,
+  nextStallTurn,
+  wantsArtifactRequest,
+} from "../engine/stall.ts";
 import { loadStrategyArms, armGlobalPosterior, finalizeLearning, verifyMathAnswer, verifyJsonAnswer } from "./chat-learning.ts";
 import type { LearnCtx } from "./chat-learning.ts";
 import { ESCALATION_POLICY, WIDE_POLICY, SWEEP_POLICY, combineSignals, hedgedDispatch, executeOwnedToolCalls, gradeToolCalls, learnToolVerdict, toolVerdictLessons, degradedSse, degradedCompletion } from "./chat-dispatch.ts";
@@ -236,6 +242,18 @@ honoApp.post("/v1/chat/completions", async (c) => {
       .slice(-4_000);
     const stallArtifact = wantsArtifactRequest(originalUserText) || wantsArtifactRequest(userCorpus);
     const stallMax = body.kono_continue === false ? 0 : maxStallContinuations(body.kono_continue_rounds);
+    // Most free relays cap output at a few hundred tokens unless the request
+    // asks for more, which is the everyday reason a long artifact arrives as a
+    // fragment. An artifact request that carries no budget of its own gets a
+    // floor; KONO_MAX_OUTPUT_TOKENS tunes it and a caller's own value always
+    // wins.
+    const artifactFloor = artifactOutputTokens();
+    const artifactBudget = artifactFloor > 0 &&
+        stallArtifact &&
+        typeof body.max_tokens !== "number" &&
+        typeof body.max_completion_tokens !== "number"
+      ? artifactFloor
+      : undefined;
     const hasTests = Array.isArray(body.kono_tests) && body.kono_tests.length > 0;
     const hasVerifier = taskCtx.taskClass === "math" || taskCtx.taskClass === "json" ||
       taskCtx.taskClass === "tool" || (taskCtx.taskClass === "code" && hasTests);
@@ -311,7 +329,7 @@ honoApp.post("/v1/chat/completions", async (c) => {
         ? body.max_tokens
         : typeof body.max_completion_tokens === "number"
         ? body.max_completion_tokens
-        : undefined,
+        : artifactBudget,
       top_p: typeof body.top_p === "number" ? body.top_p : undefined,
       reasoning_effort: typeof body.reasoning_effort === "string" ? body.reasoning_effort : undefined,
       tools: hasTools ? declaredTools : undefined,
@@ -858,6 +876,7 @@ honoApp.post("/v1/chat/completions", async (c) => {
                 ...(toolRound > 0 ? { tool_rounds: toolRound, tools_executed: toolLog } : {}),
                 ...(stallRounds > 0 ? { continuations: stallRounds } : {}),
                 ...(finalStall.stalled ? { stalled: finalStall.kind } : {}),
+                ...(artifactBudget !== undefined ? { output_budget: artifactBudget } : {}),
               },
               telemetry: {
                 mode_selected: mode,
@@ -1199,6 +1218,7 @@ honoApp.post("/v1/chat/completions", async (c) => {
                 ...(toolRound > 0 ? { tool_rounds: toolRound } : {}),
                 ...(stallRounds > 0 ? { continuations: stallRounds } : {}),
                 ...(finalStall.stalled ? { stalled: finalStall.kind } : {}),
+                ...(artifactBudget !== undefined ? { output_budget: artifactBudget } : {}),
               },
             });
             const totalMs = Math.max(up.ttftMs + 1, Math.round(performance.now() - up.t0));
