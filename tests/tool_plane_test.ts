@@ -11,6 +11,7 @@
  * Run: deno test --unstable-kv -A tests/
  */
 import { app } from "../main.ts";
+import { REQUEST_POLICY } from "../engine/request-policy.ts";
 import { registerTool, unregisterTool } from "../tools.ts";
 
 const realFetch = globalThis.fetch;
@@ -603,7 +604,7 @@ test("chat with tools:\"auto\" attaches built-ins, executes the calls and loops 
     if (!firstNames.includes("calculate") || !firstNames.includes("data")) {
       throw new Error(`auto tools not declared upstream: ${JSON.stringify(firstNames)}`);
     }
-    if (!first.messages.some((m: any) => m.role === "system" && /tool/i.test(String(m.content)))) {
+    if (!first.messages.some((m: any) => m.role === "system" && m.content !== REQUEST_POLICY && /tool/i.test(String(m.content)))) {
       throw new Error(`preamble missing: ${JSON.stringify(first.messages[0])}`);
     }
 
@@ -652,7 +653,7 @@ test("the agent loop keeps going for several rounds and stops at the round cap",
   }
 });
 
-test("kono_preamble:false leaves the message list untouched", async () => {
+test("kono_preamble:false skips the tool preamble but retains the standing policy", async () => {
   const good = await pickHealthyUrl();
   const seen: any[] = [];
   installMock(scripted(good, () => answerCompletion("done"), seen));
@@ -662,7 +663,7 @@ test("kono_preamble:false leaves the message list untouched", async () => {
       messages: [{ role: "user", content: "hi" }],
     });
     if (seen.length < 1) throw new Error("no upstream call");
-    if (seen[0].messages.some((m: any) => m.role === "system" && /tool/i.test(String(m.content)))) {
+    if (seen[0].messages.some((m: any) => m.role === "system" && m.content !== REQUEST_POLICY && /tool/i.test(String(m.content)))) {
       throw new Error(`preamble injected anyway: ${JSON.stringify(seen[0].messages)}`);
     }
     if (!(seen[0].tools?.length > 0)) throw new Error("tools not attached");
@@ -843,7 +844,7 @@ test("KONO_TOOL_ROUNDS=0 turns the plane into pure OpenAI passthrough", async ()
       // Tools are still declared upstream, and the preamble is skipped because
       // nothing will execute the calls.
       if (!(seen[0].tools?.length > 0)) throw new Error("tools not declared while rounds are off");
-      if (seen[0].messages.some((m: any) => m.role === "system" && /tool/i.test(String(m.content)))) {
+      if (seen[0].messages.some((m: any) => m.role === "system" && m.content !== REQUEST_POLICY && /tool/i.test(String(m.content)))) {
         throw new Error("preamble promised execution that cannot happen");
       }
       const listing = await getJson("/v1/tools");
@@ -878,7 +879,7 @@ test("KONO_TOOLS=0 disables the plane without breaking client tool passthrough",
       });
       if (data.choices?.[0]?.message?.content !== "no tools here") throw new Error(JSON.stringify(data.choices?.[0]));
       if (seen[0].tools !== undefined) throw new Error("built-in tools declared while the plane is off");
-      if (seen[0].messages.some((m: any) => m.role === "system" && /tool/i.test(String(m.content)))) {
+      if (seen[0].messages.some((m: any) => m.role === "system" && m.content !== REQUEST_POLICY && /tool/i.test(String(m.content)))) {
         throw new Error("preamble injected while the plane is off");
       }
     });

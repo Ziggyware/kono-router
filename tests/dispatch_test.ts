@@ -508,7 +508,7 @@ test("buffered parallel tool calls get ids and null content; tool round-trips su
       if (!/^call_/.test(t.id) || t.type !== "function" || typeof t.function.arguments !== "string") throw new Error(JSON.stringify(t));
     }
     if (msg.tool_calls[0].id === msg.tool_calls[1].id) throw new Error("duplicate ids");
-    const up = seen.at(-1).messages;
+    const up = seen.at(-1).messages.filter((m: any) => m.role !== "system");
     if (up[1].tool_calls?.[0]?.function?.arguments !== '{"city":"Oslo"}' || up[1].content !== null) throw new Error(JSON.stringify(up[1]));
     if (up[2].tool_call_id !== "call_x" || up[2].name !== "get_weather") throw new Error(JSON.stringify(up[2]));
   } finally {
@@ -663,7 +663,7 @@ const FINISHED_ARTIFACT =
   "Open the file directly in a browser.";
 
 const askedToContinue = (payload: any): boolean =>
-  JSON.stringify(payload?.messages ?? []).includes("Continue now, in this reply");
+  JSON.stringify(payload?.messages ?? []).includes("Continue now in this reply");
 
 test("a paused plan is continued instead of being returned as the answer (buffered)", async () => {
   const good = await pickHealthyUrl();

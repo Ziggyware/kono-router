@@ -10,6 +10,7 @@
 // the receipt. If a later stage looks wrong, the manifest says which decision
 // made it look that way.
 
+import { REQUEST_POLICY } from "../engine/request-policy.ts";
 import type {
   BudgetSplit,
   BuildManifest,
@@ -192,8 +193,9 @@ export async function buildRequest(
   const blocks = await collectPrompt(request, selection, ports, ledger);
 
   // ---- assemble the wire messages ----------------------------------------
+  const hasPolicy = request.messages.some((m) => m.role === "system" && m.content === REQUEST_POLICY);
   const totalChars = () =>
-    blocks.reduce((n, b) => n + b.text.length, 0) +
+    (hasPolicy ? 0 : REQUEST_POLICY.length) + blocks.reduce((n, b) => n + b.text.length, 0) +
     request.messages.reduce((n, m) => n + (typeof m.content === "string" ? m.content.length : 0), 0);
 
   // Router text yields before the caller's messages, least important first.
@@ -209,9 +211,12 @@ export async function buildRequest(
   }
 
   const systemMessages: ChatMessage[] = blocks.map((b) => ({ role: "system", content: b.text }));
-  const messages: ChatMessage[] = [...systemMessages, ...request.messages];
+  const messages: ChatMessage[] = hasPolicy
+    ? [...systemMessages, ...request.messages]
+    : [{ role: "system", content: REQUEST_POLICY }, ...systemMessages, ...request.messages];
 
   const promptParts: PromptPart[] = [
+    ...(!hasPolicy ? [{ source: "policy" as const, bytes: byteLen(REQUEST_POLICY), digest: digest(REQUEST_POLICY), preview: preview(REQUEST_POLICY) }] : []),
     ...blocks.map((b) => ({
       source: b.id as PromptPart["source"],
       bytes: byteLen(b.text),

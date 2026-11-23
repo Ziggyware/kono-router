@@ -270,7 +270,7 @@ export interface ToolSelection {
 }
 
 export interface PromptPart {
-  source: "variant" | "lessons" | "workspace" | "preamble" | "client";
+  source: "policy" | "variant" | "lessons" | "workspace" | "preamble" | "client";
   bytes: number;
   digest: string;
   preview: string;

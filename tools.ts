@@ -1345,7 +1345,7 @@ export function autoToolsForClass(taskClass: string, all: string[]): string[] {
   }
   const focus = CLASS_TOOL_FOCUS[taskClass];
   if (!focus) return all;
-  const keep = new Set(focus);
+  const keep = new Set([...focus, "memory_recall", "memory_write"]);
   const dynamic = new Set(listTools().filter((t) => t.dynamic && !t.admin).map((t) => t.name));
   return all.filter((n) => keep.has(n) || dynamic.has(n));
 }

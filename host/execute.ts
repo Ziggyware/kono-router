@@ -15,6 +15,7 @@
 // turns "the router answered" into "chunk draft called model X, took 812ms,
 // read chunks facts+lookup".
 
+import { REQUEST_POLICY } from "../engine/request-policy.ts";
 import type {
   Assembled,
   BuiltRequest,
@@ -153,6 +154,7 @@ function chunkMessages(
     .filter(Boolean)
     .join("\n\n");
   return [
+    { role: "system", content: REQUEST_POLICY },
     { role: "system", content: system },
     { role: "user", content: user },
   ];
@@ -593,6 +595,7 @@ export async function executePlan(
               ports.models.complete({
                 purpose: "synthesize",
                 messages: [
+                  { role: "system", content: REQUEST_POLICY },
                   {
                     role: "system",
                     content:

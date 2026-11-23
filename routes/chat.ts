@@ -18,6 +18,7 @@ import { logErr, errText, toolPlaneEnabled, maxToolRounds, toolNamespace, armCel
 import { contextualPosterior, recordTupleFailure, recordTupleSuccess, writeLesson, resetBenchedEndpoints } from "../engine/learning.ts";
 import { activeProviderList, PROVIDERS, getRankedCandidates, allSweepCandidates } from "../engine/providers.ts";
 import { normalizeMessages, isAdminContext, toolCaps, collectUpstream } from "../engine/dispatch.ts";
+import { withRequestPolicy } from "../engine/request-policy.ts";
 import {
   artifactOutputTokens,
   detectStall,
@@ -315,6 +316,7 @@ honoApp.post("/v1/chat/completions", async (c) => {
       if (brief) messages.unshift({ role: "system", content: brief });
       messages.unshift({ role: "system", content: toolPreamble(autoTools) });
     }
+    messages.splice(0, messages.length, ...withRequestPolicy(messages));
     const { hasVisionPayload } = extractMessageText(messages);
 
     try {
