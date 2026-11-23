@@ -24,14 +24,8 @@ const store = {
 })();
 const ORIGIN = /^https?:/.test(location.protocol) ? location.origin : "https://kono-router.onrender.com";
 const creds = () => { const c = store.get("creds", {}); return { url: (c.url || ORIGIN).replace(/\/+$/, ""), key: c.key || "", admin: c.admin || "" }; };
-// A stable per-browser session scopes the tool plane's namespace, so
-// memory, RAG and files compound across chats instead of resetting.
-// The tool-plane session (durable workspace, clipboard, tasks) is stable
-// across chats: a new chat keeps the browser's session, so the workspace a
-// build just wrote stays reachable. Only loading a saved conversation
-// switches to that conversation's own session. The browser's original
-// session id stays with the chat that was live when this was introduced,
-// so existing files are not orphaned.
+// A per-chat session scopes files, memory, RAG, clipboard and conversation storage.
+// New chat rotates the namespace; saved snapshots retain their original session.
 const newSessionId = () => "chat-" + Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
 function sessionId() {
   let id = store.get("chat_session", "") || store.get("session_id", "");
@@ -116,6 +110,18 @@ function highlightCode(code, lang = "") {
   const escH = (s) => String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
   if (!code) return "";
   const trimmed = code.trim();
+  // Escape unmatched source too: regex-only replacement must never turn raw
+  // model output into HTML. Keep source bytes unchanged in the rendered text.
+  const colorize = (source, rx, render) => {
+    let at = 0, out = "";
+    source.replace(rx, (...args) => {
+      const offset = args[args.length - 2];
+      out += escH(source.slice(at, offset)) + render(...args);
+      at = offset + args[0].length;
+      return args[0];
+    });
+    return out + escH(source.slice(at));
+  };
 
   if (lang === "json" || lang === "jsonc" || (!lang && (trimmed.startsWith("{") || trimmed.startsWith("[")) && (trimmed.endsWith("}") || trimmed.endsWith("]")))) {
     // escH leaves quotes alone, so strings are matched on a literal quote.
@@ -132,7 +138,7 @@ function highlightCode(code, lang = "") {
 
   if (["js", "javascript", "ts", "typescript", "jsx", "tsx"].includes(lang)) {
     const rx = /(\/\/[^\n]*|\/\*[\s\S]*?\*\/)|(`(?:\\`|[\s\S])*?`|"(?:\\u[a-zA-Z0-9]{4}|\\[^u]|[^\\"])*"|'(?:\\u[a-zA-Z0-9]{4}|\\[^u]|[^\\'])*')|(\b(?:const|let|var|function|return|import|export|from|async|await|class|extends|if|else|for|while|do|try|catch|finally|throw|new|typeof|instanceof|switch|case|default|break|continue|yield|in|of)\b)|(\b(?:true|false|null|undefined|NaN|Infinity)\b)|(\b(?:string|number|boolean|any|void|unknown|never|object|Promise|Array|Record|Set|Map)\b)|(-?\b\d+(?:\.\d+)?\b)|(\b[A-Za-z_$][A-Za-z0-9_$]*(?=\s*\())/g;
-    return code.replace(rx, (m, comm, str, kw, lit, type, num, fn) => {
+    return colorize(code, rx, (m, comm, str, kw, lit, type, num, fn) => {
       if (comm) return `<span class="hl-comm">${escH(comm)}</span>`;
       if (str) return `<span class="hl-str">${escH(str)}</span>`;
       if (kw) return `<span class="hl-kw">${escH(kw)}</span>`;
@@ -146,7 +152,7 @@ function highlightCode(code, lang = "") {
 
   if (["python", "py"].includes(lang)) {
     const rx = /(#[^\n]*)|("""[\s\S]*?"""|'''[\s\S]*?'''|"(?:\\u[a-zA-Z0-9]{4}|\\[^u]|[^\\"])*"|'(?:\\u[a-zA-Z0-9]{4}|\\[^u]|[^\\'])*')|(\b(?:def|class|return|import|from|as|if|elif|else|for|while|try|except|finally|with|pass|raise|yield|async|await|lambda|global|nonlocal|assert|in|is|not|and|or)\b)|(\b(?:True|False|None)\b)|(\b(?:int|float|str|bool|list|dict|set|tuple|self)\b)|(-?\b\d+(?:\.\d+)?\b)|(@[a-zA-Z_]\w*)/g;
-    return code.replace(rx, (m, comm, str, kw, lit, type, num, dec) => {
+    return colorize(code, rx, (m, comm, str, kw, lit, type, num, dec) => {
       if (comm) return `<span class="hl-comm">${escH(comm)}</span>`;
       if (str) return `<span class="hl-str">${escH(str)}</span>`;
       if (kw) return `<span class="hl-kw">${escH(kw)}</span>`;
@@ -160,15 +166,11 @@ function highlightCode(code, lang = "") {
 
   if (["html", "xml", "svg"].includes(lang) || (!lang && trimmed.startsWith("<") && trimmed.endsWith(">"))) {
     const rx = /(<!--[\s\S]*?-->)|(<!DOCTYPE[^>]*>)|(<\/?)([a-zA-Z0-9\-:]+)|(\s+[a-zA-Z_:][-a-zA-Z0-9_:.]*)(?:\s*=\s*("[^"]*"|'[^']*'|[^\s>]+))?|(\/?>)/g;
-    return code.replace(rx, (m, comm, doc, tagOpen, tagName, attrName, attrVal, tagClose) => {
+    return colorize(code, rx, (m, comm, doc, tagOpen, tagName, attrName, attrVal, tagClose) => {
       if (comm) return `<span class="hl-comm">${escH(comm)}</span>`;
       if (doc) return `<span class="hl-doc">${escH(doc)}</span>`;
       if (tagOpen && tagName) return `${escH(tagOpen)}<span class="hl-tag">${escH(tagName)}</span>`;
-      if (attrName) {
-        let res = `<span class="hl-attr">${escH(attrName)}</span>`;
-        if (attrVal) res += `="<span class="hl-str">${escH(attrVal.replace(/^["']|["']$/g, ""))}</span>"`;
-        return res;
-      }
+      if (attrName) return `<span class="hl-attr">${escH(m)}</span>`;
       if (tagClose) return escH(tagClose);
       return escH(m);
     });
@@ -176,7 +178,7 @@ function highlightCode(code, lang = "") {
 
   if (["css"].includes(lang)) {
     const rx = /(\/\*[\s\S]*?\*\/)|([.#]?[a-zA-Z_-][a-zA-Z0-9_-]*(?:\s*,\s*[.#]?[a-zA-Z_-][a-zA-Z0-9_-]*)*\s*\{)|([a-zA-Z_-][a-zA-Z0-9_-]*\s*:)|("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*')|(#(?:[0-9a-fA-F]{3,8})\b)|(\b\d+(?:\.\d+)?(?:px|em|rem|%|vh|vw|s|ms|deg)?\b)/g;
-    return code.replace(rx, (m, comm, sel, prop, str, hex, num) => {
+    return colorize(code, rx, (m, comm, sel, prop, str, hex, num) => {
       if (comm) return `<span class="hl-comm">${escH(comm)}</span>`;
       if (sel) return `<span class="hl-tag">${escH(sel)}</span>`;
       if (prop) return `<span class="hl-attr">${escH(prop)}</span>`;
@@ -189,7 +191,7 @@ function highlightCode(code, lang = "") {
 
   if (["bash", "sh", "shell", "zsh"].includes(lang)) {
     const rx = /(#[^\n]*)|("(?:\\.|[^"\\])*"|'[^']*')|(\$[a-zA-Z_]\w*|\$\{[^}]+\})|(\b(?:if|then|else|elif|fi|for|while|in|do|done|case|esac|function|return|exit)\b)|(\b(?:echo|cd|ls|mkdir|rm|cp|mv|cat|grep|sed|awk|curl|wget|npm|deno|node|git|docker)\b)|(--?[a-zA-Z0-9_-]+)/g;
-    return code.replace(rx, (m, comm, str, v, kw, cmd, flag) => {
+    return colorize(code, rx, (m, comm, str, v, kw, cmd, flag) => {
       if (comm) return `<span class="hl-comm">${escH(comm)}</span>`;
       if (str) return `<span class="hl-str">${escH(str)}</span>`;
       if (v) return `<span class="hl-fn">${escH(v)}</span>`;
@@ -202,10 +204,10 @@ function highlightCode(code, lang = "") {
 
   if (["sql"].includes(lang)) {
     const rx = /(--[^\n]*|\/\*[\s\S]*?\*\/)|('(?:''|[^'])*')|(\b(?:SELECT|FROM|WHERE|INSERT|INTO|VALUES|UPDATE|SET|DELETE|CREATE|TABLE|DROP|ALTER|ADD|INDEX|JOIN|INNER|LEFT|RIGHT|FULL|OUTER|ON|GROUP|BY|ORDER|HAVING|LIMIT|OFFSET|UNION|ALL|AS|AND|OR|NOT|NULL|IS|LIKE|IN|BETWEEN|EXISTS|CASE|WHEN|THEN|ELSE|END)\b)|(-?\b\d+(?:\.\d+)?\b)/gi;
-    return code.replace(rx, (m, comm, str, kw, num) => {
+    return colorize(code, rx, (m, comm, str, kw, num) => {
       if (comm) return `<span class="hl-comm">${escH(comm)}</span>`;
       if (str) return `<span class="hl-str">${escH(str)}</span>`;
-      if (kw) return `<span class="hl-kw">${escH(kw.toUpperCase())}</span>`;
+      if (kw) return `<span class="hl-kw">${escH(kw)}</span>`;
       if (num) return `<span class="hl-num">${escH(num)}</span>`;
       return escH(m);
     });
@@ -222,35 +224,45 @@ const mdlib = Promise.all([
 let MD = null;
 mdlib.then((x) => { MD = x; $$(".md[data-src]").forEach((el) => renderMd(el, el.dataset.src)); });
 
+async function copyText(text, button) {
+  try {
+    if (!navigator.clipboard?.writeText) throw new Error("Clipboard is unavailable in this browser or context");
+    await navigator.clipboard.writeText(text);
+    if (button) {
+      const prior = button.getAttribute("aria-label");
+      button.classList.add("copied");
+      button.setAttribute("aria-label", "Copied to clipboard");
+      setTimeout(() => { button.classList.remove("copied"); if (prior) button.setAttribute("aria-label", prior); }, 1800);
+    }
+    toast("Copied to clipboard");
+  } catch (err) { toast(`Copy failed: ${err.message}`, true); }
+}
+
 function postProcessCode(el, final) {
   for (const pre of $$("pre", el)) {
     if (pre.closest(".code-block")) continue;
     const code = $("code", pre);
-    const rawText = (code ?? pre).innerText;
-    let lang = "";
-    if (code) {
-      const cls = code.className || "";
-      const m = cls.match(/language-([a-zA-Z0-9_-]+)/);
-      if (m) lang = m[1];
-    }
-    const isApp = (lang === "html" || rawText.includes("<!DOCTYPE html>") || rawText.includes("<html") || (rawText.includes("<canvas") && rawText.includes("<script")));
+    const rawText = (code ?? pre).textContent;
+    const lang = (code?.className || "").match(/language-([a-zA-Z0-9_-]+)/)?.[1] || "";
+    const isApp = (lang === "html" || /<!doctype html|<html/i.test(rawText) || (rawText.includes("<canvas") && rawText.includes("<script")));
     if (final && code && !code.dataset.hl) {
       try {
         if (MD?.hljs) MD.hljs.highlightElement(code);
         else code.innerHTML = highlightCode(rawText, lang);
-      } catch {
-        code.innerHTML = highlightCode(rawText, lang);
-      }
+      } catch { code.innerHTML = highlightCode(rawText, lang); }
       code.dataset.hl = 1;
     }
     const block = document.createElement("div");
     block.className = "code-block";
-    block.innerHTML = `<div class="code-bar"><span class="lang">${esc(lang || "code")}</span><div class="actions">${isApp ? `<button class="btn q btn-run-app">▶ Run in Sandbox</button>` : ""}<button class="btn q cp">copy</button></div></div>`;
+    block.innerHTML = `<div class="code-bar"><span class="lang"><span class="code-dot"></span>${esc(lang || "code")}</span><div class="actions">${isApp ? `<button class="btn q btn-run-app">▶ Run in Sandbox</button>` : ""}</div></div><div class="code-float"><button type="button" class="code-copy-icon" aria-label="Copy code" title="Copy code"><svg aria-hidden="true"><use href="#i-copy"/></svg></button></div>`;
     pre.parentNode.insertBefore(block, pre);
     block.appendChild(pre);
     block._sbxRaw = rawText; block._sbxLang = lang;
-    const cp = $(".cp", block);
-    if (cp) cp.onclick = () => navigator.clipboard.writeText(rawText).then(() => toast("copied"));
+    const foot = document.createElement("div");
+    foot.className = "code-footer";
+    foot.innerHTML = `<button type="button" class="code-copy-bottom" aria-label="Copy code"><svg aria-hidden="true"><use href="#i-copy"/></svg> Copy code</button>`;
+    block.appendChild(foot);
+    for (const btn of $$(".code-copy-icon, .code-copy-bottom", block)) btn.onclick = () => copyText(rawText, btn);
     const runBtn = $(".btn-run-app", block);
     if (runBtn) runBtn.onclick = () => launchAppSandbox(sbxAssemble(block), "Interactive App");
   }
@@ -258,29 +270,23 @@ function postProcessCode(el, final) {
 
 function renderMd(el, text, final = true) {
   if (!MD) {
-    // Robust fallback markdown renderer
-    let s = esc(text);
-    s = s.replace(/```([a-zA-Z0-9_-]*)\n([\s\S]*?)```/g, (_m, lang, code) => {
-      const unescaped = code.replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&#39;/g, "'");
-      const isApp = (lang === "html" || unescaped.includes("<!DOCTYPE html>") || unescaped.includes("<html"));
-      const hl = highlightCode(unescaped, lang);
-      return `<div class="code-block"><div class="code-bar"><span class="lang">${esc(lang || "code")}</span><div class="actions">${isApp ? `<button class="btn q btn-run-app" data-app-code="${esc(unescaped)}">▶ Run in Sandbox</button>` : ""}<button class="btn q cp">copy</button></div></div><pre><code>${hl}</code></pre></div>`;
+    // Protect fenced source from prose markup and preserve its exact contents.
+    const blocks = [];
+    const marker = `KONOCODE${Math.random().toString(36).slice(2)}BLOCK`;
+    let s = text.replace(/^```([a-zA-Z0-9_-]*)[^\S\n]*\n([\s\S]*?)(?:^```[^\S\n]*$|(?![\s\S]))/gm, (_m, lang, code) => {
+      const token = `${marker}${blocks.length}END`;
+      blocks.push(`<pre><code class="language-${esc(lang)}">${esc(code)}</code></pre>`);
+      return token;
     });
+    s = esc(s);
     s = s.replace(/`([^`]+)`/g, "<code>$1</code>");
     s = s.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
     s = s.replace(/\*([^*]+)\*/g, "<em>$1</em>");
     s = s.replace(/\n\n/g, "<p></p>");
     s = s.replace(/\n/g, "<br>");
+    s = s.replace(new RegExp(`${marker}(\\d+)END`, "g"), (_m, n) => blocks[Number(n)] ?? "");
     el.innerHTML = s;
-    for (const cp of $$(".cp", el)) {
-      cp.onclick = () => {
-        const pre = cp.closest(".code-block")?.querySelector("pre");
-        if (pre) navigator.clipboard.writeText(pre.innerText).then(() => toast("copied"));
-      };
-    }
-    for (const runBtn of $$(".btn-run-app", el)) {
-      runBtn.onclick = () => launchAppSandbox(sbxAssemble(runBtn.closest(".code-block")), "Interactive App");
-    }
+    postProcessCode(el, final);
     if (final) el.dataset.src = text;
     return;
   }

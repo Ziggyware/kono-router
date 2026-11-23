@@ -4,7 +4,8 @@
 const conv = store.get("chat", { messages: [] });
 let attachments = [];
 let chatCtl = null;
-const PARAMS = ["pmodel", "ptemp", "pmax", "peffort", "psys", "pstream"];
+const PARAMS = ["pmodel", "ptemp", "pmax", "peffort", "psys", "pstream", "pauto", "ptop-p", "ptool-rounds", "pcontinue", "pcontinue-rounds", "ptext-size", "pcode-wrap"];
+let chatGeneration = 0;
 let accentPref = store.get("accent") || "theme";
 let densityPref = store.get("density") || "comfortable";
 let reducedPref = Boolean(store.get("reduced"));
@@ -99,12 +100,18 @@ function openChangelog() {
   const p = store.get("params", {});
   for (const id of PARAMS) if (p[id] !== undefined) { const el = $("#" + id); el.type === "checkbox" ? el.checked = p[id] : el.value = p[id]; }
   $("#ptempv").textContent = $("#ptemp").value;
+  applyChatPreferences();
   if (innerWidth <= 860 || store.get("side") === false) $("#side").hidden = true;
 })();
+function applyChatPreferences() {
+  document.documentElement.dataset.chatSize = $("#ptext-size").value;
+  document.documentElement.dataset.codeWrap = $("#pcode-wrap").checked ? "1" : "0";
+}
 function saveParams() {
   const p = {};
   for (const id of PARAMS) { const el = $("#" + id); p[id] = el.type === "checkbox" ? el.checked : el.value; }
   store.set("params", p);
+  applyChatPreferences();
 }
 for (const id of PARAMS) $("#" + id).addEventListener("input", saveParams);
 $("#ptemp").addEventListener("input", () => $("#ptempv").textContent = $("#ptemp").value);
@@ -189,9 +196,10 @@ addEventListener("pagehide", flushConv);
 document.addEventListener("visibilitychange", () => { if (document.visibilityState === "hidden") flushConv(); });
 // Boot restore: the server copy wins when it is newer than the local one.
 async function restoreConvFromServer() {
+  const initialSession = sessionId();
   try {
     const d = await req("/v1/conversations/current");
-    if (!d || !Array.isArray(d.messages) || typeof d.saved !== "number" || d.saved <= (conv.savedAt || 0)) return;
+    if (sessionId() !== initialSession || !d || !Array.isArray(d.messages) || typeof d.saved !== "number" || d.saved <= (conv.savedAt || 0)) return;
     conv.messages = d.messages;
     conv.savedAt = d.saved;
     store.set("chat", { savedAt: d.saved, messages: d.messages });
@@ -231,8 +239,8 @@ function msgEl(m, i) {
 
     const body = document.createElement("div");
     body.className = "body md" + (isLong ? " clamped" : "");
-    if (imgs) body.innerHTML = imgs;
     renderMd(body, rawText, true);
+    if (imgs) body.insertAdjacentHTML("afterbegin", imgs);
 
     el.replaceChildren(head, body);
     if (isLong) {
@@ -244,6 +252,13 @@ function msgEl(m, i) {
         expBtn.textContent = clamped ? `Show more (${lines} lines) ▾` : "Show less ▴";
       };
       el.appendChild(expBtn);
+    }
+    if (rawText) {
+      const copy = document.createElement("button");
+      copy.type = "button"; copy.className = "message-copy user-copy";
+      copy.setAttribute("data-act", "copy"); copy.setAttribute("aria-label", "Copy message");
+      copy.innerHTML = `<svg aria-hidden="true"><use href="#i-copy"/></svg> Copy message`;
+      el.appendChild(copy);
     }
   } else if (m.role === "tool") {
     el.className = "msg t";
@@ -276,7 +291,7 @@ function paint(el, m, i) {
     $("summary", rs).innerHTML = `<span class="rhd">${thinking ? "thinking" : "reasoning"} · ${kfmt(m.reasoning_content.length)} chars${k.rsMs ? ` · ${ms(k.rsMs)}` : ""}</span>${rsStrip(r.mix)}${thinking && !rs.open && r.last ? `<span class="rtail">${esc(r.last)}</span>` : ""}`;
     if (stick) rb.scrollTop = rb.scrollHeight;
   }
-  renderMd($(".md", el), m.content ?? "", !live);
+  renderMd($(".md", el), textOf(m.content), !live);
   const tc = $(".tcalls", el);
   if (m.tool_calls?.length) {
     const done = answeredIds(i);
@@ -297,12 +312,12 @@ function paint(el, m, i) {
     if (k.rounds) foot.push(`${esc(k.rounds)} tool round${Number(k.rounds) > 1 ? "s" : ""}${k.executed?.length ? ` · ${esc(k.executed.map((t) => t.tool).join(", "))}` : ""}`);
     if (k.finish) foot.push(esc(k.finish));
     if (k.trace) foot.push(`<button data-act="trace" data-tr="${esc(k.trace)}">trace</button>`);
-    if (m.content) foot.push(`<button data-act="copy">copy</button>`);
     if (k.trace && m.content) {
       foot.push(`<button data-act="fb-up" data-on="${k.feedback === "thumbs_up" ? 1 : 0}" title="good answer — teach the router">👍</button>`);
       foot.push(`<button data-act="fb-down" data-on="${k.feedback === "thumbs_down" ? 1 : 0}" title="bad answer — teach the router">👎</button>`);
     }
     if (i === conv.messages.length - 1) foot.push(`<button data-act="retry">retry</button>`);
+    if (textOf(m.content)) foot.push(`<button class="message-copy" data-act="copy" aria-label="Copy message"><svg aria-hidden="true"><use href="#i-copy"/></svg> Copy message</button>`);
   }
   $(".foot", el).innerHTML = foot.join(" · ");
 }
@@ -375,7 +390,7 @@ thread.onclick = async (e) => {
   const b = e.target.closest("[data-act]"); if (!b) return;
   const el = b.closest("article"), i = Number(el.dataset.i), m = conv.messages[i];
   if (b.dataset.act === "trace") openTrace(b.dataset.tr);
-  else if (b.dataset.act === "copy") navigator.clipboard.writeText(m.content).then(() => toast("copied"));
+  else if (b.dataset.act === "copy") await copyText(textOf(m.content), b);
   else if (b.dataset.act === "fb-up" || b.dataset.act === "fb-down") {
     // Explicit delayed reward: joins to the routing decision by trace id and
     // updates the (tuple, task class) posterior server-side.
@@ -400,6 +415,17 @@ thread.onclick = async (e) => {
   }
 };
 
+// Validate before adding an assistant turn or dispatching a request.
+function generationSettings() {
+  const top = $("#ptop-p").value.trim();
+  const rounds = Number($("#ptool-rounds").value);
+  const continuations = Number($("#pcontinue-rounds").value);
+  if (top && (!Number.isFinite(Number(top)) || Number(top) < 0 || Number(top) > 1)) throw new Error("Top-p must be between 0 and 1");
+  if (!$("#ptool-rounds").value.trim() || !Number.isInteger(rounds) || rounds < 0 || rounds > 32) throw new Error("Tool rounds must be a whole number from 0 to 32");
+  if (!$("#pcontinue-rounds").value.trim() || !Number.isInteger(continuations) || continuations < 0 || continuations > 6) throw new Error("Continuation rounds must be a whole number from 0 to 6");
+  return { ...(top ? { top_p: Number(top) } : {}), kono_continue: $("#pcontinue").checked, kono_continue_rounds: continuations, rounds };
+}
+
 // ---- completion ----
 function busy(on) { $("#csend").hidden = on; $("#cstop").hidden = !on; }
 // One-shot: the next reply runs the build gate even if it changes nothing (fix-errors).
@@ -414,6 +440,9 @@ async function complete() {
   const breq = builderReq; builderReq = null;
   const max = $("#pmax").value.trim();
   if (max && (!Number.isSafeInteger(Number(max)) || Number(max) < 1)) { toast("max tokens must be a positive whole number", true); return; }
+  let settings;
+  try { settings = generationSettings(); } catch (e) { toast(e.message, true); return; }
+  const epoch = chatGeneration;
   const m = { role: "assistant", content: "", _m: { live: true } };
   const i = conv.messages.push(m) - 1;
   const el = msgEl(m, i);
@@ -425,6 +454,9 @@ async function complete() {
     model: $("#pmodel").value.trim() || "free:auto",
     messages: [...(sys ? [{ role: "system", content: sys }] : []), ...conv.messages.slice(0, i).map(wire)],
     temperature: Number($("#ptemp").value),
+    ...(settings.top_p !== undefined ? { top_p: settings.top_p } : {}),
+    kono_continue: settings.kono_continue,
+    kono_continue_rounds: settings.kono_continue_rounds,
     max_tokens: chatTokenBudget(conv.messages.slice(0, i), sys),
     stream,
     ...($("#peffort").value ? { reasoning_effort: $("#peffort").value } : {}),
@@ -432,7 +464,7 @@ async function complete() {
     // router's own tool plane and the router runs the agent loop server-
     // side. The dashboard never forwards client tool definitions and never
     // asks the user to hand-feed tool results into the prompt.
-    ...($("#pauto").checked ? { tools: "auto", kono_rounds: 16, ...(wsp.runnerOk ? { kono_runner: true } : {}), ...(gateAlways ? { kono_gate: "always" } : {}) } : {}),
+    ...($("#pauto").checked ? { tools: "auto", kono_rounds: settings.rounds, ...(wsp.runnerOk ? { kono_runner: true } : {}), ...(gateAlways ? { kono_gate: "always" } : {}) } : {}),
   };
   gateAlways = false;
   if (breq) {
@@ -444,14 +476,15 @@ async function complete() {
   const k = m._m, t0 = performance.now();
   let frame = 0;
   const repaint = () => { if (frame) return; frame = requestAnimationFrame(() => { frame = 0; const stick = nearBottom(); paint(el, m, i); if (stick) thread.scrollTop = thread.scrollHeight; }); };
-  chatCtl = new AbortController();
+  const controller = new AbortController();
+  chatCtl = controller;
   busy(true);
   let streamSaveAt = 0;
   // One dispatch against the given wire messages, streamed into m. Split
   // out so a length-truncated builder reply continues into the SAME
   // message instead of starting a new one.
   const attempt = async (wireMessages) => {
-    const res = await req("/v1/chat/completions", { method: "POST", body: { ...body, messages: wireMessages }, signal: chatCtl.signal, raw: true });
+    const res = await req("/v1/chat/completions", { method: "POST", body: { ...body, messages: wireMessages }, signal: controller.signal, raw: true });
     k.trace = (res.headers.get("traceparent") ?? "").split("-")[1] ?? "";
     if (!res.ok) { const j = await res.json().catch(() => ({})); throw new Error(`${res.status} ${j?.error?.message ?? ""}`.trim()); }
     if (!stream) {
@@ -462,7 +495,8 @@ async function complete() {
       Object.assign(k, { ttft: j.telemetry?.observed_ttft_ms, finish: j.choices?.[0]?.finish_reason, tuple: j.kono?.tuple_id, provider: j.provider, degraded: j.kono?.degraded, rounds: j.kono?.tool_rounds, executed: j.kono?.tools_executed });
     } else {
       let rs0 = 0;
-      for await (const { data, comment } of sse(res, chatCtl.signal)) {
+      for await (const { data, comment } of sse(res, controller.signal)) {
+        if (epoch !== chatGeneration) return;
         const hb = /routing attempts=(\d+)/.exec(comment);
         if (hb) { k.routing = Number(hb[1]); repaint(); }
         if (!data || data === "[DONE]") continue;
@@ -525,6 +559,7 @@ async function complete() {
   } catch (e) {
     k.error = e.name === "AbortError" ? "stopped" : e.message;
   }
+  if (epoch !== chatGeneration) return;
   if (!m.content && m.tool_calls?.length) m.content = null;
   k.total = performance.now() - t0;
   k.chars = (m.content?.length ?? 0) + (m.reasoning_content?.length ?? 0);
@@ -544,8 +579,10 @@ async function complete() {
 }
 let autoToolTurns = 0;
 async function answerToolCalls(m) {
+  const epoch = chatGeneration;
   try {
     const d = await req("/v1/tools/execute", { method: "POST", admin: true, body: { calls: m.tool_calls } });
+    if (epoch !== chatGeneration) return;
     m.tool_calls.forEach((t, j) => {
       const r = d.results?.[j] ?? {};
       conv.messages.push({ role: "tool", tool_call_id: t.id, name: t.function?.name ?? "", content: JSON.stringify(r.ok ? r.result : { error: r.error || r.code || "tool failed" }) });
@@ -558,6 +595,7 @@ async function sendChat() {
   const text = $("#cinput").value.trim();
   if (!text && !attachments.length) return;
   autoToolTurns = 0;
+  try { generationSettings(); } catch (e) { toast(e.message, true); return; }
   const max = $("#pmax").value.trim();
   if (max && (!Number.isSafeInteger(Number(max)) || Number(max) < 1)) { toast("max tokens must be a positive whole number", true); return; }
   const content = attachments.length ? [{ type: "text", text }, ...attachments.map((url) => ({ type: "image_url", image_url: { url } }))] : text;
@@ -621,6 +659,7 @@ async function runParallel() {
   if (!prompt) { toast("type the prompt first, then run it in parallel", true); return; }
   const models = parallelModels(Number($("#cparallel-n")?.value || 3));
   parRunning = true;
+  const epoch = chatGeneration;
   // The prompt enters the thread once, exactly like a normal send.
   conv.messages.push({ role: "user", content: prompt });
   $("#cinput").value = ""; autosize($("#cinput"));
@@ -631,28 +670,29 @@ async function runParallel() {
   $("#par-title").textContent = `Parallel run — ${models.length} models, one prompt`;
   const jobs = models.map((model) => ({ model, status: "running", t0: Date.now(), ms: 0, content: "", error: "" }));
   renderParJobs(jobs);
-  const timer = setInterval(() => renderParJobs(jobs), 500);
+  const timer = setInterval(() => { if (epoch === chatGeneration) renderParJobs(jobs); }, 500);
   const sys = $("#psys").value.trim();
   const messages = [...(sys ? [{ role: "system", content: sys }] : []), ...conv.messages.map(wire)];
   await Promise.allSettled(jobs.map(async (j) => {
     try { j.content = await parFetch(j.model, messages); j.status = "done"; }
     catch (e) { j.status = "error"; j.error = e.message || String(e); }
     j.ms = Date.now() - j.t0;
-    renderParJobs(jobs);
+    if (epoch === chatGeneration) renderParJobs(jobs);
   }));
   clearInterval(timer);
-  renderParJobs(jobs);
   parRunning = false;
+  if (epoch !== chatGeneration) return;
+  renderParJobs(jobs);
   const done = jobs.filter((j) => j.status === "done");
   if (!done.length) {
     $("#par-results").innerHTML = `<div class="par-note">Every request failed — nothing to judge. Check the connection and try again.</div>`;
     return;
   }
   if (done.length === 1) { adoptParAnswer(done[0], jobs, "Only one request finished, so there was nothing to judge."); return; }
-  await judgeParAnswers(prompt, jobs, done);
+  await judgeParAnswers(prompt, jobs, done, epoch);
 }
 
-async function judgeParAnswers(prompt, jobs, done) {
+async function judgeParAnswers(prompt, jobs, done, epoch) {
   $("#par-status").textContent = "judging the answers…";
   let verdict = null;
   try {
@@ -668,6 +708,7 @@ async function judgeParAnswers(prompt, jobs, done) {
     const m = raw.match(/\{[\s\S]*\}/);
     if (m) verdict = JSON.parse(m[0]);
   } catch { verdict = null; }
+  if (epoch !== chatGeneration) return;
   const winnerJob = verdict ? done[Number(verdict.winner) - 1] : null;
   const conf = verdict ? Number(verdict.confidence) : NaN;
   if (winnerJob && conf >= 0.999) { adoptParAnswer(winnerJob, jobs, verdict.reason || "The judge was 100% confident.", verdict); return; }
@@ -858,19 +899,29 @@ chatView.addEventListener("drop", (e) => { e.preventDefault(); chatView.classLis
 
 function switchChatSession(id) {
   store.set("chat_session", id);
-  wsp.cache.clear(); wsp.sel = null; wsp.editing = null; wsp.dirty = false; wsp.entry = ""; wsp.page = ""; wsp.sig = ""; wsp.sigs = null;
+  clearTimeout(wsp.timer);
+  wsp.cache.clear(); wsp.sel = null; wsp.editing = null; wsp.dirty = false; wsp.entry = ""; wsp.page = ""; wsp.doc = ""; wsp.sig = ""; wsp.sigs = null; wsp.ssig = ""; wsp.run = null;
   wsFiles = []; wsPrev = null;
+  $("#wsp-frame").srcdoc = "";
+  $("#wsp-empty").hidden = false;
+  wspConClear();
+  renderWsFiles();
   if (wsp.open) { wspRenderTree(); wspInspect(); wsRefresh(true).then(() => wspBuild()); }
 }
 function newChat() {
   wspGuard(() => {
+    chatGeneration++;
     if (chatCtl) chatCtl.abort();
-    conv.messages = []; saveConv(); renderThread(); updateModelHint();
-    // The session is NOT rotated: it namespaces the durable workspace, so
-    // a new chat keeps the files the previous chats built. Only loading a
-    // library snapshot switches sessions — to the one that built its files.
+    chatCtl = null; busy(false);
+    switchChatSession(newSessionId());
+    conv.messages = []; conv.savedAt = 0;
+    attachments = []; renderAttach();
+    $("#cinput").value = ""; store.del("draft"); autosize($("#cinput"));
+    $("#par-panel").hidden = true;
+    saveConv(); renderThread(); updateModelHint();
     $("#cinput").focus();
-  });
+    toast("New chat started with an empty workspace and memory scope");
+  }, "Start new chat");
 }
 $("#cnew").onclick = newChat;
 $("#cexport").onclick = exportChat;

@@ -94,16 +94,19 @@ function wsWatch(on) {
 }
 
 async function wsRefresh(quiet = false) {
+  const session = sessionId();
   const box = $("#ws-files");
   if (!quiet) box.innerHTML = `<div class="dim" style="font-size:12px">loading…</div>`;
   try {
     const r = await wsExec("fs_list", { limit: 1000 });
+    if (session !== sessionId()) return;
     wsFiles = r.files ?? [];
     wsp.ssig = r.sig || "";
     diffWsFiles(wsFiles);
     renderWsFiles();
     wspOnFiles();
   } catch (e) {
+    if (session !== sessionId()) return;
     if (!quiet) {
       wsFiles = [];
       box.innerHTML = `<div class="dim" style="font-size:12px">Could not list the workspace: ${esc(e.message)}</div>`;
@@ -145,13 +148,16 @@ async function wsReadFull(path) {
 }
 // Stale files only, 16 calls per request; a truncated read is finished by paging.
 async function wspFetch(files) {
+  const session = sessionId();
   for (let i = 0; i < files.length; i += 16) {
     const batch = files.slice(i, i + 16);
     const d = await req("/v1/tools/execute", { method: "POST", admin: true, body: { calls: batch.map((f) => ({ name: "fs_read", arguments: { path: f.path, limit: 5000 } })) } });
+    if (session !== sessionId()) return;
     await Promise.all(batch.map(async (f, j) => {
       const res = d.results?.[j];
       if (!res?.ok) { wsp.cache.delete(f.path); return; }
       const r = res.result.truncated ? await wsReadFull(f.path) : res.result;
+      if (session !== sessionId()) return;
       wsp.cache.set(f.path, { sig: wspSig(f), sha: r.sha256, content: r.content ?? "", binary: Boolean(r.binary), mime: r.mime || f.mime || "" });
     }));
   }
@@ -336,6 +342,7 @@ async function wspBuild() {
   finally { wsp.building = false; }
 }
 async function wspBuildOnce() {
+  const session = sessionId();
   const stat = $("#wsp-stat"), empty = $("#wsp-empty"), frame = $("#wsp-frame");
   wspRenderEntry();
   const entry = wspEntry();
@@ -355,19 +362,23 @@ async function wspBuildOnce() {
     const keep = new Set(live.map((f) => f.path));
     for (const p of [...wsp.cache.keys()]) if (!keep.has(p)) wsp.cache.delete(p);
     await wspFetch(live.filter((f) => wsp.cache.get(f.path)?.sig !== wspSig(f)));
+    if (session !== sessionId()) return;
     wspConClear();
     wsp.run = { id: (wsp.run?.id ?? 0) + 1, sig: wsp.ssig, page, entry, t0: performance.now(), errors: new Map(), warnings: new Map(), logs: 0, static: [] };
     wsp.builtSig = wsp.ssig;
     wspReportSoon();
     wspCheckSoon();
     const doc = await wspAssemble(page);
+    if (session !== sessionId()) return;
     wsp.doc = doc;
     let out = sbxWrap(doc);
     try { const t = await sbxTranspileDoc(out); out = t.doc; for (const e of t.errors) wspLog({ level: "error", text: `transpile failed in ${e.name}: ${e.error}` }); } catch { /* keep the untranspiled doc */ }
+    if (session !== sessionId()) return;
     empty.hidden = true;
     frame.srcdoc = out;
     stat.textContent = `${page}${wsp.page && wsp.page !== entry ? " (page)" : ""} · ${live.length} files · ${Math.round(performance.now() - t0)} ms`;
   } catch (e) {
+    if (session !== sessionId()) return;
     stat.textContent = "build failed: " + e.message;
     stat.classList.add("err");
   }
@@ -847,9 +858,9 @@ $("#wsp-tree").addEventListener("keydown", (e) => {
 });
 
 // ---- inspector ---------------------------------------------------------------
-function wspGuard(next) {
+function wspGuard(next, actionLabel = "Discard") {
   if (!wsp.dirty) { next(); return; }
-  confirmDialog(`Discard unsaved edits to ${wsp.editing}?`, () => { wsp.dirty = false; wsp.editing = null; next(); }, "Discard");
+  confirmDialog(`Discard unsaved edits to ${wsp.editing}?`, () => { wsp.dirty = false; wsp.editing = null; next(); }, actionLabel);
 }
 function wspSelect(path, { focus = false } = {}) {
   wsp.sel = path;
