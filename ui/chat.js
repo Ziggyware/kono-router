@@ -477,6 +477,13 @@ async function complete() {
           repaint();
           continue;
         }
+        // The router caught a paused answer ("Let me write the code now.") and is
+        // continuing the same response instead of returning the plan.
+        if (j.kono?.type === "continuation") {
+          k.toolRun = `continuing round ${j.kono.round} (${j.kono.kind})`;
+          repaint();
+          continue;
+        }
         // The router's build gate sent the agent back: show why, keep streaming.
         if (j.kono?.type === "build_gate") {
           const g = j.kono;

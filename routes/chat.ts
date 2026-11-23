@@ -18,6 +18,7 @@ import { logErr, errText, toolPlaneEnabled, maxToolRounds, toolNamespace, armCel
 import { contextualPosterior, recordTupleFailure, recordTupleSuccess, writeLesson, resetBenchedEndpoints } from "../engine/learning.ts";
 import { activeProviderList, PROVIDERS, getRankedCandidates, allSweepCandidates } from "../engine/providers.ts";
 import { normalizeMessages, isAdminContext, toolCaps, collectUpstream } from "../engine/dispatch.ts";
+import { detectStall, maxStallContinuations, nextStallTurn, wantsArtifactRequest } from "../engine/stall.ts";
 import { loadStrategyArms, armGlobalPosterior, finalizeLearning, verifyMathAnswer, verifyJsonAnswer } from "./chat-learning.ts";
 import type { LearnCtx } from "./chat-learning.ts";
 import { ESCALATION_POLICY, WIDE_POLICY, SWEEP_POLICY, combineSignals, hedgedDispatch, executeOwnedToolCalls, gradeToolCalls, learnToolVerdict, toolVerdictLessons, degradedSse, degradedCompletion } from "./chat-dispatch.ts";
@@ -135,7 +136,7 @@ honoApp.post("/v1/chat/completions", async (c) => {
     const body = await c.req.json().catch(() => ({} as Json)) as Json;
     // Rebrand compat: pre-rename clients send nokey_* fields. Alias them onto
     // the kono_* names so existing integrations keep working unchanged.
-    for (const k of ["tools", "rounds", "builder", "gate", "gate_rounds", "runner", "tests", "preamble"]) {
+    for (const k of ["tools", "rounds", "builder", "gate", "gate_rounds", "runner", "tests", "preamble", "continue", "continue_rounds"]) {
       const legacy = `nokey_${k}`;
       if (body[`kono_${k}`] === undefined && body[legacy] !== undefined) body[`kono_${k}`] = body[legacy];
     }
@@ -220,6 +221,21 @@ honoApp.post("/v1/chat/completions", async (c) => {
       const m = [...messages].reverse().find((x) => x.role === "user");
       return typeof m?.content === "string" ? m.content : "";
     })();
+    // ---- Anti-pause: a plan is not an answer -------------------------------
+    // Free-tier models routinely end on "Let me write the code now." and stop
+    // with finish_reason "stop": nothing errored, so nothing retried, and the
+    // caller was left holding a plan. The router now spends up to
+    // KONO_STALL_ROUNDS (default 2) extra rounds telling the model to finish,
+    // and forces one tool call when the plane owns tools and the request asked
+    // for an artifact, because a nudge alone does not move small models.
+    // Opt out per request with kono_continue: false.
+    const userCorpus = messages
+      .filter((m) => m.role === "user")
+      .map((m) => (typeof m.content === "string" ? m.content : ""))
+      .join("\n")
+      .slice(-4_000);
+    const stallArtifact = wantsArtifactRequest(originalUserText) || wantsArtifactRequest(userCorpus);
+    const stallMax = body.kono_continue === false ? 0 : maxStallContinuations(body.kono_continue_rounds);
     const hasTests = Array.isArray(body.kono_tests) && body.kono_tests.length > 0;
     const hasVerifier = taskCtx.taskClass === "math" || taskCtx.taskClass === "json" ||
       taskCtx.taskClass === "tool" || (taskCtx.taskClass === "code" && hasTests);
@@ -622,6 +638,8 @@ honoApp.post("/v1/chat/completions", async (c) => {
           let toolRound = 0;
           let verifyRetries = 0;
           let extraTokens = 0;
+          let stallRounds = 0;
+          let stallForcedTools = false;
           let a2aTaskDone = false;
           let lastToolVerdict: ToolCallVerdict | null = null;
           const toolLog: Array<{ round: number; tool: string; ok: boolean; ms: number; repaired: boolean; code?: string; error?: string }> = [];
@@ -643,6 +661,11 @@ honoApp.post("/v1/chat/completions", async (c) => {
             }
             if (!produced) throw lastErr ?? new Error("No endpoint completed a full generation");
             const { cand, res } = produced;
+            // A forced tool call applies to exactly one generation.
+            if (stallForcedTools) {
+              completionOptions.tool_choice = baseToolChoice;
+              stallForcedTools = false;
+            }
 
             // ---- Tool Plane: grade what the model emitted, then learn --------
             if (declaredTools.length > 0) {
@@ -705,6 +728,41 @@ honoApp.post("/v1/chat/completions", async (c) => {
             }
 
             if (!res.toolCalls?.length) {
+              // ---- Anti-pause -------------------------------------------------
+              // The build gate is about the workspace; a stalled answer never
+              // touched it, so the stall check has to come first.
+              const stall = detectStall(res.content ?? "", {
+                finish: res.finish,
+                hasTools: planeActive,
+                wantsArtifact: stallArtifact,
+              });
+              const turn = nextStallTurn(stall, { continuations: stallRounds }, {
+                hasTools: planeActive,
+                wantsArtifact: stallArtifact,
+                maxContinuations: stallMax,
+                // Forcing a call is pointless with no rounds left to execute it.
+                allowToolForce: planeActive && toolRound < agentRounds,
+              });
+              if (turn) {
+                stallRounds += 1;
+                extraTokens += res.estTokens;
+                root.event("stall_continue", {
+                  round: turn.round,
+                  kind: stall.kind,
+                  confidence: stall.confidence,
+                  chars: res.content.length,
+                  last_line: stall.lastLine.slice(0, 200),
+                  tool_choice: turn.toolChoice ?? "auto",
+                });
+                messages.push({ role: "assistant", content: res.content || "(continuing)" });
+                messages.push({ role: "user", content: turn.nudge });
+                if (turn.toolChoice) {
+                  completionOptions.tool_choice = turn.toolChoice;
+                  stallForcedTools = true;
+                }
+                tried.delete(cand.tupleId);
+                continue;
+              }
               const gate = await runGate(toolRound, 8_000);
               if (gate) {
                 messages.push({ role: "assistant", content: res.content || "(continuing)" });
@@ -764,6 +822,18 @@ honoApp.post("/v1/chat/completions", async (c) => {
               }).catch(logErr);
             }
 
+            const finalStall = detectStall(res.content ?? "", {
+              finish: res.finish,
+              hasTools: planeActive,
+              wantsArtifact: stallArtifact,
+            });
+            if (finalStall.stalled) {
+              root.event("stall_accepted", {
+                kind: finalStall.kind,
+                confidence: finalStall.confidence,
+                rounds: stallRounds,
+              });
+            }
             root.io("response", { model: cand.modelId, provider: cand.providerId, finish: res.finish ?? (res.toolCalls ? "tool_calls" : "stop"), content: res.content, ...(res.reasoningContent ? { reasoning_content: res.reasoningContent } : {}), ...(res.toolCalls ? { tool_calls: res.toolCalls } : {}), ...(toolRound > 0 ? { tools_executed: toolLog } : {}) });
             root.end("ok", {
               tuple: cand.tupleId,
@@ -786,6 +856,8 @@ honoApp.post("/v1/chat/completions", async (c) => {
               kono: {
                 ...meta(cand),
                 ...(toolRound > 0 ? { tool_rounds: toolRound, tools_executed: toolLog } : {}),
+                ...(stallRounds > 0 ? { continuations: stallRounds } : {}),
+                ...(finalStall.stalled ? { stalled: finalStall.kind } : {}),
               },
               telemetry: {
                 mode_selected: mode,
@@ -842,6 +914,8 @@ honoApp.post("/v1/chat/completions", async (c) => {
     const sse = async function* (): AsyncGenerator<string> {
       let ok = false;
       let toolRound = 0;
+      let stallRounds = 0;
+      let stallForcedTools = false;
       let quietFails = 0;
       let streamToolVerdict: ToolCallVerdict | null = null;
       try {
@@ -867,6 +941,10 @@ honoApp.post("/v1/chat/completions", async (c) => {
             return;
           }
           const { cand, up } = r.v;
+          if (stallForcedTools) {
+            completionOptions.tool_choice = baseToolChoice;
+            stallForcedTools = false;
+          }
           root.event("first_token", { tuple: cand.tupleId, ttft_ms: up.ttftMs, round: toolRound });
           const chunk = (delta: Record<string, unknown>, finish: string | null, extra: Json = {}) =>
             `data: ${JSON.stringify({
@@ -1044,6 +1122,50 @@ honoApp.post("/v1/chat/completions", async (c) => {
               yield chunk(handoff, null);
             }
             if (!toolCalls.size && !master.signal.aborted) {
+              // ---- Anti-pause -------------------------------------------------
+              // The answer is still streaming, so the continuation is appended
+              // to the same response: a blank line, a status frame, then the
+              // model's actual work. The client never sees a half-turn.
+              const stall = detectStall(streamedText || reasoning, {
+                finish,
+                hasTools: planeActive,
+                wantsArtifact: stallArtifact,
+              });
+              const turn = nextStallTurn(stall, { continuations: stallRounds }, {
+                hasTools: planeActive,
+                wantsArtifact: stallArtifact,
+                maxContinuations: stallMax,
+                // Forcing a call is pointless with no rounds left to execute it.
+                allowToolForce: planeActive && toolRound < agentRounds,
+              });
+              if (turn) {
+                stallRounds += 1;
+                root.event("stall_continue", {
+                  round: turn.round,
+                  kind: stall.kind,
+                  confidence: stall.confidence,
+                  chars: streamedText.length,
+                  last_line: stall.lastLine.slice(0, 200),
+                  tool_choice: turn.toolChoice ?? "auto",
+                });
+                messages.push({ role: "assistant", content: streamedText || reasoning.trim() || "(continuing)" });
+                messages.push({ role: "user", content: turn.nudge });
+                if (turn.toolChoice) {
+                  completionOptions.tool_choice = turn.toolChoice;
+                  stallForcedTools = true;
+                }
+                tried.delete(cand.tupleId);
+                yield chunk({ content: "\n\n" }, null);
+                yield status({
+                  type: "continuation",
+                  round: turn.round,
+                  kind: stall.kind,
+                  confidence: stall.confidence,
+                  last_line: stall.lastLine.slice(0, 200),
+                  trace_id: root.traceId,
+                });
+                continue;
+              }
               const gate = await runGate(toolRound, 8_000);
               if (gate) {
                 messages.push({ role: "assistant", content: streamedText || reasoning.trim() || "(continuing)" });
@@ -1054,12 +1176,31 @@ honoApp.post("/v1/chat/completions", async (c) => {
                 continue;
               }
             }
+            const finalStall = detectStall(streamedText || reasoning, {
+              finish,
+              hasTools: planeActive,
+              wantsArtifact: stallArtifact,
+            });
+            if (finalStall.stalled) {
+              root.event("stall_accepted", {
+                kind: finalStall.kind,
+                confidence: finalStall.confidence,
+                rounds: stallRounds,
+              });
+            }
             // Salvage parity with the buffered path: a reasoning-only stream also surfaces as content.
             if (!contentChars && !toolCalls.size && reasoning.trim()) yield chunk({ content: reasoning.trim() }, null);
             ok = true;
             const fin = finish ?? (toolCalls.size ? "tool_calls" : "stop");
             root.io("response", { model: cand.modelId, provider: cand.providerId, finish: fin, content: streamedText, ...(reasoning ? { reasoning_content: reasoning } : {}), ...(streamedCalls.size ? { tool_calls: [...streamedCalls.values()] } : {}) });
-            yield chunk({}, fin, { kono: { ...meta(cand), ...(toolRound > 0 ? { tool_rounds: toolRound } : {}) } });
+            yield chunk({}, fin, {
+              kono: {
+                ...meta(cand),
+                ...(toolRound > 0 ? { tool_rounds: toolRound } : {}),
+                ...(stallRounds > 0 ? { continuations: stallRounds } : {}),
+                ...(finalStall.stalled ? { stalled: finalStall.kind } : {}),
+              },
+            });
             const totalMs = Math.max(up.ttftMs + 1, Math.round(performance.now() - up.t0));
             recordTupleSuccess(cand.tupleId, up.ttftMs, totalMs, Math.max(1, Math.ceil((contentChars + reasoning.length) / 4))).catch(logErr);
             if (declaredTools.length > 0 && streamedCalls.size > 0) {

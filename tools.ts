@@ -586,6 +586,11 @@ export const WORKSPACE_DISCIPLINE = [
 
 
 
+/** The pause this prevents: a model that narrates a plan and stops. Stating the
+ *  expectation up front is cheaper than spending a continuation round later. */
+export const NO_NARRATION =
+  "Finish every turn with action or an answer: either call a tool, or give the complete result. Never end a turn by announcing what you are about to do (\"Let me build…\", \"I'll write the code now.\") — do it in the same turn.";
+
 export const TEAM_DISCIPLINE = "Use agent_team to work in parallel whenever a job has independent parts: builders on separate files or areas, a tester writing tests while you build, a reviewer or researcher alongside; give each agent a self-contained task, then integrate and verify their work.";
 
 
@@ -597,6 +602,7 @@ export function toolPreamble(names?: string[]): string {
     `Available: ${tools.join(", ")}.`,
     "Call them with a single valid JSON object of arguments; the router executes them and returns the result as a tool message.",
     "Prefer tools to guessing: web_search/web_fetch for current facts, fs_* for durable files, memory_* across conversations, rag_* for large documents, calculate/data/time/crypto for exact computation.",
+    NO_NARRATION,
     ...(tools.includes("fs_patch") ? [WORKSPACE_DISCIPLINE] : []),
     ...(tools.includes("agent_team") ? [TEAM_DISCIPLINE] : []),
   ].join(" ");

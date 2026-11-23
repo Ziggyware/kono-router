@@ -286,6 +286,30 @@ test("intake tames a hostile body and records every change", () => {
   }
 });
 
+test("a paused answer is continued inside the spine", async () => {
+  let calls = 0;
+  const events: HostEvent[] = [];
+  const ports = memoryPortsWithEvents(events, {
+    planner: () => "not json at all",
+    answer: () => {
+      calls += 1;
+      return calls === 1
+        ? "Let me build:\n- HTML5 canvas\n- Fresnel lens\nI'll write the code now."
+        : "<html>artifact</html>";
+    },
+  });
+  const res = await createHostRouter(ports).handle(
+    { model: "free:auto", messages: [{ role: "user", content: "build me an html hologram demo" }] },
+    { tenant: "test" },
+  );
+  expectEqual(res.finish, "stop", "finish");
+  expectMatch(res.content, /<html>artifact<\/html>/, "the continuation is appended");
+  expect(res.content.includes("Let me build"), "the plan is kept, not discarded");
+  expect(res.report.notes.some((n) => n.code === "assemble.continued"), "continuation note");
+  expect(!res.report.notes.some((n) => n.code === "assemble.stalled"), "not left flagged as stalled");
+  expect(events.some((e) => e.stage === "assemble" && e.chunkId === "continue"), "continuation event");
+});
+
 // ---------------------------------------------------------------------------
 // direct invocation (node or deno); silent when imported by a test runner
 // ---------------------------------------------------------------------------

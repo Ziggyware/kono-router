@@ -27,6 +27,7 @@ import type {
   ToolResult,
 } from "./contracts.ts";
 import type { Ledger } from "./ledger.ts";
+import { detectStall, nextStallTurn, wantsArtifactRequest } from "../engine/stall.ts";
 import {
   abortable,
   errText,
@@ -644,6 +645,95 @@ export async function executePlan(
         });
       }
     }
+  }
+
+  // ---- anti-pause --------------------------------------------------------
+  // The same failure the route handles: an answer that announces the work and
+  // then stops. The spine keeps it inside the call budget, records it like any
+  // other call, and appends the continuation instead of discarding the plan the
+  // model already wrote.
+  // The continuation is a plain answer turn with no tools attached, so the
+  // nudge must not promise them: `hasTools` stays false here even when the plan
+  // used tools earlier.
+  const wantsArtifact = wantsArtifactRequest(goalText(request.messages, 2_000));
+  const stall = detectStall(assembled.content, { hasTools: false, wantsArtifact });
+  const turn = nextStallTurn(stall, { continuations: 0 }, {
+    hasTools: false,
+    wantsArtifact,
+    maxContinuations: 1,
+    allowToolForce: false,
+  });
+  if (turn && assembled.finish === "stop" && modelCalls < limits.maxModelCalls) {
+    modelCalls++;
+    ledger.bump("model_calls");
+    ledger.emit({
+      stage: "assemble",
+      phase: "retry",
+      chunkId: "continue",
+      attempt: 1,
+      data: { kind: stall.kind, confidence: stall.confidence, chars: assembled.content.length },
+    });
+    const pin = built.manifest.candidates[0];
+    try {
+      const reply = await withDeadline(options.synthMs, request.signal, "continue", (signal) =>
+        abortable(
+          ports.models.complete({
+            purpose: "chunk",
+            messages: [
+              ...built.messages,
+              { role: "assistant", content: assembled.content },
+              { role: "user", content: turn.nudge },
+            ],
+            ...(pin ? { model: pin.modelId, tupleId: pin.tupleId } : {}),
+            temperature: request.params.temperature ?? 0.3,
+            maxTokens: request.params.maxTokens ?? 1_500,
+            deadlineMs: options.synthMs,
+            signal,
+            chunkId: "continue",
+            attempt: 0,
+          }),
+          signal,
+          "continue",
+        ));
+      if (reply.content.trim()) {
+        assembled = {
+          ...assembled,
+          content: `${assembled.content}\n\n${reply.content.trim()}`,
+          ...(reply.model ? { modelUsed: reply.model } : {}),
+        };
+        ledger.addNote(
+          note(
+            "assemble.continued",
+            `answer paused (${stall.kind}@${stall.confidence}); continued on ${reply.model}`,
+            "info",
+            "assemble",
+          ),
+        );
+        ledger.emit({
+          stage: "assemble",
+          phase: "decision",
+          chunkId: "continue",
+          ok: true,
+          ms: reply.ms,
+          model: reply.model,
+          data: { kind: stall.kind, added_chars: reply.content.trim().length },
+        });
+      }
+    } catch (err) {
+      if (request.signal.aborted) throw err;
+      ledger.addNote(
+        note("assemble.continue_failed", errText(err).slice(0, 200), "warn", "assemble"),
+      );
+    }
+  } else if (stall.stalled) {
+    ledger.addNote(
+      note(
+        "assemble.stalled",
+        `answer still pauses after ${turn ? "the continuation budget" : "no continuation"}: ${stall.kind}@${stall.confidence}`,
+        "degrade",
+        "assemble",
+      ),
+    );
   }
 
   assembleSpan.end(assembled.finish !== "degraded", {
