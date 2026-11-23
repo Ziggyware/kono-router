@@ -644,3 +644,97 @@ test("a slow buffered completion keeps the connection alive with leading whitesp
     restoreMock();
   }
 });
+
+// ---------------------------------------------------------------------------
+// Anti-pause: a plan is not an answer.
+//
+// Free-tier models end on "Let me write the code now." with finish_reason
+// "stop". Nothing errors, so before this the router returned the plan and the
+// session looked paused. The router now spends a bounded continuation round.
+// ---------------------------------------------------------------------------
+
+const PAUSED_PLAN =
+  "Let me build:\n\n- HTML5 Canvas\n- Fresnel lens phase mask\n" +
+  "- Angular spectrum propagation\n\nI'll write it as a single self-contained HTML file.\n\n" +
+  "Let me write the code now.";
+
+const FINISHED_ARTIFACT =
+  "Here it is.\n\n```html\n<!doctype html><canvas id=c></canvas>\n<script>/* fresnel */</script>\n```\n\n" +
+  "Open the file directly in a browser.";
+
+const askedToContinue = (payload: any): boolean =>
+  JSON.stringify(payload?.messages ?? []).includes("Continue now, in this reply");
+
+test("a paused plan is continued instead of being returned as the answer (buffered)", async () => {
+  const good = await pickHealthyUrl();
+  installMock(healthyOnly(good, (payload) =>
+    askedToContinue(payload) ? completionJson(FINISHED_ARTIFACT) : completionJson(PAUSED_PLAN)));
+  try {
+    const res = await app.fetch(chatCompletion({
+      model: "free:fast",
+      messages: [{ role: "user", content: "build me a single html file that draws a hologram" }],
+      stream: false,
+    }));
+    if (res.status !== 200) throw new Error(`status ${res.status}`);
+    const data = await asJson(res);
+    const content = String(data.choices?.[0]?.message?.content ?? "");
+    if (!content.includes("<!doctype html>")) {
+      throw new Error(`the artifact never arrived: ${JSON.stringify(content.slice(0, 200))}`);
+    }
+    if (data.kono?.continuations !== 1) {
+      throw new Error(`expected exactly 1 continuation, got ${JSON.stringify(data.kono?.continuations)}`);
+    }
+    if (data.kono?.stalled) throw new Error(`still flagged as stalled: ${data.kono.stalled}`);
+    if (data.choices?.[0]?.finish_reason !== "stop") throw new Error("finish_reason");
+  } finally {
+    restoreMock();
+  }
+});
+
+test("a paused plan keeps the stream open and continues it in place (SSE)", async () => {
+  const good = await pickHealthyUrl();
+  installMock(healthyOnly(good, (payload) =>
+    askedToContinue(payload)
+      ? sseOf([{ content: "Here it is.\n\n```html\n<!doctype html>\n" }, { content: "<canvas id=c></canvas>\n```\n" }])
+      : sseOf([{ content: "Let me build:\n\n" }, { content: "- HTML5 Canvas\n- Fresnel lens\n\nLet me write the code now." }])));
+  try {
+    const res = await app.fetch(chatCompletion({
+      model: "free:fast",
+      messages: [{ role: "user", content: "build me a single html file that draws a hologram" }],
+      stream: true,
+    }));
+    if (res.status !== 200) throw new Error(`status ${res.status}`);
+    const text = await res.text();
+    if (!text.includes("Let me build")) throw new Error("missing the paused preamble");
+    if (!text.includes("<!doctype html>")) throw new Error(`the continuation never streamed: ${text.slice(-300)}`);
+    if (!text.includes('"type":"continuation"')) throw new Error("missing continuation status frame");
+    const frames = chunks(text);
+    const terminal = frames.filter((f) => f.choices?.[0]?.finish_reason === "stop").length;
+    if (terminal !== 1) throw new Error(`expected exactly one terminal frame, got ${terminal}`);
+    const meta = frames.find((f) => typeof f.kono?.continuations === "number");
+    if (meta?.kono?.continuations !== 1) throw new Error("continuation count missing from the final frame");
+    if (!text.trimEnd().endsWith("[DONE]")) throw new Error("missing [DONE]");
+  } finally {
+    restoreMock();
+  }
+});
+
+test("kono_continue: false keeps the old pause behaviour and reports it", async () => {
+  const good = await pickHealthyUrl();
+  installMock(healthyOnly(good, () => completionJson(PAUSED_PLAN)));
+  try {
+    const res = await app.fetch(chatCompletion({
+      model: "free:fast",
+      messages: [{ role: "user", content: "build me a single html file that draws a hologram" }],
+      stream: false,
+      kono_continue: false,
+    }));
+    const data = await asJson(res);
+    const content = String(data.choices?.[0]?.message?.content ?? "");
+    if (!content.includes("Let me write the code now")) throw new Error("expected the plan back unchanged");
+    if (data.kono?.continuations) throw new Error("continuations must be absent when disabled");
+    if (!data.kono?.stalled) throw new Error("a paused answer must still be labelled");
+  } finally {
+    restoreMock();
+  }
+});
